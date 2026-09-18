@@ -1,3 +1,10 @@
+## [1.4.0](https://github.com/foro-sh/pii-mcp/compare/v1.3.1...v1.4.0) (2026-09-18)
+
+### Features
+
+* **ci:** merge pypi publish wiring ([#12](https://github.com/foro-sh/pii-mcp/issues/12)) ([c957632](https://github.com/foro-sh/pii-mcp/commit/c957632deadb4f051dbeb3755a3bbfb63bc24562))
+* **ci:** publish pii-mcp to PyPI on release ([bfc9790](https://github.com/foro-sh/pii-mcp/commit/bfc979064bb16534f5032feb22acd170ce29e0ac))
+
 ## [1.3.1](https://github.com/foro-sh/pii-mcp/compare/v1.3.0...v1.3.1) (2026-09-18)
 
 ### Bug Fixes

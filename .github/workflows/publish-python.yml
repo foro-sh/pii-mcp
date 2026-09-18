@@ -1,0 +1,33 @@
+name: Publish Python
+
+# Manual and recovery publishes only — the automatic publish on merge is a job
+# in release.yml, which duplicates these steps rather than calling this file.
+# PyPI's trusted publishing cannot authorize an upload that runs inside a
+# reusable workflow ("Reusable workflows cannot currently be used as the
+# workflow in a Trusted Publisher"), so `workflow_call` is not an option here
+# and the duplication is deliberate.
+#
+# Keep both trusted publishers configured on PyPI — release.yml for the
+# automatic path, this file for the manual one. Dispatching builds the branch
+# head, which after a release is the commit carrying the version bump.
+on:
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    environment: pypi
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+      - run: uv build
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # release/v1
+        with:
+          packages-dir: dist/
