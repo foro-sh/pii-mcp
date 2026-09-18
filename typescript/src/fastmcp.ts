@@ -250,6 +250,13 @@ export class PiiScrubMiddleware {
   }
 
   scrubResourceResult(value: unknown): ReadResourceResult {
+    if (typeof value === "string") {
+      const scrubbed = scrubText(value, { languages: this.languages });
+      this.emit(scrubbed.counts);
+      return {
+        contents: [{ uri: "pii-mcp:text", text: scrubbed.text }],
+      };
+    }
     if (!looksLikeResourceResult(value)) {
       throw new PiiScrubError(
         "resource result is not a scrubbable ReadResourceResult shape",
@@ -322,6 +329,9 @@ export class PiiScrubMiddleware {
     next: Next,
   ): Promise<unknown> {
     const result = await next();
+    if (isInputRequired(result)) {
+      return result;
+    }
     try {
       return this.scrubToolResult(result);
     } catch {
@@ -334,6 +344,9 @@ export class PiiScrubMiddleware {
     next: Next,
   ): Promise<unknown> {
     const result = await next();
+    if (isInputRequired(result)) {
+      return result;
+    }
     try {
       return this.scrubResourceResult(result);
     } catch {
@@ -346,10 +359,21 @@ export class PiiScrubMiddleware {
     next: Next,
   ): Promise<unknown> {
     const result = await next();
+    if (isInputRequired(result)) {
+      return result;
+    }
     try {
       return this.scrubPromptResult(result);
     } catch {
       return this.withheldPrompt();
     }
   }
+}
+
+function isInputRequired(value: unknown): boolean {
+  return (
+    value !== null &&
+    typeof value === "object" &&
+    (value as { resultType?: unknown }).resultType === "input_required"
+  );
 }

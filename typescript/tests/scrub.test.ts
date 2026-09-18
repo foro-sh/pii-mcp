@@ -102,19 +102,16 @@ describe("scrubText", () => {
 
   it("fails closed on oversize input", async () => {
     const { scrubTextJs } = await import("../src/scrub-js.js");
-    const { MAX_SCRUB_BYTES } = await import("../src/types.js");
-    // Construct a string that exceeds the real cap only in CI-hostile ways;
-    // instead assert the error type by calling with checkSize against a
-    // locally oversized Buffer relative to a patched path is unnecessary —
-    // verify the public error for a clearly oversize UTF-8 payload via
-    // scrubTextJs after temporarily lowering is not exported. Use depth
-    // fail-closed as the durable contract test (above) and keep this as a
-    // smoke that PiiScrubError remains constructible/catchable.
-    expect(MAX_SCRUB_BYTES).toBe(32 * 1024 * 1024);
-    expect(() => scrubTextJs("x".repeat(100), { checkSize: true })).not.toThrow();
-    expect(new PiiScrubError("scrub input exceeds the 64-byte size cap")).toBeInstanceOf(
-      PiiScrubError,
+    const { MAX_SCRUB_BYTES, PiiScrubError: Err } = await import(
+      "../src/types.js"
     );
+    expect(MAX_SCRUB_BYTES).toBe(32 * 1024 * 1024);
+    // Keep the fixture small enough for CI while still exceeding a temporary
+    // local cap by constructing bytes > MAX via repeated multi-byte chars when
+    // affordable; otherwise assert the public error type remains catchable.
+    const oversize = "é".repeat(Math.ceil(MAX_SCRUB_BYTES / 2) + 1);
+    expect(Buffer.byteLength(oversize, "utf8")).toBeGreaterThan(MAX_SCRUB_BYTES);
+    expect(() => scrubTextJs(oversize)).toThrow(Err);
   });
 });
 

@@ -39,12 +39,34 @@ export interface NativeBinding {
 
 const require = createRequire(import.meta.url);
 
+function isMusl(): boolean {
+  if (process.platform !== "linux") {
+    return false;
+  }
+  try {
+    // Node report header exposes glibc when present; absence ≈ musl.
+    const report = process.report?.getReport?.() as
+      | { header?: { glibcVersionRuntime?: string } }
+      | undefined;
+    if (report?.header && "glibcVersionRuntime" in report.header) {
+      return !report.header.glibcVersionRuntime;
+    }
+  } catch {
+    // fall through
+  }
+  return true;
+}
+
 function platformTriple(): string | null {
   const { platform, arch } = process;
   if (platform === "darwin" && arch === "arm64") return "darwin-arm64";
   if (platform === "darwin" && arch === "x64") return "darwin-x64";
-  if (platform === "linux" && arch === "arm64") return "linux-arm64-gnu";
-  if (platform === "linux" && arch === "x64") return "linux-x64-gnu";
+  if (platform === "linux" && arch === "arm64") {
+    return isMusl() ? "linux-arm64-musl" : "linux-arm64-gnu";
+  }
+  if (platform === "linux" && arch === "x64") {
+    return isMusl() ? "linux-x64-musl" : "linux-x64-gnu";
+  }
   if (platform === "win32" && arch === "x64") return "win32-x64-msvc";
   return null;
 }

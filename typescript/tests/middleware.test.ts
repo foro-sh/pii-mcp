@@ -68,13 +68,29 @@ describe("PiiScrubMiddleware", () => {
     expect(JSON.stringify(reports[0])).not.toContain("ada@");
   });
 
-  it("withholds on scrub failure", async () => {
+  it("withholds when structured content cannot be scrubbed", async () => {
     const mw = new PiiScrubMiddleware();
     const result = (await mw.onCallTool(
       { method: "tools/call", request: {} },
-      async () => ({ when: new Date() }),
+      async () => ({
+        content: [{ type: "text", text: "ok" }],
+        structuredContent: { when: new Date() },
+      }),
     )) as { content: { text: string }[] };
     expect(result.content[0]?.text).toBe(WITHHELD_TEXT);
+  });
+
+  it("passes through FastMCP input_required results", async () => {
+    const mw = new PiiScrubMiddleware();
+    const inputRequired = {
+      resultType: "input_required",
+      message: "need more info",
+    };
+    const result = await mw.onCallTool(
+      { method: "tools/call", request: {} },
+      async () => inputRequired,
+    );
+    expect(result).toBe(inputRequired);
   });
 
   it("masks resource text", async () => {
