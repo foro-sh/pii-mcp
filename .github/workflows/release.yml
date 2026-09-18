@@ -6,8 +6,8 @@ name: Release
 # cancels stale runs instead (that's the right behavior there, wrong here).
 #
 # Commitlint is a blocking first step: a non-conventional pushed commit fails
-# the job before semantic-release runs. No build here — semantic-release only
-# writes the changelog, tags, and publishes a GitHub release.
+# the job before semantic-release runs. When a release is cut, publish-python
+# uploads the matching wheel/sdist to PyPI via OIDC trusted publishing.
 on:
   push:
     branches: [main]
@@ -16,6 +16,7 @@ permissions:
   contents: write # create tags/releases and push the changelog commit
   issues: write # comment on released issues
   pull-requests: write # comment on released PRs
+  id-token: write # OIDC for PyPI trusted publishing
 
 concurrency:
   group: release
@@ -25,6 +26,10 @@ jobs:
   release:
     name: Release
     runs-on: ubuntu-latest
+    outputs:
+      published: ${{ steps.semantic-release.outputs.published }}
+      version: ${{ steps.semantic-release.outputs.version }}
+      sha: ${{ steps.released-commit.outputs.sha }}
     steps:
       - name: Mint a release token
         id: app-token
@@ -67,7 +72,47 @@ jobs:
       # GITHUB_TOKEN is the app-token step's output, not the default
       # secrets.GITHUB_TOKEN — the default token can't push past main's
       # branch protection once it is enabled.
+      #
+      # `published` / `version` are written by scripts/record-release.sh via
+      # the exec plugin's successCmd — `pnpm release` sets no outputs itself.
       - name: Release
+        id: semantic-release
         env:
           GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
         run: pnpm release
+
+      # The release commit is created and pushed by @semantic-release/git, so
+      # local HEAD now carries the bumped pyproject.toml. The publish job
+      # builds this exact commit rather than a branch name, which would
+      # otherwise race with anything landing on main in the meantime.
+      - name: Record released commit
+        id: released-commit
+        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+  # These steps duplicate publish-python.yml rather than calling it. PyPI's
+  # trusted publishing cannot authorize an upload that runs inside a reusable
+  # workflow, so `uses:` is not available here — the upload has to sit in the
+  # workflow that PyPI is configured to trust. publish-python.yml stays as the
+  # manual recovery path; both files need a trusted publisher on PyPI.
+  publish-python:
+    name: Publish to PyPI
+    needs: release
+    if: needs.release.outputs.published == 'true'
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.release.outputs.sha }}
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+      - run: uv build
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # release/v1
+        with:
+          packages-dir: dist/
