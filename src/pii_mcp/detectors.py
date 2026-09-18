@@ -9,17 +9,22 @@ Patterns:
 - Spaced IBANs use separate upper- and lower-case patterns so a trailing word
   is not swallowed by a mixed-case class.
 - Credit cards include Amex 4-6-5 groupings as well as 4-4-4-x and compact.
+- MAC: colon/dash IEEE and Cisco dotted forms (AP: device MAC is personal data).
 - IP: IPv4 octet-bounded regex; IPv6 candidate shapes validated via
   ``ipaddress`` (AP notes IP addresses can be personal data).
+- Location: decimal lat/lon pairs with ≥3 fractional digits and range checks
+  (AP lists locatiegegevens as privacy-sensitive).
 - US SSN: hyphenated or compact 9-digit with SSA area/group/serial rejects.
 - German Steuer-IdNr (tax_id): 11 digits with structure + mod-11/10 check.
 - NL postcode (``address``): ``1234 AB`` / ``1234AB`` with uppercase letters
   only and SA/SD/SS rejects — structured address fragment without Tier-2 NER.
+- NL kenteken (``license_plate``): hyphenated RDW sidecodes 1–14, uppercase,
+  with SA/SD/SS letter-pair rejects.
 - Phone packs: international (any active pack), NL national, NANP, DE national
   (DE excludes exact Dutch ``06…`` 10-digit mobiles).
 
-``UNIVERSAL_DETECTORS`` (email, IBAN, credit card, IP) always run; locale
-detectors are selected by ``languages=`` in the scrub layer.
+``UNIVERSAL_DETECTORS`` (email, IBAN, credit card, MAC, IP, location) always
+run; locale detectors are selected by ``languages=`` in the scrub layer.
 """
 
 from __future__ import annotations
@@ -34,12 +39,15 @@ PiiCategory = Literal[
     "email",
     "iban",
     "credit_card",
+    "mac",
     "ip",
+    "location",
     "bsn",
     "ssn",
     "tax_id",
     "phone",
     "address",
+    "license_plate",
 ]
 
 
@@ -151,6 +159,27 @@ def _scrub_credit_card(text: str) -> tuple[str, int]:
 
 credit_card_detector = Detector(type="credit_card", scrub=_scrub_credit_card)
 
+MAC_RES: tuple[re.Pattern[str], ...] = (
+    re.compile(
+        r"(?<![\w:])(?:[0-9A-Fa-f]{2}[:-]){5}[0-9A-Fa-f]{2}(?![\w:])"
+    ),
+    re.compile(
+        r"(?<![\w.])(?:[0-9A-Fa-f]{4}\.){2}[0-9A-Fa-f]{4}(?![\w.])"
+    ),
+)
+
+
+def _scrub_mac(text: str) -> tuple[str, int]:
+    out = text
+    count = 0
+    for pattern in MAC_RES:
+        out, n = _replace_matches(out, pattern, "[MAC]")
+        count += n
+    return out, count
+
+
+mac_detector = Detector(type="mac", scrub=_scrub_mac)
+
 IPV4_RE = re.compile(
     r"(?<![\w.])(?:(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\.){3}"
     r"(?:25[0-5]|2[0-4]\d|[01]?\d\d?)(?![\w.])"
@@ -188,6 +217,31 @@ def _scrub_ip(text: str) -> tuple[str, int]:
 
 
 ip_detector = Detector(type="ip", scrub=_scrub_ip)
+
+# Decimal degree pairs; ≥3 fractional digits cuts version-like ``1.0, 2.0``.
+LOCATION_RE = re.compile(
+    r"(?<![\d.+-])[-+]?\d{1,3}\.\d{3,8}\s*,\s*[-+]?\d{1,3}\.\d{3,8}(?![\d.])"
+)
+
+
+def _location_valid(value: str) -> bool:
+    """Accept lat,lon (WGS84) when both components fall in geographic ranges."""
+    parts = re.split(r"\s*,\s*", value.strip())
+    if len(parts) != 2:
+        return False
+    try:
+        lat = float(parts[0])
+        lon = float(parts[1])
+    except ValueError:
+        return False
+    return -90.0 <= lat <= 90.0 and -180.0 <= lon <= 180.0
+
+
+def _scrub_location(text: str) -> tuple[str, int]:
+    return _replace_matches(text, LOCATION_RE, "[LOCATION]", _location_valid)
+
+
+location_detector = Detector(type="location", scrub=_scrub_location)
 
 BSN_RE = re.compile(r"\b\d{8,9}\b")
 
@@ -343,9 +397,52 @@ def _scrub_nl_postcode(text: str) -> tuple[str, int]:
 
 nl_postcode_detector = Detector(type="address", scrub=_scrub_nl_postcode)
 
+# Hyphenated RDW sidecodes 1–14 only (compact forms are too collision-prone).
+NL_LICENSE_PLATE_RE = re.compile(
+    r"(?<![\w-])(?:"
+    r"[A-Z]{2}-\d{2}-\d{2}"
+    r"|\d{2}-\d{2}-[A-Z]{2}"
+    r"|\d{2}-[A-Z]{2}-\d{2}"
+    r"|[A-Z]{2}-\d{2}-[A-Z]{2}"
+    r"|[A-Z]{2}-[A-Z]{2}-\d{2}"
+    r"|\d{2}-[A-Z]{2}-[A-Z]{2}"
+    r"|\d{2}-[A-Z]{3}-\d"
+    r"|\d-[A-Z]{3}-\d{2}"
+    r"|[A-Z]{2}-\d{3}-[A-Z]"
+    r"|[A-Z]-\d{3}-[A-Z]{2}"
+    r"|[A-Z]{3}-\d{2}-[A-Z]"
+    r"|[A-Z]-\d{2}-[A-Z]{3}"
+    r"|\d-[A-Z]{2}-\d{3}"
+    r"|\d{3}-[A-Z]{2}-\d"
+    r")(?![\w-])"
+)
+_NL_PLATE_LETTER_REJECTS = frozenset({"SA", "SD", "SS"})
+
+
+def _nl_license_plate_valid(value: str) -> bool:
+    """Reject RDW-forbidden SA/SD/SS letter pairs anywhere in the plate."""
+    letters = "".join(ch for ch in value.upper() if ch.isalpha())
+    for i in range(len(letters) - 1):
+        if letters[i : i + 2] in _NL_PLATE_LETTER_REJECTS:
+            return False
+    return True
+
+
+def _scrub_nl_license_plate(text: str) -> tuple[str, int]:
+    return _replace_matches(
+        text, NL_LICENSE_PLATE_RE, "[LICENSE_PLATE]", _nl_license_plate_valid
+    )
+
+
+nl_license_plate_detector = Detector(
+    type="license_plate", scrub=_scrub_nl_license_plate
+)
+
 UNIVERSAL_DETECTORS: tuple[Detector, ...] = (
     email_detector,
     iban_detector,
     credit_card_detector,
+    mac_detector,
     ip_detector,
+    location_detector,
 )
