@@ -87,16 +87,17 @@ npm install pii-mcp
 ```
 
 Default installs stay pure TypeScript. To use the same `pii-core` crate via
-N-API (shared with Python’s PyO3 addon):
+N-API from a clone of this repo (shared with Python’s PyO3 addon):
 
 ```bash
 cd typescript
 npm install
 npm run build
-npm run build:native   # requires a Rust toolchain
+npm run build:native   # requires a Rust toolchain; needs ../crates/pii-core
 ```
 
-When the napi addon is loadable, `scrubText` / `scrubPayload` use it.
+Published `npm install pii-mcp` is JS-only until optional native artifacts ship.
+When a locally built napi addon is loadable, `scrubText` / `scrubPayload` use it.
 Force the JS path with `PII_MCP_BACKEND=js`. See [`typescript/README.md`](typescript/README.md).
 
 #### Performance (TypeScript vs Rust release)

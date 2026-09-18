@@ -44,7 +44,6 @@ function isMusl(): boolean {
     return false;
   }
   try {
-    // Node report header exposes glibc when present; absence ≈ musl.
     const report = process.report?.getReport?.() as
       | { header?: { glibcVersionRuntime?: string } }
       | undefined;
@@ -52,9 +51,9 @@ function isMusl(): boolean {
       return !report.header.glibcVersionRuntime;
     }
   } catch {
-    // fall through
+    // fall through — default to gnu (most CI / server images)
   }
-  return true;
+  return false;
 }
 
 function platformTriple(): string | null {

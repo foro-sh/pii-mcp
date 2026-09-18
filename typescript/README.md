@@ -14,18 +14,20 @@ core scrub API for Node/TypeScript callers.
 npm install pii-mcp
 ```
 
-Default installs are pure TypeScript (no Rust toolchain).
+Default installs are pure TypeScript (no Rust toolchain). A registry
+`npm install pii-mcp` is JS-only until optional native artifacts ship.
 
 ### Optional Rust core
 
-Accelerate scrubbing with the shared `pii-core` crate via N-API (same core as
-the Python PyO3 addon — one detector implementation across runtimes):
+Accelerate scrubbing with the shared `pii-core` crate via N-API from a clone of
+this repo (same core as the Python PyO3 addon — one detector implementation
+across runtimes):
 
 ```bash
 cd typescript
 npm install
 npm run build
-npm run build:native   # requires a Rust toolchain
+npm run build:native   # requires a Rust toolchain; needs ../crates/pii-core
 ```
 
 When the napi addon is loadable, `scrubText` / `scrubPayload` use it.

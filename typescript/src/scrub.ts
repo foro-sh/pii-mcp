@@ -136,6 +136,9 @@ export function scrubText(
   text: string,
   options?: ScrubOptions,
 ): ScrubTextResult {
+  if (typeof text !== "string") {
+    throw new TypeError("scrubText expects a string");
+  }
   if (resolveBackend() === "native") {
     const native = loadNative();
     if (native === null) {
