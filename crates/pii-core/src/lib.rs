@@ -13,8 +13,8 @@ pub use checksum::{
 };
 pub use detectors::{detectors_for, PiiCategory};
 pub use scrub::{
-    empty_pii_counts, normalize_languages, scrub_text, total_pii_count, LanguageCode,
-    PiiCounts, PiiScrubError, PiiType, ScrubResult, DEFAULT_LANGUAGES, MAX_DEPTH,
+    empty_pii_counts, normalize_languages, scrub_text, scrub_text_langs, total_pii_count,
+    LanguageCode, PiiCounts, PiiScrubError, PiiType, ScrubResult, DEFAULT_LANGUAGES, MAX_DEPTH,
     MAX_SCRUB_BYTES, PII_TYPES,
 };
 

@@ -5,6 +5,7 @@
 //! including reserved `person` (unused until NER is added).
 
 use crate::detectors::{detectors_for, PiiCategory};
+use std::borrow::Cow;
 use std::collections::BTreeMap;
 use thiserror::Error;
 
@@ -117,14 +118,20 @@ pub fn normalize_languages(
     }
 }
 
-fn category_key(cat: PiiCategory) -> &'static str {
-    cat.as_str()
+fn bump_count(counts: &mut PiiCounts, cat: PiiCategory, n: u32) {
+    if n == 0 {
+        return;
+    }
+    // Keys are pre-seeded by [`empty_pii_counts`]; avoid re-allocating the key.
+    if let Some(slot) = counts.get_mut(cat.as_str()) {
+        *slot += n;
+    }
 }
 
-/// Mask pattern-detectable PII in a string.
-pub fn scrub_text(
+/// Mask pattern-detectable PII in a string using an already-normalized language pack.
+pub fn scrub_text_langs(
     text: &str,
-    languages: Option<&[String]>,
+    langs: &[LanguageCode],
     check_size: bool,
 ) -> Result<ScrubResult, PiiScrubError> {
     if check_size && text.len() > MAX_SCRUB_BYTES {
@@ -133,30 +140,36 @@ pub fn scrub_text(
         )));
     }
 
-    let langs = normalize_languages(languages)?;
     let mut counts = empty_pii_counts();
-    let mut out = text.to_string();
-    for detector in detectors_for(&langs) {
-        let (next, n) = (detector.scrub)(&out);
-        out = next;
-        let key = category_key(detector.category);
-        *counts.entry(key.to_string()).or_insert(0) += n;
+    let mut out: Cow<'_, str> = Cow::Borrowed(text);
+    for detector in detectors_for(langs) {
+        let (next, n) = (detector.scrub)(out.as_ref());
+        bump_count(&mut counts, detector.category, n);
+        if let Some(s) = next {
+            out = Cow::Owned(s);
+        }
     }
     Ok(ScrubResult {
         found: total_pii_count(&counts) > 0,
-        text: out,
+        text: out.into_owned(),
         counts,
     })
+}
+
+/// Mask pattern-detectable PII in a string.
+pub fn scrub_text(
+    text: &str,
+    languages: Option<&[String]>,
+    check_size: bool,
+) -> Result<ScrubResult, PiiScrubError> {
+    let langs = normalize_languages(languages)?;
+    scrub_text_langs(text, &langs, check_size)
 }
 
 #[cfg(feature = "payload")]
 mod payload {
     use super::*;
     use serde_json::Value;
-
-    fn utf8_size(text: &str) -> usize {
-        text.len()
-    }
 
     fn payload_string_bytes(value: &Value, depth: usize) -> Result<usize, PiiScrubError> {
         if depth > MAX_DEPTH {
@@ -165,7 +178,7 @@ mod payload {
             )));
         }
         match value {
-            Value::String(s) => Ok(utf8_size(s)),
+            Value::String(s) => Ok(s.len()),
             Value::Array(items) => {
                 let mut total = 0usize;
                 for item in items {
@@ -188,7 +201,7 @@ mod payload {
         value: Value,
         counts: &mut PiiCounts,
         depth: usize,
-        languages: Option<&[String]>,
+        langs: &[LanguageCode],
     ) -> Result<Value, PiiScrubError> {
         if depth > MAX_DEPTH {
             return Err(PiiScrubError::new(format!(
@@ -197,24 +210,25 @@ mod payload {
         }
         match value {
             Value::String(s) => {
-                let result = scrub_text(&s, languages, false)?;
+                let result = scrub_text_langs(&s, langs, false)?;
                 for t in PII_TYPES {
-                    *counts.entry((*t).to_string()).or_insert(0) +=
-                        result.counts.get(*t).copied().unwrap_or(0);
+                    if let Some(slot) = counts.get_mut(*t) {
+                        *slot += result.counts.get(*t).copied().unwrap_or(0);
+                    }
                 }
                 Ok(Value::String(result.text))
             }
             Value::Array(items) => {
                 let mut out = Vec::with_capacity(items.len());
                 for item in items {
-                    out.push(scrub_walk(item, counts, depth + 1, languages)?);
+                    out.push(scrub_walk(item, counts, depth + 1, langs)?);
                 }
                 Ok(Value::Array(out))
             }
             Value::Object(map) => {
                 let mut out = serde_json::Map::new();
                 for (key, item) in map {
-                    out.insert(key, scrub_walk(item, counts, depth + 1, languages)?);
+                    out.insert(key, scrub_walk(item, counts, depth + 1, langs)?);
                 }
                 Ok(Value::Object(out))
             }
@@ -239,8 +253,9 @@ mod payload {
                 "scrub input exceeds the {MAX_SCRUB_BYTES}-byte size cap"
             )));
         }
+        let langs = normalize_languages(languages)?;
         let mut counts = empty_pii_counts();
-        let scrubbed = scrub_walk(payload, &mut counts, 0, languages)?;
+        let scrubbed = scrub_walk(payload, &mut counts, 0, &langs)?;
         Ok(PayloadScrubResult {
             found: total_pii_count(&counts) > 0,
             payload: scrubbed,
@@ -287,5 +302,13 @@ mod tests {
         let langs = vec!["fr".to_string()];
         let err = scrub_text("hi", Some(&langs), true).unwrap_err();
         assert!(err.to_string().contains("unknown language"));
+    }
+
+    #[test]
+    fn clean_text_unchanged() {
+        let t = "The server exposes a search tool and a fetch tool.";
+        let r = scrub_text(t, None, true).unwrap();
+        assert_eq!(r.text, t);
+        assert!(!r.found);
     }
 }

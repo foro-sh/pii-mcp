@@ -39,12 +39,12 @@ Medians from `scripts/bench_backends.py` on macOS arm64 / CPython 3.14.7
 
 | Case | Python | Rust | Speedup |
 |------|--------|------|---------|
-| Short clean text | 0.233 ms | 0.026 ms | 9.1× |
-| Short mixed PII | 0.057 ms | 0.009 ms | 6.3× |
-| 100 KiB sparse PII | 20.3 ms | 2.1 ms | 9.7× |
-| 1 MiB sparse PII | 205 ms | 21.5 ms | 9.5× |
-| Nested JSON payload | 12.3 ms | 1.3 ms | 9.8× |
-| 1k× tiny `scrub_text` | 53.4 ms | 8.1 ms | 6.6× |
+| Short clean text | 0.234 ms | 0.023 ms | 10.2× |
+| Short mixed PII | 0.058 ms | 0.007 ms | 8.9× |
+| 100 KiB sparse PII | 20.4 ms | 2.0 ms | 10.2× |
+| 1 MiB sparse PII | 203 ms | 20.4 ms | 10.0× |
+| Nested JSON payload | 12.4 ms | 1.2 ms | 10.3× |
+| 1k× tiny `scrub_text` | 54.3 ms | 6.8 ms | 8.0× |
 
 ```bash
 python scripts/bench_backends.py
