@@ -23,23 +23,20 @@ this work."
 
 - Never leave the working tree dirty at the end of a task. If you changed it,
   commit it.
-- Use Conventional Commits — `<type>(scope): description`. The `.githooks/commit-msg`
-  hook (commitlint) enforces this; a bad subject is rejected.
+- Follow **Commit discipline** in `AGENTS.md`: atomic Conventional Commits
+  (`<type>(scope): description`). The `.githooks/commit-msg` hook (commitlint)
+  enforces the message shape; a bad subject is rejected.
 - **Merge commits count too.** commitlint ignores them by default, so Git's
   auto-generated `Merge branch ...` subject slips through — don't let it. When
   resolving conflicts or merging `main` into a branch, replace it with a
-  conventional subject, e.g. `chore(web): merge origin/main into metrics branch`.
-- Commit at logical checkpoints, not one giant blob. One commit should be one
-  coherent change with a message that explains the *why*.
-- End every commit message with a `Co-Authored-By` trailer naming the model that
-  wrote it, at `<noreply@anthropic.com>`:
-  `Co-Authored-By: Claude <model> <noreply@anthropic.com>`
-
-  Use whatever your harness specifies for the model you actually are (e.g.
-  `Claude Opus 5`, `Claude Sonnet 5`); if it specifies nothing, plain
-  `Co-Authored-By: Claude <noreply@anthropic.com>` is fine. Don't copy a version
-  from this file or from older commits — the attribution should be accurate for
-  the commit at hand, and this doc can't stay current with model releases.
+  conventional subject, e.g. `chore: merge origin/main into <branch>`.
+- Make atomic commits — one coherent, self-contained change per commit that
+  builds and passes its checks on its own. A single issue normally produces
+  several commits (one per logical step), not one squashed blob. Message
+  explains the *why*.
+- If your harness asks for a `Co-Authored-By` trailer, use whatever it
+  specifies for the model that wrote the commit. Do not invent a vendor or
+  copy a stale model name from this file.
 
 ### Step 2: Group into PRs by concern
 
@@ -68,8 +65,8 @@ this work."
      anything touching data handling, security/compliance, or user-visible
      behavior; skip only for changes with no runtime behavior to check (docs,
      comments, pure refactors covered 1:1 by existing tests).
-- End the PR body with:
-  `🤖 Generated with [Claude Code](https://claude.com/claude-code)`
+- If your harness adds a generated-with footer to PR bodies, keep whatever it
+  requires; do not invent a vendor-specific footer when none is required.
 
 ### Step 4: Self-review and commit fixes
 
