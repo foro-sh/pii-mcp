@@ -1,15 +1,29 @@
 # pii-mcp
 
 Pattern-based PII scrubbing for MCP servers (regex + checksums). Mask emails,
-IBANs, cards, BICs, MACs, IPs, coordinates, BSNs, US SSNs, German tax IDs,
-Dutch BTW-ids, phones, Dutch postcodes, and Dutch license plates in tool
-results — not NER for person names or full street addresses. Language packs:
-`en`, `nl`, and opt-in `de`.
+IBANs, cards, BICs, MACs, IMEIs, IPs, coordinates, BSNs, US SSNs, German tax
+IDs, Dutch BTW-ids, Dutch passport/ID numbers, phones, Dutch postcodes, and
+Dutch license plates in tool results — not NER for person names or full street
+addresses. Language packs: `en`, `nl`, and opt-in `de`.
 
-Aligned with AP examples of persoonsgegevens where pattern/checksum detection
-can reach them (contact/financial IDs, online identifiers including IP/MAC,
-locatiegegevens as coordinates, BSN, kenteken). Names, free-text health data,
-and full street addresses need NER and are out of scope here.
+Aligned with [AP: wat zijn persoonsgegevens](https://www.autoriteitpersoonsgegevens.nl/themas/basis-avg/privacy-en-persoonsgegevens/wat-zijn-persoonsgegevens)
+where pattern/checksum detection can reach them. Names, free-text health data
+(allergies), photos/audio/video, unstructured klant-/personeelsnummers, and
+full street addresses need NER or media handling and stay out of scope.
+
+### AP coverage (pattern layer)
+
+| AP example / category | Detector | Notes |
+|----------------------|----------|-------|
+| e-mail / contact | `email`, `phone` | |
+| IP-adres | `ip` | Indirect identifier |
+| Locatiegegevens | `location` | Decimal lat/lon |
+| Financiële gegevens | `iban`, `credit_card`, `bic`, `vat_id` | |
+| BSN / nationaal ID | `bsn`, `passport` | Passport/NIK format (nl pack) |
+| Online / device IDs | `mac`, `imei` | IMEI: grouped forms + Luhn |
+| Adres (structured) | `address` | NL postcode only |
+| Kenteken | `license_plate` | nl pack |
+| Naam, pasfoto, allergieën, koopgedrag, camera | — | NER / media |
 
 Packages:
 

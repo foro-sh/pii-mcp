@@ -11,6 +11,9 @@ Patterns:
 - Credit cards include Amex 4-6-5 groupings as well as 4-4-4-x and compact.
 - BIC/SWIFT: 8 or 11 alnum with ISO 3166-1 country letters (AP: financial data).
 - MAC: colon/dash IEEE and Cisco dotted forms (AP: device MAC is personal data).
+- IMEI: hyphen/space-grouped 15-digit forms with Luhn (AP: gegevens over
+  elektronische communicatie / device identifiers). Compact 15-digit IMEIs
+  that are also Luhn-valid collide with Amex and stay under ``credit_card``.
 - IP: IPv4 octet-bounded regex; IPv6 candidate shapes validated via
   ``ipaddress`` (AP notes IP addresses can be personal data).
 - Location: decimal lat/lon pairs with ≥3 fractional digits and range checks
@@ -19,6 +22,9 @@ Patterns:
 - German Steuer-IdNr (tax_id): 11 digits with structure + mod-11/10 check.
 - NL BTW-id (``vat_id``): ``NL`` + 9 digits + ``B`` + 2 digits (format only —
   post-2020 sole-trader ids are not elfproef-gated).
+- NL passport / ID-card number (``passport``): 9-char RvIG document number
+  (``[A-Za-z]{2}[0-9A-Za-z]{6}[0-9]``, letter O forbidden after uppercasing)
+  — national identificatienummer alongside BSN; format only, no check digit.
 - NL postcode (``address``): ``1234 AB`` / ``1234AB`` with uppercase letters
   only and SA/SD/SS rejects — structured fragment, not street-address NER.
 - NL kenteken (``license_plate``): hyphenated RDW sidecodes 1–14, uppercase,
@@ -26,7 +32,7 @@ Patterns:
 - Phone packs: international (any active pack), NL national, NANP, DE national
   (DE excludes exact Dutch ``06…`` 10-digit mobiles).
 
-``UNIVERSAL_DETECTORS`` (email, IBAN, credit card, BIC, MAC, IP, location)
+``UNIVERSAL_DETECTORS`` (email, IBAN, credit card, BIC, MAC, IMEI, IP, location)
 always run; locale detectors are selected by ``languages=`` in the scrub layer.
 """
 
@@ -44,12 +50,14 @@ PiiCategory = Literal[
     "credit_card",
     "bic",
     "mac",
+    "imei",
     "ip",
     "location",
     "bsn",
     "ssn",
     "tax_id",
     "vat_id",
+    "passport",
     "phone",
     "address",
     "license_plate",
@@ -219,6 +227,30 @@ def _scrub_mac(text: str) -> tuple[str, int]:
 
 mac_detector = Detector(type="mac", scrub=_scrub_mac)
 
+# Grouped only — compact 15-digit Luhn values collide with Amex credit cards.
+IMEI_RES: tuple[re.Pattern[str], ...] = (
+    re.compile(r"(?<![\w-])\d{2}[- ]\d{6}[- ]\d{6}[- ]\d(?![\w-])"),
+    re.compile(r"(?<![\w-])\d{8}[- ]\d{6}[- ]\d(?![\w-])"),
+    re.compile(r"(?<![\w-])\d{2}[- ]\d{6}[- ]\d{7}(?![\w-])"),
+)
+
+
+def _imei_valid(value: str) -> bool:
+    digits = re.sub(r"[ -]", "", value)
+    return len(digits) == 15 and digits.isdigit() and _luhn_valid(digits)
+
+
+def _scrub_imei(text: str) -> tuple[str, int]:
+    out = text
+    count = 0
+    for pattern in IMEI_RES:
+        out, n = _replace_matches(out, pattern, "[IMEI]", _imei_valid)
+        count += n
+    return out, count
+
+
+imei_detector = Detector(type="imei", scrub=_scrub_imei)
+
 IPV4_RE = re.compile(
     r"(?<![\w.])(?:(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\.){3}"
     r"(?:25[0-5]|2[0-4]\d|[01]?\d\d?)(?![\w.])"
@@ -378,6 +410,27 @@ def _scrub_nl_vat(text: str) -> tuple[str, int]:
 
 nl_vat_detector = Detector(type="vat_id", scrub=_scrub_nl_vat)
 
+# RvIG document number (passport / NIK): positions 1–2 letters, 3–8 alnum,
+# 9 digit; letter O never used (RvIG kenmerkenbrochure). Case-insensitive —
+# candidates are uppercased before validate (same idea as NL VAT).
+NL_PASSPORT_RE = re.compile(r"\b[A-Za-z]{2}[0-9A-Za-z]{6}\d\b")
+
+
+def _nl_passport_valid(value: str) -> bool:
+    compact = value.upper()
+    if len(compact) != 9:
+        return False
+    if not re.fullmatch(r"[A-Z]{2}[0-9A-Z]{6}\d", compact):
+        return False
+    return "O" not in compact
+
+
+def _scrub_nl_passport(text: str) -> tuple[str, int]:
+    return _replace_matches(text, NL_PASSPORT_RE, "[PASSPORT]", _nl_passport_valid)
+
+
+nl_passport_detector = Detector(type="passport", scrub=_scrub_nl_passport)
+
 
 def _digit_count(text: str) -> int:
     return sum(1 for ch in text if ch.isdigit())
@@ -493,6 +546,7 @@ UNIVERSAL_DETECTORS: tuple[Detector, ...] = (
     credit_card_detector,
     bic_detector,
     mac_detector,
+    imei_detector,
     ip_detector,
     location_detector,
 )

@@ -188,6 +188,31 @@ class TestNlVat:
         assert result["counts"]["vat_id"] == 0
 
 
+class TestNlPassport:
+    def test_masks_document_number(self) -> None:
+        result = scrub_text("paspoort XR1001R58 geldig", languages=["nl"])
+        assert result["text"] == "paspoort [PASSPORT] geldig"
+        assert result["counts"]["passport"] == 1
+
+    def test_masks_lowercased(self) -> None:
+        result = scrub_text("paspoort xr1001r58 geldig", languages=["nl"])
+        assert result["text"] == "paspoort [PASSPORT] geldig"
+        assert result["counts"]["passport"] == 1
+
+    def test_rejects_letter_o(self) -> None:
+        result = scrub_text("doc XR1O01R58", languages=["nl"])
+        assert result["counts"]["passport"] == 0
+
+    def test_rejects_wrong_shape(self) -> None:
+        result = scrub_text("doc 581001RXR", languages=["nl"])
+        assert result["counts"]["passport"] == 0
+
+    def test_disabled_without_nl(self) -> None:
+        result = scrub_text("paspoort XR1001R58 geldig", languages=["en"])
+        assert result["text"] == "paspoort XR1001R58 geldig"
+        assert result["counts"]["passport"] == 0
+
+
 class TestSsn:
     def test_masks_hyphenated(self) -> None:
         result = scrub_text("ssn 078-05-1120 on file", languages=["en"])
@@ -342,6 +367,33 @@ class TestMac:
         assert result["counts"]["ip"] == 1
 
 
+class TestImei:
+    def test_masks_hyphen_grouped(self) -> None:
+        result = scrub_text("device 49-015420-323751-8 registered")
+        assert result["text"] == "device [IMEI] registered"
+        assert result["counts"]["imei"] == 1
+
+    def test_masks_space_grouped(self) -> None:
+        result = scrub_text("imei 49 015420 323751 8 ok")
+        assert result["text"] == "imei [IMEI] ok"
+        assert result["counts"]["imei"] == 1
+
+    def test_masks_8_6_1(self) -> None:
+        result = scrub_text("tac 49015420-323751-8 listed")
+        assert result["text"] == "tac [IMEI] listed"
+        assert result["counts"]["imei"] == 1
+
+    def test_rejects_bad_luhn(self) -> None:
+        result = scrub_text("device 49-015420-323751-9 registered")
+        assert result["counts"]["imei"] == 0
+
+    def test_compact_stays_under_credit_card(self) -> None:
+        """Bare 15-digit Luhn collides with Amex; credit_card owns compact form."""
+        result = scrub_text("amex 378282246310005 charged")
+        assert result["counts"]["credit_card"] == 1
+        assert result["counts"]["imei"] == 0
+
+
 class TestLocation:
     def test_masks_amsterdam_coords(self) -> None:
         result = scrub_text("pin 52.3676, 4.9041 downtown")
@@ -423,12 +475,14 @@ class TestMultiple:
             "credit_card": 1,
             "bic": 0,
             "mac": 0,
+            "imei": 0,
             "ip": 0,
             "location": 0,
             "bsn": 0,
             "ssn": 0,
             "tax_id": 0,
             "vat_id": 0,
+            "passport": 0,
             "phone": 0,
             "person": 0,
             "address": 0,

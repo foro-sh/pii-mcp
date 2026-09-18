@@ -71,6 +71,54 @@ pub fn luhn_valid(digits: &str) -> bool {
     total % 10 == 0
 }
 
+/// IMEI: exactly 15 digits after stripping spaces/hyphens, Luhn-valid.
+pub fn imei_valid(value: &str) -> bool {
+    let mut digits = [0u8; 15];
+    let mut len = 0usize;
+    for b in value.bytes() {
+        if b == b' ' || b == b'-' {
+            continue;
+        }
+        if !b.is_ascii_digit() || len >= digits.len() {
+            return false;
+        }
+        digits[len] = b;
+        len += 1;
+    }
+    if len != 15 {
+        return false;
+    }
+    luhn_valid(std::str::from_utf8(&digits).unwrap())
+}
+
+/// Dutch passport / NIK document number (RvIG): 9 chars, no letter O.
+/// Case-insensitive: candidates are uppercased before structure checks.
+pub fn nl_passport_valid(value: &str) -> bool {
+    let mut buf = [0u8; 9];
+    let bytes = value.as_bytes();
+    if bytes.len() != 9 {
+        return false;
+    }
+    for (i, &b) in bytes.iter().enumerate() {
+        buf[i] = b.to_ascii_uppercase();
+    }
+    if !buf[0].is_ascii_uppercase() || !buf[1].is_ascii_uppercase() {
+        return false;
+    }
+    if !buf[8].is_ascii_digit() {
+        return false;
+    }
+    for &b in &buf {
+        if b == b'O' {
+            return false;
+        }
+        if !(b.is_ascii_uppercase() || b.is_ascii_digit()) {
+            return false;
+        }
+    }
+    true
+}
+
 /// Dutch BSN 11-check (8–9 digits, zero-padded to 9).
 pub fn bsn_valid(digits: &str) -> bool {
     let len = digits.len();
@@ -206,6 +254,22 @@ mod tests {
     fn luhn_visa_test() {
         assert!(luhn_valid("4111111111111111"));
         assert!(!luhn_valid("1234567812345678"));
+    }
+
+    #[test]
+    fn imei_grouped() {
+        assert!(imei_valid("49-015420-323751-8"));
+        assert!(imei_valid("49 015420 323751 8"));
+        assert!(imei_valid("490154203237518"));
+        assert!(!imei_valid("49-015420-323751-9"));
+    }
+
+    #[test]
+    fn nl_passport_format() {
+        assert!(nl_passport_valid("XR1001R58"));
+        assert!(nl_passport_valid("xr1001r58"));
+        assert!(!nl_passport_valid("XR1O01R58"));
+        assert!(!nl_passport_valid("581001RXR"));
     }
 
     #[test]

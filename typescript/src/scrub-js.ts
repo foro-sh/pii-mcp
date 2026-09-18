@@ -1,25 +1,27 @@
 /**
  * Language packs and scrub walk for pattern-based detectors.
  *
- * Universal detectors (email, IBAN, credit card, BIC, MAC, IP, location) always
- * run. Locale packs add national IDs / phone shapes / NL postcodes / kentekens /
- * BTW-ids. Counts always include every ``PiiType`` key (0 when unused), including
- * reserved ``person`` (unused until NER is added). ``address`` is reserved for
- * street-address NER and also receives NL postcode hits from the pattern pack.
+ * Universal detectors (email, IBAN, credit card, BIC, MAC, IMEI, IP, location)
+ * always run. Locale packs add national IDs / phone shapes / NL postcodes /
+ * kentekens / BTW-ids / passport numbers. Counts always include every
+ * ``PiiType`` key (0 when unused), including reserved ``person`` (unused until
+ * NER is added). ``address`` is reserved for street-address NER and also
+ * receives NL postcode hits from the pattern pack.
  *
  * ``MAX_SCRUB_BYTES`` matches foro-proxy (32 MiB). Oversize raises
  * ``PiiScrubError`` so callers withhold rather than forward unscrubbed text.
  *
  * Detector pack order (see ``detectorsFor``): universal → checksum/rule-backed
- * national IDs (BSN before SSN when both packs are on; NL BTW after BSN) → NL
- * postcode / kenteken when ``nl`` → phones (international when any pack is
- * active, then locale forms).
+ * national IDs (BSN before SSN when both packs are on; NL BTW and passport after
+ * BSN) → NL postcode / kenteken when ``nl`` → phones (international when any
+ * pack is active, then locale forms).
  */
 
 import {
   UNIVERSAL_DETECTORS,
   bsnDetector,
   nlLicensePlateDetector,
+  nlPassportDetector,
   nlPostcodeDetector,
   nlVatDetector,
   phoneDeDetector,
@@ -93,7 +95,7 @@ function detectorsFor(
   const langs = normalizeLanguages(languages);
   const pack: Detector[] = [...UNIVERSAL_DETECTORS];
   if (langs.includes("nl")) {
-    pack.push(bsnDetector, nlVatDetector);
+    pack.push(bsnDetector, nlVatDetector, nlPassportDetector);
   }
   if (langs.includes("de")) {
     pack.push(taxIdDetector);

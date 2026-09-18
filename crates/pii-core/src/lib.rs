@@ -8,9 +8,7 @@ mod checksum;
 mod detectors;
 mod scrub;
 
-pub use checksum::{
-    bsn_valid, iban_valid, luhn_valid, nl_postcode_valid, ssn_valid, tax_id_valid,
-};
+pub use checksum::{bsn_valid, iban_valid, luhn_valid, nl_postcode_valid, ssn_valid, tax_id_valid};
 pub use detectors::{detectors_for, PiiCategory};
 pub use scrub::{
     empty_pii_counts, normalize_languages, scrub_text, scrub_text_langs, total_pii_count,

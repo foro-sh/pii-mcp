@@ -4,7 +4,8 @@
 //! explicit boundary checks so matching stays on the linear-time `regex` crate.
 
 use crate::checksum::{
-    bsn_valid, iban_valid, luhn_valid, nl_postcode_valid, ssn_valid, tax_id_valid,
+    bsn_valid, iban_valid, imei_valid, luhn_valid, nl_passport_valid, nl_postcode_valid, ssn_valid,
+    tax_id_valid,
 };
 use regex::Regex;
 use std::sync::OnceLock;
@@ -16,12 +17,14 @@ pub enum PiiCategory {
     CreditCard,
     Bic,
     Mac,
+    Imei,
     Ip,
     Location,
     Bsn,
     Ssn,
     TaxId,
     VatId,
+    Passport,
     Phone,
     Address,
     LicensePlate,
@@ -35,12 +38,14 @@ impl PiiCategory {
             Self::CreditCard => "credit_card",
             Self::Bic => "bic",
             Self::Mac => "mac",
+            Self::Imei => "imei",
             Self::Ip => "ip",
             Self::Location => "location",
             Self::Bsn => "bsn",
             Self::Ssn => "ssn",
             Self::TaxId => "tax_id",
             Self::VatId => "vat_id",
+            Self::Passport => "passport",
             Self::Phone => "phone",
             Self::Address => "address",
             Self::LicensePlate => "license_plate",
@@ -153,13 +158,7 @@ fn iban_res() -> &'static [Regex] {
 }
 
 fn scrub_iban(text: &str) -> (Option<String>, u32) {
-    scrub_patterns(
-        text,
-        iban_res(),
-        "[IBAN]",
-        |v, _, _| iban_valid(v),
-        false,
-    )
+    scrub_patterns(text, iban_res(), "[IBAN]", |v, _, _| iban_valid(v), false)
 }
 
 fn credit_card_res() -> &'static [Regex] {
@@ -222,9 +221,7 @@ const ISO_3166_1_ALPHA2: &[&str] = &[
 
 fn bic_re() -> &'static Regex {
     static RE: OnceLock<Regex> = OnceLock::new();
-    RE.get_or_init(|| {
-        Regex::new(r"\b[A-Z]{4}[A-Z]{2}[A-Z0-9]{2}(?:[A-Z0-9]{3})?\b").unwrap()
-    })
+    RE.get_or_init(|| Regex::new(r"\b[A-Z]{4}[A-Z]{2}[A-Z0-9]{2}(?:[A-Z0-9]{3})?\b").unwrap())
 }
 
 fn bic_valid(value: &str) -> bool {
@@ -303,11 +300,60 @@ fn scrub_mac(text: &str) -> (Option<String>, u32) {
     (second.or(first), count)
 }
 
+// Grouped only — compact 15-digit Luhn values collide with Amex credit cards.
+fn imei_res() -> &'static [Regex] {
+    static RES: OnceLock<Vec<Regex>> = OnceLock::new();
+    RES.get_or_init(|| {
+        vec![
+            Regex::new(r"\d{2}[- ]\d{6}[- ]\d{6}[- ]\d").unwrap(),
+            Regex::new(r"\d{8}[- ]\d{6}[- ]\d").unwrap(),
+            Regex::new(r"\d{2}[- ]\d{6}[- ]\d{7}").unwrap(),
+        ]
+    })
+}
+
+fn imei_boundary_ok(text: &str, start: usize, end: usize) -> bool {
+    // (?<![\w-]) … (?![\w-])
+    if start > 0 {
+        let prev = text[..start].chars().next_back().unwrap();
+        if is_word_char(prev) || prev == '-' {
+            return false;
+        }
+    }
+    if end < text.len() {
+        let next = text[end..].chars().next().unwrap();
+        if is_word_char(next) || next == '-' {
+            return false;
+        }
+    }
+    true
+}
+
+fn scrub_imei(text: &str) -> (Option<String>, u32) {
+    let mut current: Option<String> = None;
+    let mut count = 0u32;
+    for pattern in imei_res() {
+        let (next, n) = {
+            let src = current.as_deref().unwrap_or(text);
+            replace_matches(
+                src,
+                pattern,
+                "[IMEI]",
+                |v, s, e| imei_boundary_ok(src, s, e) && imei_valid(v),
+                true,
+            )
+        };
+        count += n;
+        if let Some(s) = next {
+            current = Some(s);
+        }
+    }
+    (current, count)
+}
+
 fn location_re() -> &'static Regex {
     static RE: OnceLock<Regex> = OnceLock::new();
-    RE.get_or_init(|| {
-        Regex::new(r"[-+]?\d{1,3}\.\d{3,8}\s*,\s*[-+]?\d{1,3}\.\d{3,8}").unwrap()
-    })
+    RE.get_or_init(|| Regex::new(r"[-+]?\d{1,3}\.\d{3,8}\s*,\s*[-+]?\d{1,3}\.\d{3,8}").unwrap())
 }
 
 fn location_boundary_ok(text: &str, start: usize, end: usize) -> bool {
@@ -360,10 +406,8 @@ fn scrub_location(text: &str) -> (Option<String>, u32) {
 fn ipv4_re() -> &'static Regex {
     static RE: OnceLock<Regex> = OnceLock::new();
     RE.get_or_init(|| {
-        Regex::new(
-            r"(?:(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\.){3}(?:25[0-5]|2[0-4]\d|[01]?\d\d?)",
-        )
-        .unwrap()
+        Regex::new(r"(?:(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\.){3}(?:25[0-5]|2[0-4]\d|[01]?\d\d?)")
+            .unwrap()
     })
 }
 
@@ -470,7 +514,13 @@ fn tax_id_re() -> &'static Regex {
 }
 
 fn scrub_tax_id(text: &str) -> (Option<String>, u32) {
-    replace_matches(text, tax_id_re(), "[TAX_ID]", |v, _, _| tax_id_valid(v), false)
+    replace_matches(
+        text,
+        tax_id_re(),
+        "[TAX_ID]",
+        |v, _, _| tax_id_valid(v),
+        false,
+    )
 }
 
 fn digit_count(text: &str) -> usize {
@@ -604,6 +654,21 @@ fn scrub_nl_vat(text: &str) -> (Option<String>, u32) {
     replace_matches(text, nl_vat_re(), "[VAT_ID]", |_, _, _| true, false)
 }
 
+fn nl_passport_re() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| Regex::new(r"(?i)\b[A-Z]{2}[0-9A-Z]{6}\d\b").unwrap())
+}
+
+fn scrub_nl_passport(text: &str) -> (Option<String>, u32) {
+    replace_matches(
+        text,
+        nl_passport_re(),
+        "[PASSPORT]",
+        |v, _, _| nl_passport_valid(v),
+        false,
+    )
+}
+
 fn nl_license_plate_re() -> &'static Regex {
     static RE: OnceLock<Regex> = OnceLock::new();
     RE.get_or_init(|| {
@@ -685,6 +750,10 @@ const UNIVERSAL: &[Detector] = &[
         scrub: scrub_mac,
     },
     Detector {
+        category: PiiCategory::Imei,
+        scrub: scrub_imei,
+    },
+    Detector {
         category: PiiCategory::Ip,
         scrub: scrub_ip,
     },
@@ -720,6 +789,10 @@ fn build_detectors(mask: u8) -> Vec<Detector> {
         pack.push(Detector {
             category: PiiCategory::VatId,
             scrub: scrub_nl_vat,
+        });
+        pack.push(Detector {
+            category: PiiCategory::Passport,
+            scrub: scrub_nl_passport,
         });
     }
     if has_de {
