@@ -1,0 +1,49 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "pii-mcp"
+version = "0.1.0"
+description = "Tier-1 PII scrubbing for MCP servers — one-line FastMCP middleware"
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.10"
+authors = [{ name = "foro.sh" }]
+keywords = ["mcp", "pii", "fastmcp", "privacy", "redaction"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Intended Audience :: Developers",
+  "License :: OSI Approved :: MIT License",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Topic :: Security",
+]
+dependencies = []
+
+[project.optional-dependencies]
+fastmcp = [
+  # Middleware API: Middleware, on_call_tool / on_read_resource / on_get_prompt,
+  # ToolResult with content + structured_content (FastMCP 3.0+).
+  "fastmcp>=3.0.0",
+]
+dev = [
+  "pytest>=8.0",
+  "pytest-asyncio>=0.24",
+  "pii-mcp[fastmcp]",
+]
+
+[project.urls]
+Homepage = "https://github.com/foro-sh/pii-mcp"
+Issues = "https://github.com/foro-sh/pii-mcp/issues"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/pii_mcp"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+pythonpath = ["src"]

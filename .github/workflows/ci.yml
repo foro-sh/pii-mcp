@@ -17,7 +17,7 @@ permissions:
   contents: read
 
 jobs:
-  test:
+  commitlint:
     name: Lint commits
     if: ${{ !github.event.pull_request.draft }}
     runs-on: ubuntu-latest
@@ -25,7 +25,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0 # full history so the commitlint range is resolvable
+          fetch-depth: 0
           persist-credentials: false
 
       - name: Setup pnpm
@@ -46,3 +46,27 @@ jobs:
           --from ${{ github.event.pull_request.base.sha }}
           --to ${{ github.event.pull_request.head.sha }}
           --verbose
+
+  test:
+    name: Python (3.12 + FastMCP floor)
+    if: ${{ !github.event.pull_request.draft }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install package + FastMCP floor
+        run: |
+          python -m pip install --upgrade pip
+          # Pin the declared minimum FastMCP so CI exercises the version floor.
+          pip install -e ".[dev]" "fastmcp==3.0.0"
+
+      - name: Run tests
+        run: pytest -q
