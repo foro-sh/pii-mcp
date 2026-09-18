@@ -26,17 +26,17 @@ fn fold_iban_mod97(chars: impl Iterator<Item = char>, mut remainder: u32) -> u32
 
 /// IBAN mod-97 after compacting whitespace and uppercasing.
 pub fn iban_valid(value: &str) -> bool {
-    // Max IBAN length is 34; keep a stack buffer.
+    // Max IBAN length is 34; keep a stack buffer for the ASCII path.
     let mut compact = [0u8; 34];
     let mut len = 0usize;
-    for b in value.bytes() {
-        if b.is_ascii_whitespace() {
+    for c in value.chars() {
+        if c.is_whitespace() {
             continue;
         }
-        if len >= compact.len() {
+        if !c.is_ascii() || len >= compact.len() {
             return false;
         }
-        compact[len] = b.to_ascii_uppercase();
+        compact[len] = (c as u8).to_ascii_uppercase();
         len += 1;
     }
     let compact = std::str::from_utf8(&compact[..len]).unwrap();
@@ -170,14 +170,15 @@ const NL_POSTCODE_REJECTS: &[&str] = &["SA", "SD", "SS"];
 pub fn nl_postcode_valid(value: &str) -> bool {
     let mut compact = [0u8; 6];
     let mut len = 0usize;
-    for b in value.bytes() {
-        if b.is_ascii_whitespace() {
+    for c in value.chars() {
+        // Match Python/`\s`: strip any Unicode whitespace the detector may keep.
+        if c.is_whitespace() {
             continue;
         }
-        if len >= compact.len() {
+        if !c.is_ascii() || len >= compact.len() {
             return false;
         }
-        compact[len] = b.to_ascii_uppercase();
+        compact[len] = (c as u8).to_ascii_uppercase();
         len += 1;
     }
     if len != 6 {
@@ -231,5 +232,12 @@ mod tests {
         assert!(nl_postcode_valid("1012 AB"));
         assert!(nl_postcode_valid("2511VA"));
         assert!(!nl_postcode_valid("1234 SA"));
+        // Detector `\s` can match NBSP; validator must still accept.
+        assert!(nl_postcode_valid("1012\u{00a0}AB"));
+    }
+
+    #[test]
+    fn iban_unicode_space() {
+        assert!(iban_valid("NL91\u{00a0}ABNA0417164300"));
     }
 }
