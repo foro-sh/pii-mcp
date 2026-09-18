@@ -50,6 +50,7 @@
     "build": "tsc -p tsconfig.build.json",
     "build:native": "napi build --platform --release --cargo-cwd ../crates/pii-mcp-napi --cargo-name pii_mcp native",
     "build:native:debug": "napi build --platform --cargo-cwd ../crates/pii-mcp-napi --cargo-name pii_mcp native",
+    "bench": "npm run build && node ../scripts/bench_backends.mjs",
     "artifacts": "napi artifacts",
     "test": "vitest run",
     "test:watch": "vitest",
