@@ -1,3 +1,13 @@
+## [1.3.1](https://github.com/foro-sh/pii-mcp/compare/v1.3.0...v1.3.1) (2026-09-18)
+
+### Bug Fixes
+
+* **rust:** strip Unicode whitespace in validators ([1a45ba7](https://github.com/foro-sh/pii-mcp/commit/1a45ba7b38624f8824c83d59c2af00b63fca9a31))
+
+### Performance Improvements
+
+* **rust:** cut scrub allocs on hot path ([65e834b](https://github.com/foro-sh/pii-mcp/commit/65e834bfdfcec400fa465812dd99587a591742c2))
+
 ## [1.3.0](https://github.com/foro-sh/pii-mcp/compare/v1.2.0...v1.3.0) (2026-09-18)
 
 ### Features
