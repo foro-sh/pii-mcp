@@ -9,17 +9,22 @@ Patterns:
 - Spaced IBANs use separate upper- and lower-case patterns so a trailing word
   is not swallowed by a mixed-case class.
 - Credit cards include Amex 4-6-5 groupings as well as 4-4-4-x and compact.
+- IP: IPv4 octet-bounded regex; IPv6 candidate shapes validated via
+  ``ipaddress`` (AP notes IP addresses can be personal data).
 - US SSN: hyphenated or compact 9-digit with SSA area/group/serial rejects.
 - German Steuer-IdNr (tax_id): 11 digits with structure + mod-11/10 check.
+- NL postcode (``address``): ``1234 AB`` / ``1234AB`` with uppercase letters
+  only and SA/SD/SS rejects — structured address fragment without Tier-2 NER.
 - Phone packs: international (any active pack), NL national, NANP, DE national
   (DE excludes exact Dutch ``06…`` 10-digit mobiles).
 
-``UNIVERSAL_DETECTORS`` (email, IBAN, credit card) always run; locale detectors
-are selected by ``languages=`` in the scrub layer.
+``UNIVERSAL_DETECTORS`` (email, IBAN, credit card, IP) always run; locale
+detectors are selected by ``languages=`` in the scrub layer.
 """
 
 from __future__ import annotations
 
+import ipaddress
 import re
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -29,10 +34,12 @@ PiiCategory = Literal[
     "email",
     "iban",
     "credit_card",
+    "ip",
     "bsn",
     "ssn",
     "tax_id",
     "phone",
+    "address",
 ]
 
 
@@ -143,6 +150,44 @@ def _scrub_credit_card(text: str) -> tuple[str, int]:
 
 
 credit_card_detector = Detector(type="credit_card", scrub=_scrub_credit_card)
+
+IPV4_RE = re.compile(
+    r"(?<![\w.])(?:(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\.){3}"
+    r"(?:25[0-5]|2[0-4]\d|[01]?\d\d?)(?![\w.])"
+)
+
+# Loose colon/hex shapes; ``_ip_valid`` drops non-addresses.
+IPV6_RE = re.compile(
+    r"(?<![\w:])(?:"
+    r"(?:[0-9a-fA-F]{1,4}:){7}[0-9a-fA-F]{1,4}"
+    r"|::(?:[0-9a-fA-F]{1,4}:){0,6}[0-9a-fA-F]{1,4}"
+    r"|(?:[0-9a-fA-F]{1,4}:){1,7}:"
+    r"|(?:[0-9a-fA-F]{1,4}:){1,6}:[0-9a-fA-F]{1,4}"
+    r"|(?:[0-9a-fA-F]{1,4}:){1,5}(?::[0-9a-fA-F]{1,4}){1,2}"
+    r"|(?:[0-9a-fA-F]{1,4}:){1,4}(?::[0-9a-fA-F]{1,4}){1,3}"
+    r"|(?:[0-9a-fA-F]{1,4}:){1,3}(?::[0-9a-fA-F]{1,4}){1,4}"
+    r"|(?:[0-9a-fA-F]{1,4}:){1,2}(?::[0-9a-fA-F]{1,4}){1,5}"
+    r"|[0-9a-fA-F]{1,4}:(?::[0-9a-fA-F]{1,4}){1,6}"
+    r"|::"
+    r")(?![\w:])"
+)
+
+
+def _ip_valid(value: str) -> bool:
+    try:
+        ipaddress.ip_address(value)
+    except ValueError:
+        return False
+    return True
+
+
+def _scrub_ip(text: str) -> tuple[str, int]:
+    out, count = _replace_matches(text, IPV4_RE, "[IP]", _ip_valid)
+    out, n = _replace_matches(out, IPV6_RE, "[IP]", _ip_valid)
+    return out, count + n
+
+
+ip_detector = Detector(type="ip", scrub=_scrub_ip)
 
 BSN_RE = re.compile(r"\b\d{8,9}\b")
 
@@ -281,8 +326,26 @@ phone_nl_detector = _make_phone_detector((PHONE_NL_NATIONAL,))
 phone_en_detector = _make_phone_detector((PHONE_EN_NANP,))
 phone_de_detector = _make_phone_detector((PHONE_DE_NATIONAL,))
 
+NL_POSTCODE_RE = re.compile(r"\b[1-9]\d{3}\s?[A-Z]{2}\b")
+_NL_POSTCODE_LETTER_REJECTS = frozenset({"SA", "SD", "SS"})
+
+
+def _nl_postcode_valid(value: str) -> bool:
+    compact = re.sub(r"\s+", "", value).upper()
+    if not re.fullmatch(r"[1-9]\d{3}[A-Z]{2}", compact):
+        return False
+    return compact[4:] not in _NL_POSTCODE_LETTER_REJECTS
+
+
+def _scrub_nl_postcode(text: str) -> tuple[str, int]:
+    return _replace_matches(text, NL_POSTCODE_RE, "[ADDRESS]", _nl_postcode_valid)
+
+
+nl_postcode_detector = Detector(type="address", scrub=_scrub_nl_postcode)
+
 UNIVERSAL_DETECTORS: tuple[Detector, ...] = (
     email_detector,
     iban_detector,
     credit_card_detector,
+    ip_detector,
 )

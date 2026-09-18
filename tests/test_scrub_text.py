@@ -234,9 +234,11 @@ class TestPhone:
         result = scrub_text("in 2024 we shipped 500 units")
         assert result["found"] is False
 
-    def test_ignores_ip(self) -> None:
+    def test_ignores_ip_as_phone(self) -> None:
         result = scrub_text("host at 192.168.0.1 responds")
         assert result["counts"]["phone"] == 0
+        assert result["counts"]["ip"] == 1
+        assert result["text"] == "host at [IP] responds"
 
     def test_en_pack_skips_dutch_national(self) -> None:
         result = scrub_text("reach 0612345678", languages=["en"])
@@ -255,6 +257,65 @@ class TestPhone:
         assert result["counts"]["phone"] == 0
 
 
+class TestIp:
+    def test_masks_ipv4(self) -> None:
+        result = scrub_text("client 203.0.113.42 connected")
+        assert result["text"] == "client [IP] connected"
+        assert result["counts"]["ip"] == 1
+
+    def test_masks_private_ipv4(self) -> None:
+        result = scrub_text("bind 10.0.0.1 and 192.168.1.1")
+        assert result["text"] == "bind [IP] and [IP]"
+        assert result["counts"]["ip"] == 2
+
+    def test_rejects_octet_out_of_range(self) -> None:
+        result = scrub_text("bad 999.1.1.1 address")
+        assert result["counts"]["ip"] == 0
+
+    def test_masks_ipv6_full(self) -> None:
+        result = scrub_text("peer 2001:0db8:85a3:0000:0000:8a2e:0370:7334 ok")
+        assert result["text"] == "peer [IP] ok"
+        assert result["counts"]["ip"] == 1
+
+    def test_masks_ipv6_compressed(self) -> None:
+        result = scrub_text("loopback ::1 and docs 2001:db8::1")
+        assert result["text"] == "loopback [IP] and docs [IP]"
+        assert result["counts"]["ip"] == 2
+
+    def test_ignores_time_like_colons(self) -> None:
+        result = scrub_text("meeting at 10:30 tomorrow")
+        assert result["counts"]["ip"] == 0
+
+
+class TestNlPostcode:
+    def test_masks_spaced(self) -> None:
+        result = scrub_text("woonachtig te 1012 AB Amsterdam", languages=["nl"])
+        assert result["text"] == "woonachtig te [ADDRESS] Amsterdam"
+        assert result["counts"]["address"] == 1
+
+    def test_masks_compact(self) -> None:
+        result = scrub_text("postcode 2511VA", languages=["nl"])
+        assert result["text"] == "postcode [ADDRESS]"
+        assert result["counts"]["address"] == 1
+
+    def test_ignores_lowercase_letters(self) -> None:
+        """Uppercase letters only — avoids year/word false positives."""
+        result = scrub_text("in 2024 we shipped; ssn 078-05-1120 on file", languages=["nl"])
+        assert result["counts"]["address"] == 0
+        assert "2024 we" in result["text"]
+        assert "1120 on" in result["text"]
+
+    def test_rejects_sa_sd_ss(self) -> None:
+        for letters in ("SA", "SD", "SS"):
+            result = scrub_text(f"code 1234 {letters}", languages=["nl"])
+            assert result["counts"]["address"] == 0, letters
+
+    def test_disabled_without_nl(self) -> None:
+        result = scrub_text("woonachtig te 1012 AB Amsterdam", languages=["en"])
+        assert result["text"] == "woonachtig te 1012 AB Amsterdam"
+        assert result["counts"]["address"] == 0
+
+
 class TestMultiple:
     def test_masks_together(self) -> None:
         result = scrub_text("mail ada@example.com or card 4111111111111111")
@@ -263,6 +324,7 @@ class TestMultiple:
             "email": 1,
             "iban": 0,
             "credit_card": 1,
+            "ip": 0,
             "bsn": 0,
             "ssn": 0,
             "tax_id": 0,
