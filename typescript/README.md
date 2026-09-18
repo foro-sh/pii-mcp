@@ -1,9 +1,10 @@
 # pii-mcp (TypeScript)
 
 Pattern-based PII scrubbing for MCP servers (regex + checksums). Same detectors
-as the Python package: emails, IBANs, cards, BICs, MACs, IPs, coordinates, BSNs,
-US SSNs, German tax IDs, Dutch BTW-ids, phones, Dutch postcodes, and Dutch
-license plates. Language packs: `en`, `nl`, and opt-in `de`.
+as the Python package: emails, IBANs, cards, BICs, MACs, IMEIs, IPs, coordinates,
+BSNs, US SSNs, German tax IDs, Dutch BTW-ids, Dutch passport/ID numbers, phones,
+Dutch postcodes, and Dutch license plates. Language packs: `en`, `nl`, and
+opt-in `de`.
 
 FastMCP middleware stays Python-only (`pii_mcp.fastmcp`); this package is the
 core scrub API for Node/TypeScript callers.

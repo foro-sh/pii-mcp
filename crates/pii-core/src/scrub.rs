@@ -18,12 +18,14 @@ pub const PII_TYPES: &[&str] = &[
     "credit_card",
     "bic",
     "mac",
+    "imei",
     "ip",
     "location",
     "bsn",
     "ssn",
     "tax_id",
     "vat_id",
+    "passport",
     "phone",
     "person",
     "address",
@@ -83,10 +85,7 @@ pub struct ScrubResult {
 }
 
 pub fn empty_pii_counts() -> PiiCounts {
-    PII_TYPES
-        .iter()
-        .map(|t| ((*t).to_string(), 0u32))
-        .collect()
+    PII_TYPES.iter().map(|t| ((*t).to_string(), 0u32)).collect()
 }
 
 pub fn total_pii_count(counts: &PiiCounts) -> u32 {
@@ -281,12 +280,7 @@ mod tests {
 
     #[test]
     fn masks_iban_and_card() {
-        let r = scrub_text(
-            "Pay NL91ABNA0417164300 with 4111111111111111",
-            None,
-            true,
-        )
-        .unwrap();
+        let r = scrub_text("Pay NL91ABNA0417164300 with 4111111111111111", None, true).unwrap();
         assert_eq!(r.text, "Pay [IBAN] with [CREDIT_CARD]");
     }
 

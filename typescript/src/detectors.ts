@@ -12,6 +12,9 @@
  * - Credit cards include Amex 4-6-5 groupings as well as 4-4-4-x and compact.
  * - BIC/SWIFT: 8 or 11 alnum with ISO 3166-1 country letters (AP: financial data).
  * - MAC: colon/dash IEEE and Cisco dotted forms (AP: device MAC is personal data).
+ * - IMEI: hyphen/space-grouped 15-digit forms with Luhn (AP: gegevens over
+ *   elektronische communicatie / device identifiers). Compact 15-digit IMEIs
+ *   that are also Luhn-valid collide with Amex and stay under ``credit_card``.
  * - IP: IPv4 octet-bounded regex; IPv6 candidate shapes validated via
  *   ``node:net`` ``isIP`` (AP notes IP addresses can be personal data).
  * - Location: decimal lat/lon pairs with ≥3 fractional digits and range checks
@@ -20,6 +23,9 @@
  * - German Steuer-IdNr (tax_id): 11 digits with structure + mod-11/10 check.
  * - NL BTW-id (``vat_id``): ``NL`` + 9 digits + ``B`` + 2 digits (format only —
  *   post-2020 sole-trader ids are not elfproef-gated).
+ * - NL passport / ID-card number (``passport``): 9-char RvIG document number
+ *   (``[A-Z]{2}[0-9A-Z]{6}[0-9]``, letter O forbidden) — national
+ *   identificatienummer alongside BSN; format only, no check digit.
  * - NL postcode (``address``): ``1234 AB`` / ``1234AB`` with uppercase letters
  *   only and SA/SD/SS rejects — structured fragment, not street-address NER.
  * - NL kenteken (``license_plate``): hyphenated RDW sidecodes 1–14, uppercase,
@@ -27,7 +33,7 @@
  * - Phone packs: international (any active pack), NL national, NANP, DE national
  *   (DE excludes exact Dutch ``06…`` 10-digit mobiles).
  *
- * ``UNIVERSAL_DETECTORS`` (email, IBAN, credit card, BIC, MAC, IP, location)
+ * ``UNIVERSAL_DETECTORS`` (email, IBAN, credit card, BIC, MAC, IMEI, IP, location)
  * always run; locale detectors are selected by ``languages=`` in the scrub layer.
  */
 
@@ -39,12 +45,14 @@ export type PiiCategory =
   | "credit_card"
   | "bic"
   | "mac"
+  | "imei"
   | "ip"
   | "location"
   | "bsn"
   | "ssn"
   | "tax_id"
   | "vat_id"
+  | "passport"
   | "phone"
   | "address"
   | "license_plate";
@@ -218,6 +226,31 @@ function scrubMac(text: string): { text: string; count: number } {
 
 export const macDetector: Detector = { type: "mac", scrub: scrubMac };
 
+// Grouped only — compact 15-digit Luhn values collide with Amex credit cards.
+const IMEI_RES = [
+  /(?<![\w-])\d{2}[- ]\d{6}[- ]\d{6}[- ]\d(?![\w-])/g,
+  /(?<![\w-])\d{8}[- ]\d{6}[- ]\d(?![\w-])/g,
+  /(?<![\w-])\d{2}[- ]\d{6}[- ]\d{7}(?![\w-])/g,
+] as const;
+
+function imeiValid(value: string): boolean {
+  const digits = value.replace(/[ -]/g, "");
+  return digits.length === 15 && /^\d+$/.test(digits) && luhnValid(digits);
+}
+
+function scrubImei(text: string): { text: string; count: number } {
+  let out = text;
+  let count = 0;
+  for (const pattern of IMEI_RES) {
+    const result = replaceMatches(out, pattern, "[IMEI]", imeiValid);
+    out = result.text;
+    count += result.count;
+  }
+  return { text: out, count };
+}
+
+export const imeiDetector: Detector = { type: "imei", scrub: scrubImei };
+
 const IPV4_RE =
   /(?<![\w.])(?:(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\.){3}(?:25[0-5]|2[0-4]\d|[01]?\d\d?)(?![\w.])/g;
 
@@ -364,6 +397,27 @@ function scrubNlVat(text: string): { text: string; count: number } {
 
 export const nlVatDetector: Detector = { type: "vat_id", scrub: scrubNlVat };
 
+const NL_PASSPORT_RE = /\b[A-Z]{2}[0-9A-Z]{6}\d\b/g;
+
+function nlPassportValid(value: string): boolean {
+  if (value.length !== 9) {
+    return false;
+  }
+  if (!/^[A-Z]{2}[0-9A-Z]{6}\d$/.test(value)) {
+    return false;
+  }
+  return !value.includes("O");
+}
+
+function scrubNlPassport(text: string): { text: string; count: number } {
+  return replaceMatches(text, NL_PASSPORT_RE, "[PASSPORT]", nlPassportValid);
+}
+
+export const nlPassportDetector: Detector = {
+  type: "passport",
+  scrub: scrubNlPassport,
+};
+
 function digitCount(text: string): number {
   let count = 0;
   for (const ch of text) {
@@ -479,6 +533,7 @@ export const UNIVERSAL_DETECTORS: readonly Detector[] = [
   creditCardDetector,
   bicDetector,
   macDetector,
+  imeiDetector,
   ipDetector,
   locationDetector,
 ];
