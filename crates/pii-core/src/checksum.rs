@@ -13,25 +13,39 @@ fn nl_postcode_compact_re() -> &'static Regex {
     RE.get_or_init(|| Regex::new(r"^[1-9]\d{3}[A-Z]{2}$").unwrap())
 }
 
-/// IBAN mod-97 after compacting whitespace and uppercasing.
-pub fn iban_valid(value: &str) -> bool {
-    let compact: String = value
-        .chars()
-        .filter(|c| !c.is_whitespace())
-        .map(|c| c.to_ascii_uppercase())
-        .collect();
-    if !compact_iban_re().is_match(&compact) {
-        return false;
-    }
-    let rearranged = format!("{}{}", &compact[4..], &compact[..4]);
-    let mut remainder: u32 = 0;
-    for ch in rearranged.chars() {
+fn fold_iban_mod97(chars: impl Iterator<Item = char>, mut remainder: u32) -> u32 {
+    for ch in chars {
         if ch.is_ascii_alphabetic() {
             remainder = (remainder * 100 + (ch as u32 - 55)) % 97;
         } else {
             remainder = (remainder * 10 + (ch as u32 - 48)) % 97;
         }
     }
+    remainder
+}
+
+/// IBAN mod-97 after compacting whitespace and uppercasing.
+pub fn iban_valid(value: &str) -> bool {
+    // Max IBAN length is 34; keep a stack buffer for the ASCII path.
+    let mut compact = [0u8; 34];
+    let mut len = 0usize;
+    for c in value.chars() {
+        if c.is_whitespace() {
+            continue;
+        }
+        if !c.is_ascii() || len >= compact.len() {
+            return false;
+        }
+        compact[len] = (c as u8).to_ascii_uppercase();
+        len += 1;
+    }
+    let compact = std::str::from_utf8(&compact[..len]).unwrap();
+    if !compact_iban_re().is_match(compact) {
+        return false;
+    }
+    // Rearrange without allocating: body then first 4 chars.
+    let remainder = fold_iban_mod97(compact[4..].chars(), 0);
+    let remainder = fold_iban_mod97(compact[..4].chars(), remainder);
     remainder == 1
 }
 
@@ -63,28 +77,45 @@ pub fn bsn_valid(digits: &str) -> bool {
     if !(8..=9).contains(&len) || !digits.bytes().all(|b| b.is_ascii_digit()) {
         return false;
     }
-    let padded = format!("{:0>9}", digits);
-    if padded == "000000000" {
+    let mut padded = [b'0'; 9];
+    padded[9 - len..].copy_from_slice(digits.as_bytes());
+    if padded == *b"000000000" {
         return false;
     }
     let weights: [i32; 9] = [9, 8, 7, 6, 5, 4, 3, 2, -1];
     let total: i32 = padded
-        .bytes()
+        .iter()
         .enumerate()
-        .map(|(i, b)| (b - b'0') as i32 * weights[i])
+        .map(|(i, &b)| (b - b'0') as i32 * weights[i])
         .sum();
     total % 11 == 0
 }
 
 /// SSA rejects: area 000/666/9xx, group 00, serial 0000.
 pub fn ssn_valid(value: &str) -> bool {
-    let digits: String = value.chars().filter(|c| *c != '-').collect();
-    if digits.len() != 9 || !digits.bytes().all(|b| b.is_ascii_digit()) {
+    let mut digits = [0u8; 9];
+    let mut len = 0usize;
+    for b in value.bytes() {
+        if b == b'-' {
+            continue;
+        }
+        if !b.is_ascii_digit() || len >= 9 {
+            return false;
+        }
+        digits[len] = b;
+        len += 1;
+    }
+    if len != 9 {
         return false;
     }
-    let area: u32 = digits[..3].parse().unwrap();
-    let group: u32 = digits[3..5].parse().unwrap();
-    let serial: u32 = digits[5..].parse().unwrap();
+    let area = (digits[0] - b'0') as u32 * 100
+        + (digits[1] - b'0') as u32 * 10
+        + (digits[2] - b'0') as u32;
+    let group = (digits[3] - b'0') as u32 * 10 + (digits[4] - b'0') as u32;
+    let serial = (digits[5] - b'0') as u32 * 1000
+        + (digits[6] - b'0') as u32 * 100
+        + (digits[7] - b'0') as u32 * 10
+        + (digits[8] - b'0') as u32;
     if area == 0 || area == 666 || area >= 900 {
         return false;
     }
@@ -102,17 +133,24 @@ pub fn tax_id_valid(digits: &str) -> bool {
     if digits.as_bytes()[0] == b'0' {
         return false;
     }
-    let body = &digits[..10];
+    let body = &digits.as_bytes()[..10];
     let mut counts = [0u8; 10];
-    for b in body.bytes() {
+    for &b in body {
         counts[(b - b'0') as usize] += 1;
     }
-    let repeats: Vec<u8> = counts.iter().copied().filter(|&n| n > 1).collect();
-    if repeats.len() != 1 || (repeats[0] != 2 && repeats[0] != 3) {
+    let mut repeat_kind = 0u8;
+    let mut repeat_slots = 0u8;
+    for &n in &counts {
+        if n > 1 {
+            repeat_slots += 1;
+            repeat_kind = n;
+        }
+    }
+    if repeat_slots != 1 || (repeat_kind != 2 && repeat_kind != 3) {
         return false;
     }
     let mut product: u32 = 10;
-    for b in body.bytes() {
+    for &b in body {
         let mut total = ((b - b'0') as u32 + product) % 10;
         if total == 0 {
             total = 10;
@@ -130,12 +168,24 @@ const NL_POSTCODE_REJECTS: &[&str] = &["SA", "SD", "SS"];
 
 /// NL postcode `1234AB` / `1234 AB` with SA/SD/SS letter rejects.
 pub fn nl_postcode_valid(value: &str) -> bool {
-    let compact: String = value
-        .chars()
-        .filter(|c| !c.is_whitespace())
-        .map(|c| c.to_ascii_uppercase())
-        .collect();
-    if !nl_postcode_compact_re().is_match(&compact) {
+    let mut compact = [0u8; 6];
+    let mut len = 0usize;
+    for c in value.chars() {
+        // Match Python/`\s`: strip any Unicode whitespace the detector may keep.
+        if c.is_whitespace() {
+            continue;
+        }
+        if !c.is_ascii() || len >= compact.len() {
+            return false;
+        }
+        compact[len] = (c as u8).to_ascii_uppercase();
+        len += 1;
+    }
+    if len != 6 {
+        return false;
+    }
+    let compact = std::str::from_utf8(&compact).unwrap();
+    if !nl_postcode_compact_re().is_match(compact) {
         return false;
     }
     !NL_POSTCODE_REJECTS.contains(&&compact[4..])
@@ -182,5 +232,12 @@ mod tests {
         assert!(nl_postcode_valid("1012 AB"));
         assert!(nl_postcode_valid("2511VA"));
         assert!(!nl_postcode_valid("1234 SA"));
+        // Detector `\s` can match NBSP; validator must still accept.
+        assert!(nl_postcode_valid("1012\u{00a0}AB"));
+    }
+
+    #[test]
+    fn iban_unicode_space() {
+        assert!(iban_valid("NL91\u{00a0}ABNA0417164300"));
     }
 }
