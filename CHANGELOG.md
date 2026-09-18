@@ -1,3 +1,10 @@
+## [1.3.0](https://github.com/foro-sh/pii-mcp/compare/v1.2.0...v1.3.0) (2026-09-18)
+
+### Features
+
+* add optional Rust PII core with PyO3 bindings ([9e438ee](https://github.com/foro-sh/pii-mcp/commit/9e438ee967b02d5fe839d0210ed1bcb0a0da229f))
+* merge optional Rust PII core with PyO3 bindings ([a7a9769](https://github.com/foro-sh/pii-mcp/commit/a7a9769cc800018fcd25a8fc3958d03f5dc58d55))
+
 ## [1.2.0](https://github.com/foro-sh/pii-mcp/compare/v1.1.0...v1.2.0) (2026-09-18)
 
 ### Features
