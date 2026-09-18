@@ -194,6 +194,11 @@ class TestNlPassport:
         assert result["text"] == "paspoort [PASSPORT] geldig"
         assert result["counts"]["passport"] == 1
 
+    def test_masks_lowercased(self) -> None:
+        result = scrub_text("paspoort xr1001r58 geldig", languages=["nl"])
+        assert result["text"] == "paspoort [PASSPORT] geldig"
+        assert result["counts"]["passport"] == 1
+
     def test_rejects_letter_o(self) -> None:
         result = scrub_text("doc XR1O01R58", languages=["nl"])
         assert result["counts"]["passport"] == 0

@@ -104,6 +104,12 @@ describe("scrubText", () => {
     expect(result.counts.passport).toBe(1);
   });
 
+  it("masks lowercased NL passport", () => {
+    const result = scrubText("paspoort xr1001r58", { languages: ["nl"] });
+    expect(result.text).toBe("paspoort [PASSPORT]");
+    expect(result.counts.passport).toBe(1);
+  });
+
   it("rejects unknown language", () => {
     expect(() => scrubText("hi", { languages: ["fr"] })).toThrow(
       /unknown language/,

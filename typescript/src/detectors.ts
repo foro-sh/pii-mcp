@@ -24,8 +24,8 @@
  * - NL BTW-id (``vat_id``): ``NL`` + 9 digits + ``B`` + 2 digits (format only —
  *   post-2020 sole-trader ids are not elfproef-gated).
  * - NL passport / ID-card number (``passport``): 9-char RvIG document number
- *   (``[A-Z]{2}[0-9A-Z]{6}[0-9]``, letter O forbidden) — national
- *   identificatienummer alongside BSN; format only, no check digit.
+ *   (``[A-Za-z]{2}[0-9A-Za-z]{6}[0-9]``, letter O forbidden after uppercasing)
+ *   — national identificatienummer alongside BSN; format only, no check digit.
  * - NL postcode (``address``): ``1234 AB`` / ``1234AB`` with uppercase letters
  *   only and SA/SD/SS rejects — structured fragment, not street-address NER.
  * - NL kenteken (``license_plate``): hyphenated RDW sidecodes 1–14, uppercase,
@@ -397,16 +397,17 @@ function scrubNlVat(text: string): { text: string; count: number } {
 
 export const nlVatDetector: Detector = { type: "vat_id", scrub: scrubNlVat };
 
-const NL_PASSPORT_RE = /\b[A-Z]{2}[0-9A-Z]{6}\d\b/g;
+const NL_PASSPORT_RE = /\b[A-Za-z]{2}[0-9A-Za-z]{6}\d\b/g;
 
 function nlPassportValid(value: string): boolean {
-  if (value.length !== 9) {
+  const compact = value.toUpperCase();
+  if (compact.length !== 9) {
     return false;
   }
-  if (!/^[A-Z]{2}[0-9A-Z]{6}\d$/.test(value)) {
+  if (!/^[A-Z]{2}[0-9A-Z]{6}\d$/.test(compact)) {
     return false;
   }
-  return !value.includes("O");
+  return !compact.includes("O");
 }
 
 function scrubNlPassport(text: string): { text: string; count: number } {

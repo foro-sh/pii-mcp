@@ -23,8 +23,8 @@ Patterns:
 - NL BTW-id (``vat_id``): ``NL`` + 9 digits + ``B`` + 2 digits (format only —
   post-2020 sole-trader ids are not elfproef-gated).
 - NL passport / ID-card number (``passport``): 9-char RvIG document number
-  (``[A-Z]{2}[0-9A-Z]{6}[0-9]``, letter O forbidden) — national
-  identificatienummer alongside BSN; format only, no check digit.
+  (``[A-Za-z]{2}[0-9A-Za-z]{6}[0-9]``, letter O forbidden after uppercasing)
+  — national identificatienummer alongside BSN; format only, no check digit.
 - NL postcode (``address``): ``1234 AB`` / ``1234AB`` with uppercase letters
   only and SA/SD/SS rejects — structured fragment, not street-address NER.
 - NL kenteken (``license_plate``): hyphenated RDW sidecodes 1–14, uppercase,
@@ -411,16 +411,18 @@ def _scrub_nl_vat(text: str) -> tuple[str, int]:
 nl_vat_detector = Detector(type="vat_id", scrub=_scrub_nl_vat)
 
 # RvIG document number (passport / NIK): positions 1–2 letters, 3–8 alnum,
-# 9 digit; letter O never used (RvIG kenmerkenbrochure).
-NL_PASSPORT_RE = re.compile(r"\b[A-Z]{2}[0-9A-Z]{6}\d\b")
+# 9 digit; letter O never used (RvIG kenmerkenbrochure). Case-insensitive —
+# candidates are uppercased before validate (same idea as NL VAT).
+NL_PASSPORT_RE = re.compile(r"\b[A-Za-z]{2}[0-9A-Za-z]{6}\d\b")
 
 
 def _nl_passport_valid(value: str) -> bool:
-    if len(value) != 9:
+    compact = value.upper()
+    if len(compact) != 9:
         return False
-    if not re.fullmatch(r"[A-Z]{2}[0-9A-Z]{6}\d", value):
+    if not re.fullmatch(r"[A-Z]{2}[0-9A-Z]{6}\d", compact):
         return False
-    return "O" not in value
+    return "O" not in compact
 
 
 def _scrub_nl_passport(text: str) -> tuple[str, int]:

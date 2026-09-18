@@ -92,18 +92,23 @@ pub fn imei_valid(value: &str) -> bool {
 }
 
 /// Dutch passport / NIK document number (RvIG): 9 chars, no letter O.
+/// Case-insensitive: candidates are uppercased before structure checks.
 pub fn nl_passport_valid(value: &str) -> bool {
+    let mut buf = [0u8; 9];
     let bytes = value.as_bytes();
     if bytes.len() != 9 {
         return false;
     }
-    if !bytes[0].is_ascii_uppercase() || !bytes[1].is_ascii_uppercase() {
+    for (i, &b) in bytes.iter().enumerate() {
+        buf[i] = b.to_ascii_uppercase();
+    }
+    if !buf[0].is_ascii_uppercase() || !buf[1].is_ascii_uppercase() {
         return false;
     }
-    if !bytes[8].is_ascii_digit() {
+    if !buf[8].is_ascii_digit() {
         return false;
     }
-    for &b in &bytes[..9] {
+    for &b in &buf {
         if b == b'O' {
             return false;
         }
@@ -262,6 +267,7 @@ mod tests {
     #[test]
     fn nl_passport_format() {
         assert!(nl_passport_valid("XR1001R58"));
+        assert!(nl_passport_valid("xr1001r58"));
         assert!(!nl_passport_valid("XR1O01R58"));
         assert!(!nl_passport_valid("581001RXR"));
     }

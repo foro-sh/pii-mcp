@@ -656,7 +656,7 @@ fn scrub_nl_vat(text: &str) -> (Option<String>, u32) {
 
 fn nl_passport_re() -> &'static Regex {
     static RE: OnceLock<Regex> = OnceLock::new();
-    RE.get_or_init(|| Regex::new(r"\b[A-Z]{2}[0-9A-Z]{6}\d\b").unwrap())
+    RE.get_or_init(|| Regex::new(r"(?i)\b[A-Z]{2}[0-9A-Z]{6}\d\b").unwrap())
 }
 
 fn scrub_nl_passport(text: &str) -> (Option<String>, u32) {
