@@ -1,3 +1,10 @@
+## [1.1.0](https://github.com/foro-sh/pii-mcp/compare/v1.0.0...v1.1.0) (2026-09-18)
+
+### Features
+
+* scrub IP addresses and Dutch postcodes ([a6cd4e3](https://github.com/foro-sh/pii-mcp/commit/a6cd4e3c95dea9d9bf7d0650b1787af10d5ece78))
+* scrub IP addresses and Dutch postcodes ([454559b](https://github.com/foro-sh/pii-mcp/commit/454559bb19d2c5d25187cb38bbb2d73964dcdff9))
+
 ## 1.0.0 (2026-09-18)
 
 ### Features
