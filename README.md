@@ -11,7 +11,15 @@ can reach them (contact/financial IDs, online identifiers including IP/MAC,
 locatiegegevens as coordinates, BSN, kenteken). Names, free-text health data,
 and full street addresses need NER and are out of scope here.
 
-## Install
+Packages:
+
+| Runtime | Path | Install |
+|---------|------|---------|
+| Python | `src/pii_mcp` | `pip install pii-mcp` |
+| TypeScript | `typescript/` | `npm install pii-mcp` |
+| Rust core | `crates/pii-core` | shared by both (PyO3 / N-API) |
+
+## Install (Python)
 
 ```bash
 pip install "pii-mcp[fastmcp]"   # FastMCP >= 3.0.0
@@ -19,7 +27,7 @@ pip install "pii-mcp[fastmcp]"   # FastMCP >= 3.0.0
 pip install pii-mcp              # core only (pure Python, no Rust toolchain)
 ```
 
-### Optional Rust core
+### Optional Rust core (Python)
 
 Default installs stay pure Python. To accelerate scrubbing with the shared
 `pii-core` crate (PyO3), build the optional extension locally:
@@ -50,7 +58,7 @@ Medians from `scripts/bench_backends.py` on macOS arm64 / CPython 3.14.7
 python scripts/bench_backends.py
 ```
 
-## FastMCP
+## FastMCP (Python)
 
 ```python
 from fastmcp import FastMCP
@@ -63,11 +71,49 @@ mcp.add_middleware(PiiScrubMiddleware())  # languages=["en", "nl"] by default
 
 Results only. On scrub failure or oversize, the result is withheld — never forwarded unmasked.
 
-## Core
+## Core (Python)
 
 ```python
 from pii_mcp import scrub_text, scrub_payload
 
 scrub_text("mail ada@example.com")
 scrub_payload({"email": "ada@example.com"}, languages=["en"])
+```
+
+## Install (TypeScript)
+
+```bash
+npm install pii-mcp
+```
+
+Default installs stay pure TypeScript. To accelerate with the same `pii-core`
+crate via N-API:
+
+```bash
+cd typescript
+npm install
+npm run build:native   # requires a Rust toolchain
+```
+
+When the napi addon is loadable, `scrubText` / `scrubPayload` use it.
+Force the JS path with `PII_MCP_BACKEND=js`. See [`typescript/README.md`](typescript/README.md).
+
+### FastMCP (TypeScript)
+
+```ts
+import { FastMCP } from "@prefecthq/fastmcp-ts/server";
+import { PiiScrubMiddleware } from "pii-mcp/fastmcp";
+
+const server = new FastMCP({ name: "MyServer", version: "1.0.0" });
+server.use(new PiiScrubMiddleware());
+```
+
+### Core (TypeScript)
+
+```ts
+import { scrubText, scrubPayload, usingNative } from "pii-mcp";
+
+scrubText("mail ada@example.com");
+scrubPayload({ email: "ada@example.com" }, { languages: ["en"] });
+usingNative();
 ```

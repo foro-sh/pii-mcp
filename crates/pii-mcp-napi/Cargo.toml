@@ -1,0 +1,21 @@
+[package]
+name = "pii-mcp-napi"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Optional N-API bindings for pii-core (Node / TypeScript)"
+publish = false
+
+[lib]
+name = "pii_mcp"
+crate-type = ["cdylib"]
+
+[dependencies]
+pii-core = { workspace = true, features = ["payload"] }
+napi = { workspace = true }
+napi-derive = { workspace = true }
+serde_json = { workspace = true }
+
+[build-dependencies]
+napi-build = { workspace = true }

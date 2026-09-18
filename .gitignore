@@ -26,3 +26,9 @@ venv/
 **/*.dylib
 **/*.dll
 crates/*/Cargo.lock
+
+# TypeScript / napi
+typescript/node_modules/
+typescript/dist/
+typescript/*.node
+typescript/native/

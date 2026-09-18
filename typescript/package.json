@@ -1,0 +1,74 @@
+{
+  "name": "pii-mcp",
+  "version": "0.1.0",
+  "description": "Pattern-based PII scrubbing for MCP servers — one-line FastMCP middleware",
+  "type": "module",
+  "license": "MIT",
+  "author": "foro.sh",
+  "homepage": "https://github.com/foro-sh/pii-mcp",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/foro-sh/pii-mcp.git",
+    "directory": "typescript"
+  },
+  "bugs": {
+    "url": "https://github.com/foro-sh/pii-mcp/issues"
+  },
+  "keywords": [
+    "mcp",
+    "pii",
+    "fastmcp",
+    "privacy",
+    "redaction"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./fastmcp": {
+      "types": "./dist/fastmcp.d.ts",
+      "import": "./dist/fastmcp.js"
+    }
+  },
+  "files": [
+    "dist",
+    "native",
+    "README.md"
+  ],
+  "napi": {
+    "name": "pii-mcp",
+    "triples": {
+      "defaults": true
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "build:native": "napi build --platform --release --cargo-cwd ../crates/pii-mcp-napi --cargo-name pii_mcp native",
+    "build:native:debug": "napi build --platform --cargo-cwd ../crates/pii-mcp-napi --cargo-name pii_mcp native",
+    "artifacts": "napi artifacts",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "prepublishOnly": "npm run build"
+  },
+  "peerDependencies": {
+    "@prefecthq/fastmcp-ts": ">=1.0.0"
+  },
+  "peerDependenciesMeta": {
+    "@prefecthq/fastmcp-ts": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@napi-rs/cli": "^2.18.4",
+    "@types/node": "^22.0.0",
+    "typescript": "^5.8.0",
+    "vitest": "^3.0.0"
+  }
+}

@@ -70,3 +70,41 @@ jobs:
 
       - name: Run tests
         run: pytest -q
+
+  test-typescript:
+    name: TypeScript (Node 22 + napi)
+    if: ${{ !github.event.pull_request.draft }}
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: typescript
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: typescript/package-lock.json
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build TypeScript
+        run: npm run build
+
+      - name: Build napi addon
+        run: npm run build:native
+
+      - name: Test (JS backend)
+        run: PII_MCP_BACKEND=js npm test
+
+      - name: Test (native backend)
+        run: PII_MCP_BACKEND=native npm test
