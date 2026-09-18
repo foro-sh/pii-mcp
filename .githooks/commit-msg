@@ -1,0 +1,25 @@
+#!/usr/bin/env sh
+# Validate the commit message against the SAME rules CI enforces: commitlint with
+# @commitlint/config-conventional (see .commitlintrc.json). Running the real tool
+# here — rather than a hand-maintained regex — keeps this gate and CI in lockstep.
+# (It previously drifted: subjects CI rejected for subject-case / header-length
+# passed locally and only failed in CI.)
+#
+# When commitlint isn't installed yet (a fresh clone before `pnpm install`), fall
+# back to a minimal Conventional Commits shape check so commits aren't blocked
+# outright before dependencies exist.
+
+msg_file="$1"
+
+if [ -x node_modules/.bin/commitlint ]; then
+  exec node_modules/.bin/commitlint --edit "$msg_file"
+fi
+
+# --- Fallback: dependencies not installed; baseline shape check only ---
+header="$(sed -n '1p' "$msg_file")"
+pattern='^(build|chore|ci|docs|feat|fix|perf|refactor|revert|style|test)(\([a-z0-9._-]+\))?(!)?: .+'
+if ! printf '%s' "$header" | grep -Eq "$pattern"; then
+  echo "✖ commit message must follow Conventional Commits: <type>(scope): description" >&2
+  echo "  (commitlint not found — run 'pnpm install' for full CI-equivalent checks)" >&2
+  exit 1
+fi

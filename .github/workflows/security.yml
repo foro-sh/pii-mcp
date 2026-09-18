@@ -1,0 +1,33 @@
+name: Security
+
+# Trivy scans dependencies, not the diff, so a new finding almost always comes
+# from an advisory published since the last run rather than from the PR that
+# happened to run next. Weekly (plus on demand) catches the same things without
+# paying for a scan on every push.
+on:
+  schedule:
+    - cron: "0 6 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  trivy:
+    name: Trivy vulnerability scan
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Trivy filesystem scan
+        # SHA-pinned as upstream recommends.
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          scan-type: fs
+          scan-ref: .
+          severity: CRITICAL,HIGH
+          exit-code: "1"
+          ignore-unfixed: true
