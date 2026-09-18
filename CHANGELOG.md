@@ -1,3 +1,12 @@
+## [1.2.0](https://github.com/foro-sh/pii-mcp/compare/v1.1.0...v1.2.0) (2026-09-18)
+
+### Features
+
+* merge AP PII detector gaps ([73c1518](https://github.com/foro-sh/pii-mcp/commit/73c1518dec8d67fb123b781a3a74d9d7cc8aebf2))
+* merge BIC and Dutch BTW-ids ([b60b530](https://github.com/foro-sh/pii-mcp/commit/b60b53073a7c9e78b17ae0cd16b6fafffa1fe166))
+* scrub BIC/SWIFT and Dutch BTW-ids ([d0d0d4c](https://github.com/foro-sh/pii-mcp/commit/d0d0d4c2a926e127bc3c07a88d1dccdad07e14c8))
+* scrub MAC, coordinates, and NL kentekens ([53e6310](https://github.com/foro-sh/pii-mcp/commit/53e6310f4a419daea9e15ad87f650edfa9924086))
+
 ## [1.1.0](https://github.com/foro-sh/pii-mcp/compare/v1.0.0...v1.1.0) (2026-09-18)
 
 ### Features
