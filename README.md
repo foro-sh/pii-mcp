@@ -34,17 +34,17 @@ Force the Python path with `PII_MCP_BACKEND=python`.
 
 #### Performance (Python vs Rust release)
 
-Medians from `scripts/bench_backends.py` on macOS arm64 / CPython 3.11
+Medians from `scripts/bench_backends.py` on macOS arm64 / CPython 3.14.7
 (release native build; debug builds are not representative):
 
 | Case | Python | Rust | Speedup |
 |------|--------|------|---------|
-| Short clean text | 0.165 ms | 0.018 ms | 9.0× |
-| Short mixed PII | 0.042 ms | 0.007 ms | 6.0× |
-| 100 KiB sparse PII | 14.6 ms | 1.5 ms | 9.6× |
-| 1 MiB sparse PII | 147 ms | 15.9 ms | 9.3× |
-| Nested JSON payload | 8.8 ms | 1.0 ms | 8.7× |
-| 1k× tiny `scrub_text` | 37.8 ms | 6.4 ms | 5.9× |
+| Short clean text | 0.233 ms | 0.026 ms | 9.1× |
+| Short mixed PII | 0.057 ms | 0.009 ms | 6.3× |
+| 100 KiB sparse PII | 20.3 ms | 2.1 ms | 9.7× |
+| 1 MiB sparse PII | 205 ms | 21.5 ms | 9.5× |
+| Nested JSON payload | 12.3 ms | 1.3 ms | 9.8× |
+| 1k× tiny `scrub_text` | 53.4 ms | 8.1 ms | 6.6× |
 
 ```bash
 python scripts/bench_backends.py
