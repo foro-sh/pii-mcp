@@ -1,15 +1,16 @@
 """Language packs and scrub walk — Tier-1 only.
 
-Universal detectors (email, IBAN, credit card) always run. Locale packs add
-national IDs / phone shapes. Counts always include every ``PiiType`` key
-(0 when unused), including Tier-2 placeholders ``person`` / ``address``.
+Universal detectors (email, IBAN, credit card, IP) always run. Locale packs
+add national IDs / phone shapes / NL postcodes. Counts always include every
+``PiiType`` key (0 when unused), including Tier-2 placeholder ``person``.
+``address`` is reserved for Tier-2 NER and also receives NL postcode hits.
 
 ``MAX_SCRUB_BYTES`` matches foro-proxy (32 MiB). Oversize raises
 ``PiiScrubError`` so callers withhold rather than forward unscrubbed text.
 
 Detector pack order (see ``_detectors_for``): universal → checksum/rule-backed
-national IDs (BSN before SSN when both packs are on) → phones (international
-when any pack is active, then locale forms).
+national IDs (BSN before SSN when both packs are on) → NL postcode when ``nl``
+→ phones (international when any pack is active, then locale forms).
 """
 
 from __future__ import annotations
@@ -22,6 +23,7 @@ from pii_mcp.detectors import (
     UNIVERSAL_DETECTORS,
     Detector,
     bsn_detector,
+    nl_postcode_detector,
     phone_de_detector,
     phone_en_detector,
     phone_international_detector,
@@ -34,6 +36,7 @@ PiiType = Literal[
     "email",
     "iban",
     "credit_card",
+    "ip",
     "bsn",
     "ssn",
     "tax_id",
@@ -46,6 +49,7 @@ PII_TYPES: tuple[PiiType, ...] = (
     "email",
     "iban",
     "credit_card",
+    "ip",
     "bsn",
     "ssn",
     "tax_id",
@@ -120,6 +124,8 @@ def _detectors_for(languages: Sequence[str] | None) -> tuple[Detector, ...]:
         pack.append(tax_id_detector)
     if "en" in langs:
         pack.append(ssn_detector)
+    if "nl" in langs:
+        pack.append(nl_postcode_detector)
     if langs:
         pack.append(phone_international_detector)
     if "nl" in langs:

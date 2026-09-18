@@ -1,8 +1,9 @@
 # pii-mcp
 
-Tier-1 PII scrubbing for MCP servers. Mask emails, IBANs, cards, BSNs, US SSNs,
-German tax IDs, and phones in tool results — not full foro.sh Data protection
-(no Tier-2 NER). Language packs: `en`, `nl`, and opt-in `de`.
+Tier-1 PII scrubbing for MCP servers. Mask emails, IBANs, cards, IPs, BSNs,
+US SSNs, German tax IDs, phones, and Dutch postcodes in tool results — not
+full foro.sh Data protection (no Tier-2 NER for names / full street addresses).
+Language packs: `en`, `nl`, and opt-in `de`.
 
 ## Install
 
