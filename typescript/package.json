@@ -1,7 +1,7 @@
 {
   "name": "pii-mcp",
   "version": "0.1.0",
-  "description": "Pattern-based PII scrubbing for MCP servers — one-line FastMCP middleware",
+  "description": "Pattern-based PII scrubbing for MCP servers (TypeScript + optional Rust napi)",
   "type": "module",
   "license": "MIT",
   "author": "foro.sh",
@@ -17,7 +17,6 @@
   "keywords": [
     "mcp",
     "pii",
-    "fastmcp",
     "privacy",
     "redaction"
   ],
@@ -30,10 +29,6 @@
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
-    },
-    "./fastmcp": {
-      "types": "./dist/fastmcp.d.ts",
-      "import": "./dist/fastmcp.js"
     }
   },
   "files": [
@@ -56,14 +51,6 @@
     "test:watch": "vitest",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "prepublishOnly": "npm run build"
-  },
-  "peerDependencies": {
-    "@prefecthq/fastmcp-ts": ">=1.0.0"
-  },
-  "peerDependenciesMeta": {
-    "@prefecthq/fastmcp-ts": {
-      "optional": true
-    }
   },
   "devDependencies": {
     "@napi-rs/cli": "^2.18.4",

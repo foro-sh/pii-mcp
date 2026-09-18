@@ -5,6 +5,9 @@ as the Python package: emails, IBANs, cards, BICs, MACs, IPs, coordinates, BSNs,
 US SSNs, German tax IDs, Dutch BTW-ids, phones, Dutch postcodes, and Dutch
 license plates. Language packs: `en`, `nl`, and opt-in `de`.
 
+FastMCP middleware stays Python-only (`pii_mcp.fastmcp`); this package is the
+core scrub API for Node/TypeScript callers.
+
 ## Install
 
 ```bash
@@ -49,20 +52,6 @@ favor pure JS because FFI overhead dominates:
 cd typescript && npm run build && npm run build:native
 node ../scripts/bench_backends.mjs
 ```
-
-## FastMCP
-
-```ts
-import { FastMCP } from "@prefecthq/fastmcp-ts/server";
-import { PiiScrubMiddleware } from "pii-mcp/fastmcp";
-
-const server = new FastMCP({ name: "MyServer", version: "1.0.0" });
-server.use(new PiiScrubMiddleware()); // languages=["en","nl"] by default
-// server.use(new PiiScrubMiddleware({ languages: ["en", "nl", "de"] }));
-```
-
-Results only. On scrub failure or oversize, the result is withheld — never
-forwarded unmasked.
 
 ## Core
 

@@ -119,16 +119,6 @@ cd typescript && npm run build && npm run build:native
 node ../scripts/bench_backends.mjs
 ```
 
-### FastMCP (TypeScript)
-
-```ts
-import { FastMCP } from "@prefecthq/fastmcp-ts/server";
-import { PiiScrubMiddleware } from "pii-mcp/fastmcp";
-
-const server = new FastMCP({ name: "MyServer", version: "1.0.0" });
-server.use(new PiiScrubMiddleware());
-```
-
 ### Core (TypeScript)
 
 ```ts
