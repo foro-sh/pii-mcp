@@ -87,6 +87,12 @@ class TestIban:
         assert result["text"] == "Please pay to [IBAN] today"
         assert result["counts"]["iban"] == 1
 
+    def test_masks_lowercase_spaced_before_phone(self) -> None:
+        result = scrub_text("wire nl91 abna 0417 1643 00")
+        assert result["text"] == "wire [IBAN]"
+        assert result["counts"]["iban"] == 1
+        assert result["counts"]["phone"] == 0
+
 
 class TestCreditCard:
     def test_masks_compact_16(self) -> None:
@@ -105,6 +111,11 @@ class TestCreditCard:
     def test_masks_amex(self) -> None:
         result = scrub_text("amex 378282246310005 ok")
         assert result["text"] == "amex [CREDIT_CARD] ok"
+
+    def test_masks_amex_spaced(self) -> None:
+        result = scrub_text("amex 3782 822463 10005 ok")
+        assert result["text"] == "amex [CREDIT_CARD] ok"
+        assert result["counts"]["credit_card"] == 1
 
     def test_rejects_luhn_fail(self) -> None:
         result = scrub_text("order 1234567812345678 shipped")

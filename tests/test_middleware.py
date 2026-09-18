@@ -98,3 +98,14 @@ async def test_languages_en_skips_bsn() -> None:
 
     result = await mw.on_call_tool(MagicMock(), call_next)
     assert result.content[0].text == "BSN 100000009"
+
+
+async def test_masks_tool_result_meta(middleware: PiiScrubMiddleware) -> None:
+    async def call_next(_ctx: Any) -> ToolResult:
+        return ToolResult(
+            content=[TextContent(type="text", text="ok")],
+            meta={"email": "ada@example.com"},
+        )
+
+    result = await middleware.on_call_tool(MagicMock(), call_next)
+    assert result.meta == {"email": "[EMAIL]"}

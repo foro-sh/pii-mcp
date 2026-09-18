@@ -64,7 +64,10 @@ email_detector = Detector(type="email", scrub=_scrub_email)
 
 IBAN_RES: tuple[re.Pattern[str], ...] = (
     re.compile(r"\b[A-Za-z]{2}\d{2}[A-Za-z0-9]{11,30}\b"),
+    # Spaced groups: separate upper/lower so trailing words (e.g. "today")
+    # are not swallowed by a mixed-case class.
     re.compile(r"\b[A-Z]{2}\d{2}(?:[ ]?[A-Z0-9]{1,4}){3,8}\b"),
+    re.compile(r"\b[a-z]{2}\d{2}(?:[ ]?[a-z0-9]{1,4}){3,8}\b"),
 )
 
 
@@ -95,6 +98,8 @@ iban_detector = Detector(type="iban", scrub=_scrub_iban)
 
 CREDIT_CARD_RES: tuple[re.Pattern[str], ...] = (
     re.compile(r"\b\d{4}[ -]\d{4}[ -]\d{4}[ -]\d{1,4}\b"),
+    # Amex 4-6-5 groupings (space or dash).
+    re.compile(r"\b\d{4}[ -]\d{6}[ -]\d{5}\b"),
     re.compile(r"\b\d{13,19}\b"),
 )
 

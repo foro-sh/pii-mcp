@@ -62,6 +62,21 @@ def _scrub_text_blocks(
     return out, counts
 
 
+def _scrub_meta(
+    meta: Any,
+    *,
+    languages: Sequence[str] | None,
+) -> tuple[Any, PiiCounts]:
+    """Scrub JSON-like meta; leave None as-is. Fail closed via scrub_payload."""
+    if meta is None:
+        return None, empty_pii_counts()
+    if isinstance(meta, str):
+        result = scrub_text(meta, languages=languages)
+        return result["text"], result["counts"]
+    result = scrub_payload(meta, languages=languages)
+    return result["payload"], result["counts"]
+
+
 class PiiScrubMiddleware(Middleware):
     """Redact Tier-1 PII in outbound MCP results (tools, resources, prompts)."""
 
@@ -108,12 +123,17 @@ class PiiScrubMiddleware(Middleware):
             new_structured = scrubbed["payload"]
             parts.append(scrubbed["counts"])
 
+        new_meta, meta_counts = _scrub_meta(
+            result.meta, languages=self._languages
+        )
+        parts.append(meta_counts)
+
         merged = merge_counts(parts)
         self._emit(merged)
         return ToolResult(
             content=new_content,
             structured_content=new_structured,
-            meta=result.meta,
+            meta=new_meta,
         )
 
     def _scrub_resource_result(self, result: ResourceResult) -> ResourceResult:
@@ -121,26 +141,45 @@ class PiiScrubMiddleware(Middleware):
         new_contents: list[ResourceContent] = []
         for item in result.contents:
             content = item.content
+            item_meta = getattr(item, "meta", None)
+            new_item_meta, item_meta_counts = _scrub_meta(
+                item_meta, languages=self._languages
+            )
+            parts.append(item_meta_counts)
             if isinstance(content, str):
                 scrubbed = scrub_text(content, languages=self._languages)
                 parts.append(scrubbed["counts"])
                 if hasattr(item, "model_copy"):
                     new_contents.append(
-                        item.model_copy(update={"content": scrubbed["text"]})
+                        item.model_copy(
+                            update={
+                                "content": scrubbed["text"],
+                                "meta": new_item_meta,
+                            }
+                        )
                     )
                 else:
                     new_contents.append(
                         ResourceContent(
                             content=scrubbed["text"],
                             mime_type=item.mime_type,
-                            meta=getattr(item, "meta", None),
+                            meta=new_item_meta,
                         )
                     )
             else:
-                # Binary / non-text: leave as-is (cannot regex-scrub safely).
-                new_contents.append(item)
+                # Binary / non-text body: still scrub meta; leave bytes as-is.
+                if hasattr(item, "model_copy"):
+                    new_contents.append(
+                        item.model_copy(update={"meta": new_item_meta})
+                    )
+                else:
+                    new_contents.append(item)
+        new_meta, meta_counts = _scrub_meta(
+            result.meta, languages=self._languages
+        )
+        parts.append(meta_counts)
         self._emit(merge_counts(parts) if parts else empty_pii_counts())
-        return ResourceResult(contents=new_contents, meta=result.meta)
+        return ResourceResult(contents=new_contents, meta=new_meta)
 
     def _scrub_prompt_result(self, result: PromptResult) -> PromptResult:
         parts: list[PiiCounts] = []
@@ -167,11 +206,22 @@ class PiiScrubMiddleware(Middleware):
                     )
             else:
                 new_messages.append(message)
+        new_description = result.description
+        if isinstance(result.description, str):
+            desc = scrub_text(result.description, languages=self._languages)
+            new_description = desc["text"]
+            parts.append(desc["counts"])
+
+        new_meta, meta_counts = _scrub_meta(
+            result.meta, languages=self._languages
+        )
+        parts.append(meta_counts)
+
         self._emit(merge_counts(parts) if parts else empty_pii_counts())
         return PromptResult(
             messages=new_messages,
-            description=result.description,
-            meta=result.meta,
+            description=new_description,
+            meta=new_meta,
         )
 
     async def on_call_tool(
