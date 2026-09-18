@@ -94,6 +94,22 @@ class TestIban:
         assert result["counts"]["phone"] == 0
 
 
+class TestBic:
+    def test_masks_8_char(self) -> None:
+        result = scrub_text("swift ABNANL2A today")
+        assert result["text"] == "swift [BIC] today"
+        assert result["counts"]["bic"] == 1
+
+    def test_masks_11_char(self) -> None:
+        result = scrub_text("bic INGBNL2AXXX ok")
+        assert result["text"] == "bic [BIC] ok"
+        assert result["counts"]["bic"] == 1
+
+    def test_rejects_unknown_country(self) -> None:
+        result = scrub_text("code AAAAXX2A noted")
+        assert result["counts"]["bic"] == 0
+
+
 class TestCreditCard:
     def test_masks_compact_16(self) -> None:
         result = scrub_text("card 4111111111111111 exp 12/29")
@@ -153,6 +169,23 @@ class TestBsn:
         assert result["text"] == "id [BSN]"
         assert result["counts"]["bsn"] == 1
         assert result["counts"]["ssn"] == 0
+
+
+class TestNlVat:
+    def test_masks_btw_id(self) -> None:
+        result = scrub_text("factuur NL000099998B57", languages=["nl"])
+        assert result["text"] == "factuur [VAT_ID]"
+        assert result["counts"]["vat_id"] == 1
+
+    def test_masks_lowercased(self) -> None:
+        result = scrub_text("btw nl001631457b01", languages=["nl"])
+        assert result["text"] == "btw [VAT_ID]"
+        assert result["counts"]["vat_id"] == 1
+
+    def test_disabled_without_nl(self) -> None:
+        result = scrub_text("factuur NL000099998B57", languages=["en"])
+        assert result["text"] == "factuur NL000099998B57"
+        assert result["counts"]["vat_id"] == 0
 
 
 class TestSsn:
@@ -287,6 +320,48 @@ class TestIp:
         assert result["counts"]["ip"] == 0
 
 
+class TestMac:
+    def test_masks_colon_form(self) -> None:
+        result = scrub_text("sta aa:bb:cc:dd:ee:ff associated")
+        assert result["text"] == "sta [MAC] associated"
+        assert result["counts"]["mac"] == 1
+
+    def test_masks_dash_form(self) -> None:
+        result = scrub_text("nic AA-BB-CC-DD-EE-FF up")
+        assert result["text"] == "nic [MAC] up"
+        assert result["counts"]["mac"] == 1
+
+    def test_masks_cisco_dotted(self) -> None:
+        result = scrub_text("host aabb.ccdd.eeff online")
+        assert result["text"] == "host [MAC] online"
+        assert result["counts"]["mac"] == 1
+
+    def test_does_not_eat_ipv6(self) -> None:
+        result = scrub_text("peer 2001:db8::1 ok")
+        assert result["counts"]["mac"] == 0
+        assert result["counts"]["ip"] == 1
+
+
+class TestLocation:
+    def test_masks_amsterdam_coords(self) -> None:
+        result = scrub_text("pin 52.3676, 4.9041 downtown")
+        assert result["text"] == "pin [LOCATION] downtown"
+        assert result["counts"]["location"] == 1
+
+    def test_masks_negative_lon(self) -> None:
+        result = scrub_text("at 40.7128, -74.0060 now")
+        assert result["text"] == "at [LOCATION] now"
+        assert result["counts"]["location"] == 1
+
+    def test_rejects_out_of_range(self) -> None:
+        result = scrub_text("bad 91.0000, 4.9041 coords")
+        assert result["counts"]["location"] == 0
+
+    def test_ignores_short_decimals(self) -> None:
+        result = scrub_text("versions 1.0, 2.0 shipped")
+        assert result["counts"]["location"] == 0
+
+
 class TestNlPostcode:
     def test_masks_spaced(self) -> None:
         result = scrub_text("woonachtig te 1012 AB Amsterdam", languages=["nl"])
@@ -316,6 +391,28 @@ class TestNlPostcode:
         assert result["counts"]["address"] == 0
 
 
+class TestNlLicensePlate:
+    def test_masks_sidecode_4(self) -> None:
+        result = scrub_text("auto X-123-YZ wacht, kenteken AB-12-CD gezien", languages=["nl"])
+        assert result["text"] == "auto [LICENSE_PLATE] wacht, kenteken [LICENSE_PLATE] gezien"
+        assert result["counts"]["license_plate"] == 2
+
+    def test_masks_sidecode_6(self) -> None:
+        result = scrub_text("plaat 12-AB-CD geparkeerd", languages=["nl"])
+        assert result["text"] == "plaat [LICENSE_PLATE] geparkeerd"
+        assert result["counts"]["license_plate"] == 1
+
+    def test_rejects_sa_sd_ss(self) -> None:
+        for plate in ("12-SA-34", "AB-SD-12", "12-SS-AB"):
+            result = scrub_text(f"ref {plate}", languages=["nl"])
+            assert result["counts"]["license_plate"] == 0, plate
+
+    def test_disabled_without_nl(self) -> None:
+        result = scrub_text("kenteken AB-12-CD gezien", languages=["en"])
+        assert result["text"] == "kenteken AB-12-CD gezien"
+        assert result["counts"]["license_plate"] == 0
+
+
 class TestMultiple:
     def test_masks_together(self) -> None:
         result = scrub_text("mail ada@example.com or card 4111111111111111")
@@ -324,13 +421,18 @@ class TestMultiple:
             "email": 1,
             "iban": 0,
             "credit_card": 1,
+            "bic": 0,
+            "mac": 0,
             "ip": 0,
+            "location": 0,
             "bsn": 0,
             "ssn": 0,
             "tax_id": 0,
+            "vat_id": 0,
             "phone": 0,
             "person": 0,
             "address": 0,
+            "license_plate": 0,
         }
 
     def test_detector_order_card_not_phone(self) -> None:
