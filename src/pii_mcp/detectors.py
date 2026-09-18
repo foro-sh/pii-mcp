@@ -1,4 +1,4 @@
-"""Tier-1 detectors: regex + checksum where one exists.
+"""Pattern detectors: regex + checksum where one exists.
 
 Ported from foro-sh/platform ``infra/templates/foro-pii.mts``. Detector order
 matters — earlier matches become digit-free placeholders before looser
@@ -20,7 +20,7 @@ Patterns:
 - NL BTW-id (``vat_id``): ``NL`` + 9 digits + ``B`` + 2 digits (format only —
   post-2020 sole-trader ids are not elfproef-gated).
 - NL postcode (``address``): ``1234 AB`` / ``1234AB`` with uppercase letters
-  only and SA/SD/SS rejects — structured address fragment without Tier-2 NER.
+  only and SA/SD/SS rejects — structured fragment, not street-address NER.
 - NL kenteken (``license_plate``): hyphenated RDW sidecodes 1–14, uppercase,
   with SA/SD/SS letter-pair rejects.
 - Phone packs: international (any active pack), NL national, NANP, DE national

@@ -1,4 +1,4 @@
-"""Unit tests for Tier-1 scrub_text detectors (ported from platform pii.test.ts)."""
+"""Unit tests for scrub_text pattern detectors (ported from platform pii.test.ts)."""
 
 from __future__ import annotations
 
@@ -443,9 +443,10 @@ class TestMultiple:
 
 
 class TestSizeCap:
-    def test_oversize_fails_closed(self) -> None:
+    def test_oversize_fails_closed(self, monkeypatch: pytest.MonkeyPatch) -> None:
         import pii_mcp.scrub as scrub_mod
 
+        monkeypatch.setenv("PII_MCP_BACKEND", "python")
         original = scrub_mod.MAX_SCRUB_BYTES
         scrub_mod.MAX_SCRUB_BYTES = 64
         try:

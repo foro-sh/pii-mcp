@@ -1,10 +1,10 @@
-"""Language packs and scrub walk — Tier-1 only.
+"""Language packs and scrub walk for pattern-based detectors.
 
 Universal detectors (email, IBAN, credit card, BIC, MAC, IP, location) always
 run. Locale packs add national IDs / phone shapes / NL postcodes / kentekens /
 BTW-ids. Counts always include every ``PiiType`` key (0 when unused), including
-Tier-2 placeholder ``person``. ``address`` is reserved for Tier-2 NER and also
-receives NL postcode hits.
+reserved ``person`` (unused until NER is added). ``address`` is reserved for
+street-address NER and also receives NL postcode hits from the pattern pack.
 
 ``MAX_SCRUB_BYTES`` matches foro-proxy (32 MiB). Oversize raises
 ``PiiScrubError`` so callers withhold rather than forward unscrubbed text.
@@ -13,10 +13,17 @@ Detector pack order (see ``_detectors_for``): universal → checksum/rule-backed
 national IDs (BSN before SSN when both packs are on; NL BTW after BSN) → NL
 postcode / kenteken when ``nl`` → phones (international when any pack is
 active, then locale forms).
+
+Optional Rust acceleration: when ``pii_mcp._native`` is importable (built via
+maturin), ``scrub_text`` / ``scrub_payload`` prefer it. Set
+``PII_MCP_BACKEND=python`` to force the pure-Python path; ``native`` requires
+the extension. Default ``pip install`` stays hatchling/pure-Python — no Rust
+toolchain required.
 """
 
 from __future__ import annotations
 
+import os
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from typing import Any, Literal
@@ -82,6 +89,11 @@ MAX_DEPTH = 200
 
 _KNOWN_LANGUAGES: frozenset[str] = frozenset({"en", "nl", "de"})
 
+try:
+    from pii_mcp import _native as _native_mod
+except ImportError:
+    _native_mod = None
+
 
 @dataclass(frozen=True)
 class ScrubReport:
@@ -107,6 +119,35 @@ def empty_pii_counts() -> PiiCounts:
 
 def total_pii_count(counts: PiiCounts) -> int:
     return sum(counts[t] for t in PII_TYPES)
+
+
+def using_native() -> bool:
+    """Return True when the optional Rust extension will handle scrub calls."""
+    return _resolve_backend() == "native"
+
+
+def _resolve_backend() -> Literal["native", "python"]:
+    flag = os.environ.get("PII_MCP_BACKEND", "auto").strip().lower()
+    if flag in ("python", "py"):
+        return "python"
+    if flag in ("native", "rust"):
+        if _native_mod is None:
+            raise ImportError(
+                "PII_MCP_BACKEND=native but pii_mcp._native is not installed; "
+                "build with: maturin develop --release --manifest-path "
+                "crates/pii-mcp-native/Cargo.toml"
+            )
+        return "native"
+    if _native_mod is not None:
+        return "native"
+    return "python"
+
+
+def _raise_native_error(exc: BaseException) -> None:
+    msg = str(exc)
+    if msg.startswith("PiiScrubError:"):
+        raise PiiScrubError(msg.removeprefix("PiiScrubError:")) from exc
+    raise exc
 
 
 def _normalize_languages(languages: Sequence[str] | None) -> tuple[LanguageCode, ...]:
@@ -176,13 +217,24 @@ def scrub_text(
     languages: Sequence[str] | None = None,
     _check_size: bool = True,
 ) -> dict[str, Any]:
-    """Mask Tier-1 PII in a string. Returns ``{text, found, counts}``.
+    """Mask pattern-detectable PII in a string. Returns ``{text, found, counts}``.
 
     Raises ``PiiScrubError`` when ``_check_size`` and input exceeds
     ``MAX_SCRUB_BYTES``.
     """
     if not isinstance(text, str):
         raise TypeError("scrub_text expects a str")
+
+    if _resolve_backend() == "native" and _check_size:
+        assert _native_mod is not None
+        try:
+            if languages is None:
+                return dict(_native_mod.scrub_text(text))
+            return dict(_native_mod.scrub_text(text, languages=list(languages)))
+        except Exception as exc:  # noqa: BLE001 — remap native errors
+            _raise_native_error(exc)
+            raise
+
     if _check_size and _utf8_size(text) > MAX_SCRUB_BYTES:
         raise PiiScrubError(
             f"scrub input exceeds the {MAX_SCRUB_BYTES}-byte size cap"
@@ -196,7 +248,7 @@ def scrub_text(
     return {"text": out, "found": total_pii_count(counts) > 0, "counts": counts}
 
 
-def _tier1_walk(
+def _scrub_walk(
     value: Any,
     counts: PiiCounts,
     depth: int,
@@ -211,10 +263,10 @@ def _tier1_walk(
             counts[t] += result["counts"][t]
         return result["text"]
     if isinstance(value, list):
-        return [_tier1_walk(item, counts, depth + 1, languages) for item in value]
+        return [_scrub_walk(item, counts, depth + 1, languages) for item in value]
     if isinstance(value, dict):
         return {
-            key: _tier1_walk(item, counts, depth + 1, languages)
+            key: _scrub_walk(item, counts, depth + 1, languages)
             for key, item in value.items()
         }
     if value is None or isinstance(value, (bool, int, float)):
@@ -234,12 +286,22 @@ def scrub_payload(
     Size is enforced on string leaves before the walk. Non-plain objects and
     oversize input raise ``PiiScrubError``.
     """
+    if _resolve_backend() == "native":
+        assert _native_mod is not None
+        try:
+            if languages is None:
+                return dict(_native_mod.scrub_payload(payload))
+            return dict(_native_mod.scrub_payload(payload, languages=list(languages)))
+        except Exception as exc:  # noqa: BLE001 — remap native errors
+            _raise_native_error(exc)
+            raise
+
     if _payload_string_bytes(payload) > MAX_SCRUB_BYTES:
         raise PiiScrubError(
             f"scrub input exceeds the {MAX_SCRUB_BYTES}-byte size cap"
         )
     counts = empty_pii_counts()
-    scrubbed = _tier1_walk(payload, counts, 0, languages)
+    scrubbed = _scrub_walk(payload, counts, 0, languages)
     return {
         "payload": scrubbed,
         "found": total_pii_count(counts) > 0,

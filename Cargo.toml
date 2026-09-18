@@ -1,0 +1,15 @@
+[workspace]
+resolver = "2"
+members = ["crates/pii-core", "crates/pii-mcp-native"]
+
+[workspace.package]
+edition = "2021"
+license = "MIT"
+repository = "https://github.com/foro-sh/pii-mcp"
+
+[workspace.dependencies]
+pii-core = { path = "crates/pii-core" }
+regex = "1"
+serde_json = "1"
+thiserror = "2"
+pyo3 = { version = "0.25", features = ["extension-module"] }

@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "pii-mcp"
 version = "0.1.0"
-description = "Tier-1 PII scrubbing for MCP servers — one-line FastMCP middleware"
+description = "Pattern-based PII scrubbing for MCP servers — one-line FastMCP middleware"
 readme = "README.md"
 license = "MIT"
 requires-python = ">=3.10"
@@ -35,6 +35,10 @@ dev = [
   "pytest-asyncio>=0.24",
   "pii-mcp[fastmcp]",
 ]
+# Optional: build tools for the Rust extension (not required for pip install).
+native = [
+  "maturin>=1.7",
+]
 
 [project.urls]
 Homepage = "https://github.com/foro-sh/pii-mcp"
@@ -42,6 +46,13 @@ Issues = "https://github.com/foro-sh/pii-mcp/issues"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/pii_mcp"]
+
+# Opt-in native build (does not replace hatchling for default installs):
+#   pip install -e ".[native]" && maturin develop --manifest-path crates/pii-mcp-native/Cargo.toml
+[tool.maturin]
+manifest-path = "crates/pii-mcp-native/Cargo.toml"
+module-name = "pii_mcp._native"
+python-source = "src"
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

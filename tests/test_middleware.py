@@ -64,9 +64,12 @@ async def test_on_scrub_receives_report_only() -> None:
     assert "ada@" not in repr(reports[0])
 
 
-async def test_fail_closed_oversize_withholds() -> None:
+async def test_fail_closed_oversize_withholds(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     import pii_mcp.scrub as scrub_mod
 
+    monkeypatch.setenv("PII_MCP_BACKEND", "python")
     original = scrub_mod.MAX_SCRUB_BYTES
     scrub_mod.MAX_SCRUB_BYTES = 32
     mw = PiiScrubMiddleware()
