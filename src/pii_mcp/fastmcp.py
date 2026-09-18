@@ -82,7 +82,7 @@ def _scrub_meta(
 
 
 class PiiScrubMiddleware(Middleware):
-    """Redact Tier-1 PII in outbound MCP results (tools, resources, prompts)."""
+    """Redact pattern-based PII in outbound MCP results (tools, resources, prompts)."""
 
     def __init__(
         self,

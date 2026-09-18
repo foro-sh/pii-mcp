@@ -1,7 +1,7 @@
-"""Tier-1 PII scrubbing for MCP tool/resource/prompt results.
+"""Pattern-based PII scrubbing for MCP tool/resource/prompt results.
 
-Sync, in-process, regex + checksum detectors. Not full foro.sh Data
-protection (no Tier-2 NER / Presidio).
+Sync, in-process, regex + checksum detectors. Does not include NER for
+person names or full street addresses (e.g. Presidio).
 """
 
 from __future__ import annotations
@@ -18,6 +18,7 @@ from pii_mcp.scrub import (
     scrub_payload,
     scrub_text,
     total_pii_count,
+    using_native,
 )
 
 __all__ = [
@@ -32,6 +33,7 @@ __all__ = [
     "scrub_payload",
     "scrub_text",
     "total_pii_count",
+    "using_native",
 ]
 
 __version__ = "0.1.0"

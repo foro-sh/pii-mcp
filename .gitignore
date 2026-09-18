@@ -18,3 +18,10 @@ venv/
 .mypy_cache/
 .ruff_cache/
 .worktrees/
+
+# Rust
+/target/
+**/*.so
+**/*.dylib
+**/*.dll
+crates/*/Cargo.lock
