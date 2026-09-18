@@ -9,6 +9,7 @@ Patterns:
 - Spaced IBANs use separate upper- and lower-case patterns so a trailing word
   is not swallowed by a mixed-case class.
 - Credit cards include Amex 4-6-5 groupings as well as 4-4-4-x and compact.
+- BIC/SWIFT: 8 or 11 alnum with ISO 3166-1 country letters (AP: financial data).
 - MAC: colon/dash IEEE and Cisco dotted forms (AP: device MAC is personal data).
 - IP: IPv4 octet-bounded regex; IPv6 candidate shapes validated via
   ``ipaddress`` (AP notes IP addresses can be personal data).
@@ -16,6 +17,8 @@ Patterns:
   (AP lists locatiegegevens as privacy-sensitive).
 - US SSN: hyphenated or compact 9-digit with SSA area/group/serial rejects.
 - German Steuer-IdNr (tax_id): 11 digits with structure + mod-11/10 check.
+- NL BTW-id (``vat_id``): ``NL`` + 9 digits + ``B`` + 2 digits (format only —
+  post-2020 sole-trader ids are not elfproef-gated).
 - NL postcode (``address``): ``1234 AB`` / ``1234AB`` with uppercase letters
   only and SA/SD/SS rejects — structured address fragment without Tier-2 NER.
 - NL kenteken (``license_plate``): hyphenated RDW sidecodes 1–14, uppercase,
@@ -23,8 +26,8 @@ Patterns:
 - Phone packs: international (any active pack), NL national, NANP, DE national
   (DE excludes exact Dutch ``06…`` 10-digit mobiles).
 
-``UNIVERSAL_DETECTORS`` (email, IBAN, credit card, MAC, IP, location) always
-run; locale detectors are selected by ``languages=`` in the scrub layer.
+``UNIVERSAL_DETECTORS`` (email, IBAN, credit card, BIC, MAC, IP, location)
+always run; locale detectors are selected by ``languages=`` in the scrub layer.
 """
 
 from __future__ import annotations
@@ -39,12 +42,14 @@ PiiCategory = Literal[
     "email",
     "iban",
     "credit_card",
+    "bic",
     "mac",
     "ip",
     "location",
     "bsn",
     "ssn",
     "tax_id",
+    "vat_id",
     "phone",
     "address",
     "license_plate",
@@ -158,6 +163,40 @@ def _scrub_credit_card(text: str) -> tuple[str, int]:
 
 
 credit_card_detector = Detector(type="credit_card", scrub=_scrub_credit_card)
+
+# ISO 3166-1 alpha-2 — BIC country field must be a real country code.
+_ISO_3166_1_ALPHA2 = frozenset(
+    """
+    AD AE AF AG AI AL AM AO AQ AR AS AT AU AW AX AZ BA BB BD BE BF BG BH BI BJ
+    BL BM BN BO BQ BR BS BT BV BW BY BZ CA CC CD CF CG CH CI CK CL CM CN CO CR
+    CU CV CW CX CY CZ DE DJ DK DM DO DZ EC EE EG EH ER ES ET FI FJ FK FM FO FR
+    GA GB GD GE GF GG GH GI GL GM GN GP GQ GR GS GT GU GW GY HK HM HN HR HT HU
+    ID IE IL IM IN IO IQ IR IS IT JE JM JO JP KE KG KH KI KM KN KP KR KW KY KZ
+    LA LB LC LI LK LR LS LT LU LV LY MA MC MD ME MF MG MH MK ML MM MN MO MP MQ
+    MR MS MT MU MV MW MX MY MZ NA NC NE NF NG NI NL NO NP NR NU NZ OM PA PE PF
+    PG PH PK PL PM PN PR PS PT PW PY QA RE RO RS RU RW SA SB SC SD SE SG SH SI
+    SJ SK SL SM SN SO SR SS ST SV SX SY SZ TC TD TF TG TH TJ TK TL TM TN TO TR
+    TT TV TW TZ UA UG UM US UY UZ VA VC VE VG VI VN VU WF WS YE YT ZA ZM ZW
+    """.split()
+)
+
+BIC_RE = re.compile(r"\b[A-Z]{4}[A-Z]{2}[A-Z0-9]{2}(?:[A-Z0-9]{3})?\b")
+
+
+def _bic_valid(value: str) -> bool:
+    """Uppercase SWIFT/BIC only; country letters must be ISO 3166-1 alpha-2."""
+    if len(value) not in (8, 11):
+        return False
+    if not re.fullmatch(r"[A-Z]{4}[A-Z]{2}[A-Z0-9]{2}([A-Z0-9]{3})?", value):
+        return False
+    return value[4:6] in _ISO_3166_1_ALPHA2
+
+
+def _scrub_bic(text: str) -> tuple[str, int]:
+    return _replace_matches(text, BIC_RE, "[BIC]", _bic_valid)
+
+
+bic_detector = Detector(type="bic", scrub=_scrub_bic)
 
 MAC_RES: tuple[re.Pattern[str], ...] = (
     re.compile(
@@ -329,6 +368,16 @@ def _scrub_tax_id(text: str) -> tuple[str, int]:
 
 tax_id_detector = Detector(type="tax_id", scrub=_scrub_tax_id)
 
+NL_VAT_RE = re.compile(r"\b[Nn][Ll]\d{9}[Bb]\d{2}\b")
+
+
+def _scrub_nl_vat(text: str) -> tuple[str, int]:
+    """Format-only: post-2020 sole-trader BTW-ids are not elfproef-gated."""
+    return _replace_matches(text, NL_VAT_RE, "[VAT_ID]")
+
+
+nl_vat_detector = Detector(type="vat_id", scrub=_scrub_nl_vat)
+
 
 def _digit_count(text: str) -> int:
     return sum(1 for ch in text if ch.isdigit())
@@ -442,6 +491,7 @@ UNIVERSAL_DETECTORS: tuple[Detector, ...] = (
     email_detector,
     iban_detector,
     credit_card_detector,
+    bic_detector,
     mac_detector,
     ip_detector,
     location_detector,
