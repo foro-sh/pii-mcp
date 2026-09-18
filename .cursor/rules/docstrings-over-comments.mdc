@@ -1,0 +1,40 @@
+---
+description: Prefer docstrings over inline comments; keep # rare
+alwaysApply: true
+---
+
+# Docstrings over comments
+
+Document contracts in **docstrings** (module, class, function). Do not rely on
+narrative `#` comments.
+
+## Do
+
+- Put API invariants, fail-closed behavior, detector order, and pack semantics in
+  module or function docstrings.
+- Prefer clear names and tests over explaining what the next lines do.
+- Keep `# type: ignore[...]` and other required toolchain directives.
+
+## Don't
+
+- Narrate code (`# scrub the email`, `# loop detectors`).
+- Duplicate the docstring beside the implementation.
+- Leave "why" only in a `#` above a regex or branch when a docstring on the
+  function/module can hold it.
+
+## Rare exception
+
+A one-line `#` is OK only when the code looks wrong but isn't and a docstring
+cannot sit at that exact site (true footgun). Prefer a named helper or test
+instead when practical.
+
+```python
+# ❌ BAD
+# Prefer model_copy when available (pydantic); else rebuild TextContent.
+if hasattr(block, "model_copy"):
+    ...
+
+# ✅ GOOD — behavior obvious from control flow; contract lives on the module/fn
+if hasattr(block, "model_copy"):
+    ...
+```

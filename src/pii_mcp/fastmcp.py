@@ -2,6 +2,11 @@
 
 Requires ``pip install pii-mcp[fastmcp]`` (FastMCP >= 3.0.0).
 Results only — does not scrub tool arguments or list_tools schemas.
+
+Fail closed: any scrub/walk error withholds the result (never forwards
+unmasked text). Scrubs text content, structured payloads, ``meta``, and
+prompt ``description``. Binary resource bodies are left as-is; their meta
+is still scrubbed.
 """
 
 from __future__ import annotations
@@ -52,7 +57,6 @@ def _scrub_text_blocks(
             result = scrub_text(text, languages=languages)
             for t, n in result["counts"].items():
                 counts[t] += n
-            # Prefer model_copy when available (pydantic); else rebuild TextContent.
             if hasattr(block, "model_copy"):
                 out.append(block.model_copy(update={"text": result["text"]}))
             else:
@@ -166,14 +170,12 @@ class PiiScrubMiddleware(Middleware):
                             meta=new_item_meta,
                         )
                     )
+            elif hasattr(item, "model_copy"):
+                new_contents.append(
+                    item.model_copy(update={"meta": new_item_meta})
+                )
             else:
-                # Binary / non-text body: still scrub meta; leave bytes as-is.
-                if hasattr(item, "model_copy"):
-                    new_contents.append(
-                        item.model_copy(update={"meta": new_item_meta})
-                    )
-                else:
-                    new_contents.append(item)
+                new_contents.append(item)
         new_meta, meta_counts = _scrub_meta(
             result.meta, languages=self._languages
         )
@@ -235,7 +237,6 @@ class PiiScrubMiddleware(Middleware):
         except PiiScrubError:
             return self._withheld_tool()
         except Exception:
-            # Any unexpected walk/scrub failure → fail closed.
             return self._withheld_tool()
 
     async def on_read_resource(

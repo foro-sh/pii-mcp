@@ -1,8 +1,21 @@
 """Tier-1 detectors: regex + checksum where one exists.
 
-Ported from foro-sh/platform `infra/templates/foro-pii.mts`. Detector order
+Ported from foro-sh/platform ``infra/templates/foro-pii.mts``. Detector order
 matters — earlier matches become digit-free placeholders before looser
 numeric detectors run.
+
+Patterns:
+- Email uses bounded quantifiers (unbounded local-part ``+`` is ReDoS-prone).
+- Spaced IBANs use separate upper- and lower-case patterns so a trailing word
+  is not swallowed by a mixed-case class.
+- Credit cards include Amex 4-6-5 groupings as well as 4-4-4-x and compact.
+- US SSN: hyphenated or compact 9-digit with SSA area/group/serial rejects.
+- German Steuer-IdNr (tax_id): 11 digits with structure + mod-11/10 check.
+- Phone packs: international (any active pack), NL national, NANP, DE national
+  (DE excludes exact Dutch ``06…`` 10-digit mobiles).
+
+``UNIVERSAL_DETECTORS`` (email, IBAN, credit card) always run; locale detectors
+are selected by ``languages=`` in the scrub layer.
 """
 
 from __future__ import annotations
@@ -48,8 +61,6 @@ def _replace_matches(
     return pattern.sub(_sub, text), count
 
 
-# Bounded quantifiers — unbounded local-part `+` is a quadratic ReDoS on long
-# runs of local-part-shaped characters with no `@`.
 EMAIL_RE = re.compile(
     r"[A-Za-z0-9._%+-]{1,64}@[A-Za-z0-9-]{1,63}"
     r"(?:\.[A-Za-z0-9-]{1,63})*\.[A-Za-z]{2,24}"
@@ -64,8 +75,6 @@ email_detector = Detector(type="email", scrub=_scrub_email)
 
 IBAN_RES: tuple[re.Pattern[str], ...] = (
     re.compile(r"\b[A-Za-z]{2}\d{2}[A-Za-z0-9]{11,30}\b"),
-    # Spaced groups: separate upper/lower so trailing words (e.g. "today")
-    # are not swallowed by a mixed-case class.
     re.compile(r"\b[A-Z]{2}\d{2}(?:[ ]?[A-Z0-9]{1,4}){3,8}\b"),
     re.compile(r"\b[a-z]{2}\d{2}(?:[ ]?[a-z0-9]{1,4}){3,8}\b"),
 )
@@ -98,7 +107,6 @@ iban_detector = Detector(type="iban", scrub=_scrub_iban)
 
 CREDIT_CARD_RES: tuple[re.Pattern[str], ...] = (
     re.compile(r"\b\d{4}[ -]\d{4}[ -]\d{4}[ -]\d{1,4}\b"),
-    # Amex 4-6-5 groupings (space or dash).
     re.compile(r"\b\d{4}[ -]\d{6}[ -]\d{5}\b"),
     re.compile(r"\b\d{13,19}\b"),
 )
@@ -156,7 +164,6 @@ def _scrub_bsn(text: str) -> tuple[str, int]:
 
 bsn_detector = Detector(type="bsn", scrub=_scrub_bsn)
 
-# US SSN — hyphenated primary; compact 9-digit with SSA area/group/serial rejects.
 SSN_RES: tuple[re.Pattern[str], ...] = (
     re.compile(r"\b\d{3}-\d{2}-\d{4}\b"),
     re.compile(r"\b\d{9}\b"),
@@ -164,6 +171,7 @@ SSN_RES: tuple[re.Pattern[str], ...] = (
 
 
 def _ssn_valid(value: str) -> bool:
+    """SSA rejects: area 000/666/9xx, group 00, serial 0000."""
     digits = value.replace("-", "")
     if len(digits) != 9 or not digits.isdigit():
         return False
@@ -188,17 +196,16 @@ def _scrub_ssn(text: str) -> tuple[str, int]:
 
 ssn_detector = Detector(type="ssn", scrub=_scrub_ssn)
 
-# German Steuerliche Identifikationsnummer (IdNr) — 11 digits + mod-11/10 check.
 TAX_ID_RE = re.compile(r"\b\d{11}\b")
 
 
 def _tax_id_valid(digits: str) -> bool:
+    """German IdNr: no leading zero; one digit repeats 2–3× in body; check digit."""
     if len(digits) != 11 or not digits.isdigit():
         return False
     if digits[0] == "0":
         return False
     body = digits[:10]
-    # Exactly one digit repeats (2 or 3 times) among the first ten.
     counts: dict[str, int] = {}
     for ch in body:
         counts[ch] = counts.get(ch, 0) + 1
@@ -228,27 +235,21 @@ def _digit_count(text: str) -> int:
     return sum(1 for ch in text if ch.isdigit())
 
 
-# International E.164-ish: available whenever any language pack is active
-# (locale-agnostic, but gated with packs per the languages= public API).
 PHONE_INTERNATIONAL = (
     re.compile(r"(?<![\w+])(?:\+|00)\d[\d .()-]{6,16}\d"),
     lambda m: 8 <= _digit_count(m) <= 15,
 )
 
-# Dutch national: leading 0, exactly 10 digits.
 PHONE_NL_NATIONAL = (
     re.compile(r"(?<![\w+])0\d(?:[ .-]?\d){8}(?!\d)"),
     lambda m: _digit_count(m) == 10,
 )
 
-# North-American 3-3-4.
 PHONE_EN_NANP = (
     re.compile(r"(?<![\w+])\(?\d{3}\)?[ .-]\d{3}[ .-]\d{4}(?!\d)"),
     lambda m: _digit_count(m) == 10,
 )
 
-# German national: leading 0, 10–12 digits (landline + mobile).
-# Exclude exact Dutch mobiles (10 digits starting with 06) — leave those to nl.
 PHONE_DE_NATIONAL = (
     re.compile(r"(?<![\w+])0\d(?:[ .-]?\d){8,10}(?!\d)"),
     lambda m: (
@@ -280,7 +281,6 @@ phone_nl_detector = _make_phone_detector((PHONE_NL_NATIONAL,))
 phone_en_detector = _make_phone_detector((PHONE_EN_NANP,))
 phone_de_detector = _make_phone_detector((PHONE_DE_NATIONAL,))
 
-# Universal detectors — always on regardless of languages=.
 UNIVERSAL_DETECTORS: tuple[Detector, ...] = (
     email_detector,
     iban_detector,

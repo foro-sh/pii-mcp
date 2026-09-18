@@ -60,7 +60,6 @@ async def test_on_scrub_receives_report_only() -> None:
     assert len(reports) == 1
     assert reports[0].found is True
     assert reports[0].counts["email"] == 1
-    # No plaintext on the report object.
     assert not hasattr(reports[0], "text")
     assert "ada@" not in repr(reports[0])
 
@@ -88,10 +87,10 @@ async def test_fail_closed_oversize_withholds() -> None:
 
 
 async def test_languages_en_skips_bsn() -> None:
+    """100000009 is a valid BSN but SSN-invalid (group 00)."""
     mw = PiiScrubMiddleware(languages=["en"])
 
     async def call_next(_ctx: Any) -> ToolResult:
-        # Valid BSN that fails SSN rules (group 00).
         return ToolResult(
             content=[TextContent(type="text", text="BSN 100000009")]
         )

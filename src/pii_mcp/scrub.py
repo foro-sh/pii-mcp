@@ -1,8 +1,15 @@
 """Language packs and scrub walk — Tier-1 only.
 
 Universal detectors (email, IBAN, credit card) always run. Locale packs add
-national IDs / phone shapes. Counts always include every PiiType key
-(0 when unused), including Tier-2 placeholders.
+national IDs / phone shapes. Counts always include every ``PiiType`` key
+(0 when unused), including Tier-2 placeholders ``person`` / ``address``.
+
+``MAX_SCRUB_BYTES`` matches foro-proxy (32 MiB). Oversize raises
+``PiiScrubError`` so callers withhold rather than forward unscrubbed text.
+
+Detector pack order (see ``_detectors_for``): universal → checksum/rule-backed
+national IDs (BSN before SSN when both packs are on) → phones (international
+when any pack is active, then locale forms).
 """
 
 from __future__ import annotations
@@ -52,7 +59,6 @@ PiiCounts = dict[PiiType, int]
 LanguageCode = Literal["en", "nl", "de"]
 DEFAULT_LANGUAGES: tuple[LanguageCode, ...] = ("en", "nl")
 
-# Same bound as foro-proxy MAX_SCRUB_BYTES — oversize withholds, never forwards.
 MAX_SCRUB_BYTES = 32 * 1024 * 1024
 MAX_DEPTH = 200
 
@@ -105,17 +111,15 @@ def _normalize_languages(languages: Sequence[str] | None) -> tuple[LanguageCode,
 
 
 def _detectors_for(languages: Sequence[str] | None) -> tuple[Detector, ...]:
+    """Build ordered detector list for ``languages`` (see module docstring)."""
     langs = _normalize_languages(languages)
     pack: list[Detector] = list(UNIVERSAL_DETECTORS)
-    # National IDs (checksum / rule-backed) before fuzzy phone.
-    # BSN before SSN: overlapping 9-digit shapes prefer the stronger check.
     if "nl" in langs:
         pack.append(bsn_detector)
     if "de" in langs:
         pack.append(tax_id_detector)
     if "en" in langs:
         pack.append(ssn_detector)
-    # Phone: international when any pack is on; locale forms per pack.
     if langs:
         pack.append(phone_international_detector)
     if "nl" in langs:
@@ -132,6 +136,7 @@ def _utf8_size(text: str) -> int:
 
 
 def _payload_string_bytes(value: Any, depth: int = 0) -> int:
+    """Sum UTF-8 sizes of string leaves only (matches scrub cost)."""
     if depth > MAX_DEPTH:
         raise PiiScrubError(f"payload nests past the {MAX_DEPTH}-level scrub limit")
     if isinstance(value, str):
@@ -149,7 +154,11 @@ def scrub_text(
     languages: Sequence[str] | None = None,
     _check_size: bool = True,
 ) -> dict[str, Any]:
-    """Mask Tier-1 PII in a string. Returns ``{text, found, counts}``."""
+    """Mask Tier-1 PII in a string. Returns ``{text, found, counts}``.
+
+    Raises ``PiiScrubError`` when ``_check_size`` and input exceeds
+    ``MAX_SCRUB_BYTES``.
+    """
     if not isinstance(text, str):
         raise TypeError("scrub_text expects a str")
     if _check_size and _utf8_size(text) > MAX_SCRUB_BYTES:
@@ -171,10 +180,10 @@ def _tier1_walk(
     depth: int,
     languages: Sequence[str] | None,
 ) -> Any:
+    """Recurse JSON-like values; string leaves are scrubbed (size already checked)."""
     if depth > MAX_DEPTH:
         raise PiiScrubError(f"payload nests past the {MAX_DEPTH}-level scrub limit")
     if isinstance(value, str):
-        # Size already enforced for the whole payload in scrub_payload.
         result = scrub_text(value, languages=languages, _check_size=False)
         for t in PII_TYPES:
             counts[t] += result["counts"][t]
@@ -198,8 +207,11 @@ def scrub_payload(
     *,
     languages: Sequence[str] | None = None,
 ) -> dict[str, Any]:
-    """Walk a JSON-like payload and mask string leaves. Fails closed on errors."""
-    # Size check before walk (string leaves only — matches scrub cost).
+    """Walk a JSON-like payload and mask string leaves. Fails closed on errors.
+
+    Size is enforced on string leaves before the walk. Non-plain objects and
+    oversize input raise ``PiiScrubError``.
+    """
     if _payload_string_bytes(payload) > MAX_SCRUB_BYTES:
         raise PiiScrubError(
             f"scrub input exceeds the {MAX_SCRUB_BYTES}-byte size cap"
