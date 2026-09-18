@@ -91,9 +91,10 @@ async def test_languages_en_skips_bsn() -> None:
     mw = PiiScrubMiddleware(languages=["en"])
 
     async def call_next(_ctx: Any) -> ToolResult:
+        # Valid BSN that fails SSN rules (group 00).
         return ToolResult(
-            content=[TextContent(type="text", text="BSN 111222333")]
+            content=[TextContent(type="text", text="BSN 100000009")]
         )
 
     result = await mw.on_call_tool(MagicMock(), call_next)
-    assert result.content[0].text == "BSN 111222333"
+    assert result.content[0].text == "BSN 100000009"

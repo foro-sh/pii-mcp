@@ -1,6 +1,8 @@
 # pii-mcp
 
-Tier-1 PII scrubbing for MCP servers. Mask emails, IBANs, cards, Dutch BSNs, and phones in tool results — not full foro.sh Data protection (no Tier-2 NER).
+Tier-1 PII scrubbing for MCP servers. Mask emails, IBANs, cards, BSNs, US SSNs,
+German tax IDs, and phones in tool results — not full foro.sh Data protection
+(no Tier-2 NER). Language packs: `en`, `nl`, and opt-in `de`.
 
 ## Install
 
@@ -18,6 +20,7 @@ from pii_mcp.fastmcp import PiiScrubMiddleware
 
 mcp = FastMCP("MyServer")
 mcp.add_middleware(PiiScrubMiddleware())  # languages=["en", "nl"] by default
+# mcp.add_middleware(PiiScrubMiddleware(languages=["en", "nl", "de"]))
 ```
 
 Results only. On scrub failure or oversize, the result is withheld — never forwarded unmasked.

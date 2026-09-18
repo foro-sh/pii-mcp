@@ -1,8 +1,8 @@
 """Language packs and scrub walk — Tier-1 only.
 
 Universal detectors (email, IBAN, credit card) always run. Locale packs add
-BSN / phone shapes. Counts always include every PiiType key (0 when unused),
-matching platform PiiCounts shape including Tier-2 placeholders.
+national IDs / phone shapes. Counts always include every PiiType key
+(0 when unused), including Tier-2 placeholders.
 """
 
 from __future__ import annotations
@@ -15,9 +15,12 @@ from pii_mcp.detectors import (
     UNIVERSAL_DETECTORS,
     Detector,
     bsn_detector,
+    phone_de_detector,
     phone_en_detector,
     phone_international_detector,
     phone_nl_detector,
+    ssn_detector,
+    tax_id_detector,
 )
 
 PiiType = Literal[
@@ -25,6 +28,8 @@ PiiType = Literal[
     "iban",
     "credit_card",
     "bsn",
+    "ssn",
+    "tax_id",
     "phone",
     "person",
     "address",
@@ -35,6 +40,8 @@ PII_TYPES: tuple[PiiType, ...] = (
     "iban",
     "credit_card",
     "bsn",
+    "ssn",
+    "tax_id",
     "phone",
     "person",
     "address",
@@ -42,14 +49,14 @@ PII_TYPES: tuple[PiiType, ...] = (
 
 PiiCounts = dict[PiiType, int]
 
-LanguageCode = Literal["en", "nl"]
+LanguageCode = Literal["en", "nl", "de"]
 DEFAULT_LANGUAGES: tuple[LanguageCode, ...] = ("en", "nl")
 
 # Same bound as foro-proxy MAX_SCRUB_BYTES — oversize withholds, never forwards.
 MAX_SCRUB_BYTES = 32 * 1024 * 1024
 MAX_DEPTH = 200
 
-_KNOWN_LANGUAGES: frozenset[str] = frozenset({"en", "nl"})
+_KNOWN_LANGUAGES: frozenset[str] = frozenset({"en", "nl", "de"})
 
 
 @dataclass(frozen=True)
@@ -100,16 +107,23 @@ def _normalize_languages(languages: Sequence[str] | None) -> tuple[LanguageCode,
 def _detectors_for(languages: Sequence[str] | None) -> tuple[Detector, ...]:
     langs = _normalize_languages(languages)
     pack: list[Detector] = list(UNIVERSAL_DETECTORS)
-    # Phone: international when any pack is on; locale forms per pack.
-    # Order: BSN before phone (checksum-backed numeric before fuzzy phone).
+    # National IDs (checksum / rule-backed) before fuzzy phone.
+    # BSN before SSN: overlapping 9-digit shapes prefer the stronger check.
     if "nl" in langs:
         pack.append(bsn_detector)
+    if "de" in langs:
+        pack.append(tax_id_detector)
+    if "en" in langs:
+        pack.append(ssn_detector)
+    # Phone: international when any pack is on; locale forms per pack.
     if langs:
         pack.append(phone_international_detector)
     if "nl" in langs:
         pack.append(phone_nl_detector)
     if "en" in langs:
         pack.append(phone_en_detector)
+    if "de" in langs:
+        pack.append(phone_de_detector)
     return tuple(pack)
 
 

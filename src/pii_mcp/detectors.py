@@ -12,7 +12,15 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Literal
 
-PiiCategory = Literal["email", "iban", "credit_card", "bsn", "phone"]
+PiiCategory = Literal[
+    "email",
+    "iban",
+    "credit_card",
+    "bsn",
+    "ssn",
+    "tax_id",
+    "phone",
+]
 
 
 @dataclass(frozen=True)
@@ -143,6 +151,73 @@ def _scrub_bsn(text: str) -> tuple[str, int]:
 
 bsn_detector = Detector(type="bsn", scrub=_scrub_bsn)
 
+# US SSN — hyphenated primary; compact 9-digit with SSA area/group/serial rejects.
+SSN_RES: tuple[re.Pattern[str], ...] = (
+    re.compile(r"\b\d{3}-\d{2}-\d{4}\b"),
+    re.compile(r"\b\d{9}\b"),
+)
+
+
+def _ssn_valid(value: str) -> bool:
+    digits = value.replace("-", "")
+    if len(digits) != 9 or not digits.isdigit():
+        return False
+    area = int(digits[:3])
+    group = int(digits[3:5])
+    serial = int(digits[5:])
+    if area == 0 or area == 666 or area >= 900:
+        return False
+    if group == 0 or serial == 0:
+        return False
+    return True
+
+
+def _scrub_ssn(text: str) -> tuple[str, int]:
+    out = text
+    count = 0
+    for pattern in SSN_RES:
+        out, n = _replace_matches(out, pattern, "[SSN]", _ssn_valid)
+        count += n
+    return out, count
+
+
+ssn_detector = Detector(type="ssn", scrub=_scrub_ssn)
+
+# German Steuerliche Identifikationsnummer (IdNr) — 11 digits + mod-11/10 check.
+TAX_ID_RE = re.compile(r"\b\d{11}\b")
+
+
+def _tax_id_valid(digits: str) -> bool:
+    if len(digits) != 11 or not digits.isdigit():
+        return False
+    if digits[0] == "0":
+        return False
+    body = digits[:10]
+    # Exactly one digit repeats (2 or 3 times) among the first ten.
+    counts: dict[str, int] = {}
+    for ch in body:
+        counts[ch] = counts.get(ch, 0) + 1
+    repeats = [n for n in counts.values() if n > 1]
+    if len(repeats) != 1 or repeats[0] not in (2, 3):
+        return False
+    product = 10
+    for ch in body:
+        total = (ord(ch) - 48 + product) % 10
+        if total == 0:
+            total = 10
+        product = (2 * total) % 11
+    check = 11 - product
+    if check == 10:
+        check = 0
+    return check == (ord(digits[10]) - 48)
+
+
+def _scrub_tax_id(text: str) -> tuple[str, int]:
+    return _replace_matches(text, TAX_ID_RE, "[TAX_ID]", _tax_id_valid)
+
+
+tax_id_detector = Detector(type="tax_id", scrub=_scrub_tax_id)
+
 
 def _digit_count(text: str) -> int:
     return sum(1 for ch in text if ch.isdigit())
@@ -167,6 +242,19 @@ PHONE_EN_NANP = (
     lambda m: _digit_count(m) == 10,
 )
 
+# German national: leading 0, 10–12 digits (landline + mobile).
+# Exclude exact Dutch mobiles (10 digits starting with 06) — leave those to nl.
+PHONE_DE_NATIONAL = (
+    re.compile(r"(?<![\w+])0\d(?:[ .-]?\d){8,10}(?!\d)"),
+    lambda m: (
+        10 <= _digit_count(m) <= 12
+        and not (
+            _digit_count(m) == 10
+            and re.sub(r"\D", "", m).startswith("06")
+        )
+    ),
+)
+
 
 def _make_phone_detector(
     patterns: tuple[tuple[re.Pattern[str], Callable[[str], bool]], ...],
@@ -185,6 +273,7 @@ def _make_phone_detector(
 phone_international_detector = _make_phone_detector((PHONE_INTERNATIONAL,))
 phone_nl_detector = _make_phone_detector((PHONE_NL_NATIONAL,))
 phone_en_detector = _make_phone_detector((PHONE_EN_NANP,))
+phone_de_detector = _make_phone_detector((PHONE_DE_NATIONAL,))
 
 # Universal detectors — always on regardless of languages=.
 UNIVERSAL_DETECTORS: tuple[Detector, ...] = (

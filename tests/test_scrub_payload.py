@@ -73,6 +73,14 @@ def test_non_plain_object() -> None:
 
 
 def test_languages_en_skips_bsn() -> None:
-    result = scrub_payload({"id": "111222333"}, languages=["en"])
-    assert result["payload"] == {"id": "111222333"}
+    # Valid BSN that fails SSN rules (group 00) so en pack leaves it alone.
+    result = scrub_payload({"id": "100000009"}, languages=["en"])
+    assert result["payload"] == {"id": "100000009"}
     assert result["counts"]["bsn"] == 0
+    assert result["counts"]["ssn"] == 0
+
+
+def test_languages_de_masks_tax_id() -> None:
+    result = scrub_payload({"id": "36574261809"}, languages=["de"])
+    assert result["payload"] == {"id": "[TAX_ID]"}
+    assert result["counts"]["tax_id"] == 1
