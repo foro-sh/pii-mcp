@@ -1,10 +1,10 @@
 # pii-mcp
 
-Tier-1 PII scrubbing for MCP servers. Mask emails, IBANs, cards, MACs, IPs,
-coordinates, BSNs, US SSNs, German tax IDs, phones, Dutch postcodes, and Dutch
-license plates in tool results — not full foro.sh Data protection (no Tier-2
-NER for names / full street addresses). Language packs: `en`, `nl`, and
-opt-in `de`.
+Tier-1 PII scrubbing for MCP servers. Mask emails, IBANs, cards, BICs, MACs,
+IPs, coordinates, BSNs, US SSNs, German tax IDs, Dutch BTW-ids, phones, Dutch
+postcodes, and Dutch license plates in tool results — not full foro.sh Data
+protection (no Tier-2 NER for names / full street addresses). Language packs:
+`en`, `nl`, and opt-in `de`.
 
 Aligned with AP examples of persoonsgegevens where Tier-1 regex/checksum can
 reach them (contact/financial IDs, online identifiers including IP/MAC,
