@@ -131,9 +131,64 @@ class TestBsn:
         assert result["counts"]["bsn"] == 0
 
     def test_disabled_without_nl(self) -> None:
-        result = scrub_text("BSN 111222333 on file", languages=["en"])
-        assert result["text"] == "BSN 111222333 on file"
+        # 100000009: valid BSN 11-check, but SSN-invalid (group 00).
+        result = scrub_text("BSN 100000009 on file", languages=["en"])
+        assert result["text"] == "BSN 100000009 on file"
         assert result["counts"]["bsn"] == 0
+        assert result["counts"]["ssn"] == 0
+
+    def test_preferred_over_ssn_when_both_packs(self) -> None:
+        result = scrub_text("id 111222333", languages=["en", "nl"])
+        assert result["text"] == "id [BSN]"
+        assert result["counts"]["bsn"] == 1
+        assert result["counts"]["ssn"] == 0
+
+
+class TestSsn:
+    def test_masks_hyphenated(self) -> None:
+        result = scrub_text("ssn 078-05-1120 on file", languages=["en"])
+        assert result["text"] == "ssn [SSN] on file"
+        assert result["counts"]["ssn"] == 1
+
+    def test_masks_compact(self) -> None:
+        result = scrub_text("ssn 078051120 on file", languages=["en"])
+        assert result["text"] == "ssn [SSN] on file"
+        assert result["counts"]["ssn"] == 1
+
+    def test_rejects_invalid_area(self) -> None:
+        for bad in ("000-12-3456", "666-12-3456", "900-12-3456"):
+            result = scrub_text(f"ref {bad}", languages=["en"])
+            assert result["counts"]["ssn"] == 0, bad
+
+    def test_rejects_invalid_group_or_serial(self) -> None:
+        assert scrub_text("ref 123-00-1234", languages=["en"])["counts"]["ssn"] == 0
+        assert scrub_text("ref 123-45-0000", languages=["en"])["counts"]["ssn"] == 0
+
+    def test_disabled_without_en(self) -> None:
+        result = scrub_text("ssn 078-05-1120 on file", languages=["nl"])
+        assert result["text"] == "ssn 078-05-1120 on file"
+        assert result["counts"]["ssn"] == 0
+
+
+class TestTaxId:
+    def test_masks_valid_idnr(self) -> None:
+        result = scrub_text("IdNr 36574261809 gespeichert", languages=["de"])
+        assert result["text"] == "IdNr [TAX_ID] gespeichert"
+        assert result["counts"]["tax_id"] == 1
+
+    def test_rejects_bad_checksum(self) -> None:
+        result = scrub_text("IdNr 36574261890", languages=["de"])
+        assert result["counts"]["tax_id"] == 0
+
+    def test_rejects_leading_zero(self) -> None:
+        # Checksum may pass for some leading-zero bodies; structure forbids it.
+        result = scrub_text("IdNr 01234567897", languages=["de"])
+        assert result["counts"]["tax_id"] == 0
+
+    def test_disabled_without_de(self) -> None:
+        result = scrub_text("IdNr 36574261809", languages=["en"])
+        assert result["text"] == "IdNr 36574261809"
+        assert result["counts"]["tax_id"] == 0
 
 
 class TestPhone:
@@ -160,6 +215,11 @@ class TestPhone:
         assert result["text"] == "[PHONE] / [PHONE] / [PHONE]"
         assert result["counts"]["phone"] == 3
 
+    def test_masks_german_national(self) -> None:
+        result = scrub_text("ruf 030 12345678 oder 0151 23456789", languages=["de"])
+        assert result["text"] == "ruf [PHONE] oder [PHONE]"
+        assert result["counts"]["phone"] == 2
+
     def test_ignores_year(self) -> None:
         result = scrub_text("in 2024 we shipped 500 units")
         assert result["found"] is False
@@ -177,6 +237,14 @@ class TestPhone:
         result = scrub_text("call 415-555-0132", languages=["nl"])
         assert result["counts"]["phone"] == 0
 
+    def test_de_pack_skips_nanp_and_nl(self) -> None:
+        assert scrub_text("call 415-555-0132", languages=["de"])["counts"]["phone"] == 0
+        assert scrub_text("reach 0612345678", languages=["de"])["counts"]["phone"] == 0
+
+    def test_en_pack_skips_german_national(self) -> None:
+        result = scrub_text("ruf 03012345678", languages=["en"])
+        assert result["counts"]["phone"] == 0
+
 
 class TestMultiple:
     def test_masks_together(self) -> None:
@@ -187,6 +255,8 @@ class TestMultiple:
             "iban": 0,
             "credit_card": 1,
             "bsn": 0,
+            "ssn": 0,
+            "tax_id": 0,
             "phone": 0,
             "person": 0,
             "address": 0,
@@ -214,4 +284,4 @@ class TestSizeCap:
 
     def test_unknown_language(self) -> None:
         with pytest.raises(ValueError, match="unknown language"):
-            scrub_text("hi", languages=["de"])
+            scrub_text("hi", languages=["fr"])
