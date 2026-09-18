@@ -142,7 +142,7 @@ class TestBsn:
         assert result["counts"]["bsn"] == 0
 
     def test_disabled_without_nl(self) -> None:
-        # 100000009: valid BSN 11-check, but SSN-invalid (group 00).
+        """100000009: valid BSN 11-check, SSN-invalid (group 00)."""
         result = scrub_text("BSN 100000009 on file", languages=["en"])
         assert result["text"] == "BSN 100000009 on file"
         assert result["counts"]["bsn"] == 0
@@ -192,7 +192,6 @@ class TestTaxId:
         assert result["counts"]["tax_id"] == 0
 
     def test_rejects_leading_zero(self) -> None:
-        # Checksum may pass for some leading-zero bodies; structure forbids it.
         result = scrub_text("IdNr 01234567897", languages=["de"])
         assert result["counts"]["tax_id"] == 0
 
@@ -241,7 +240,6 @@ class TestPhone:
 
     def test_en_pack_skips_dutch_national(self) -> None:
         result = scrub_text("reach 0612345678", languages=["en"])
-        # International not matching (no +/00); Dutch national is nl-only.
         assert result["counts"]["phone"] == 0
 
     def test_nl_pack_skips_nanp(self) -> None:
@@ -282,7 +280,6 @@ class TestMultiple:
 
 class TestSizeCap:
     def test_oversize_fails_closed(self) -> None:
-        # Avoid allocating 32MiB in CI — monkeypatch the cap.
         import pii_mcp.scrub as scrub_mod
 
         original = scrub_mod.MAX_SCRUB_BYTES
