@@ -14,11 +14,11 @@ national IDs (BSN before SSN when both packs are on; NL BTW after BSN) → NL
 postcode / kenteken when ``nl`` → phones (international when any pack is
 active, then locale forms).
 
-Optional Rust acceleration: when ``pii_mcp._native`` is importable (built via
-maturin), ``scrub_text`` / ``scrub_payload`` prefer it. Set
-``PII_MCP_BACKEND=python`` to force the pure-Python path; ``native`` requires
-the extension. Default ``pip install`` stays hatchling/pure-Python — no Rust
-toolchain required.
+Optional Rust acceleration: when ``pii_mcp._native`` is importable (shipped in
+platform wheels, or built via maturin), ``scrub_text`` / ``scrub_payload``
+prefer it. Set ``PII_MCP_BACKEND=python`` to force the pure-Python path;
+``native`` requires the extension. Pure ``py3-none-any`` / sdist installs stay
+hatchling-only — no Rust toolchain required.
 """
 
 from __future__ import annotations
