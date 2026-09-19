@@ -35,7 +35,7 @@ dev = [
   "pytest-asyncio>=0.24",
   "pii-mcp[fastmcp]",
 ]
-# Optional: build tools for local maturin develop (CI ships prebuilt wheels).
+# Optional: local maturin develop (CI ships prebuilt wheels).
 native = [
   "maturin>=1.7",
 ]
@@ -47,9 +47,6 @@ Issues = "https://github.com/foro-sh/pii-mcp/issues"
 [tool.hatch.build.targets.wheel]
 packages = ["src/pii_mcp"]
 
-# Platform wheels are built in CI with maturin (does not replace hatchling for
-# pure py3-none-any / sdist). Local:
-#   pip install -e ".[native]" && maturin develop --manifest-path crates/pii-mcp-native/Cargo.toml
 [tool.maturin]
 manifest-path = "crates/pii-mcp-native/Cargo.toml"
 module-name = "pii_mcp._native"
