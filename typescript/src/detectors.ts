@@ -92,7 +92,7 @@ const EMAIL_RE =
   /[A-Za-z0-9._%+-]{1,64}@[A-Za-z0-9-]{1,63}(?:\.[A-Za-z0-9-]{1,63})*\.[A-Za-z]{2,24}(?!@)/g;
 
 const EMAIL_NEXT_PII_RE =
-  /^(?:[A-Za-z]{2}\d{2}[A-Za-z0-9]|\d{13,19}|[A-Za-z0-9._%+-]{1,64}@)/;
+  /^(?:[A-Za-z]{2}\d{2}[A-Za-z0-9]|\d{13,19}|\d{3}[- .]?\d{2}[- .]?\d{4}|\d{3}[ .]\d{3}[ .]\d{3}|\d{8,9}(?!\d)|[A-Za-z0-9._%+-]{1,64}@|[+0]\d)/;
 
 function emailEndOk(text: string, end: number): boolean {
   if (end >= text.length) {
@@ -155,14 +155,27 @@ function scrubEmail(text: string): { text: string; count: number } {
 
 export const emailDetector: Detector = { type: "email", scrub: scrubEmail };
 
+// Unicode Zs separators commonly used in OCR / rich text (thin/figure/nbsp…).
+const SEP_SPACE = String.raw`[ \t\r\n\xa0\u2000-\u200a\u202f]`;
+
 const IBAN_RES = [
-  /\b[A-Za-z]{2}\d{2}[A-Za-z0-9]{11,30}\b/g,
-  /\b[A-Z]{2}\d{2}(?:[ \t\xa0]?[A-Z0-9]{1,4}){3,8}\b/g,
-  /\b[a-z]{2}\d{2}(?:[ \t\xa0]?[a-z0-9]{1,4}){3,8}\b/g,
-  // Mixed case / hyphen|tab|nbsp|slash|dot groups; required separators + boundary.
-  /\b[A-Za-z]{2}\d{2}(?:[ \t\xa0\-/.][A-Za-z0-9]{1,4}){3,8}\b/g,
+  // Allow after digits (card|IBAN glue); still reject mid-letter (xNL91…).
+  /(?<![A-Za-z])[A-Za-z]{2}\d{2}[A-Za-z0-9]{11,30}(?![A-Za-z0-9])/g,
+  new RegExp(
+    String.raw`\b[A-Z]{2}\d{2}(?:${SEP_SPACE}?[A-Z0-9]{1,4}){3,8}\b`,
+    "g",
+  ),
+  new RegExp(
+    String.raw`\b[a-z]{2}\d{2}(?:${SEP_SPACE}?[a-z0-9]{1,4}){3,8}\b`,
+    "g",
+  ),
+  // Mixed case / hyphen|slash|dot|whitespace groups (one or more seps).
+  new RegExp(
+    String.raw`(?<![A-Za-z])[A-Za-z]{2}\d{2}(?:(?:${SEP_SPACE}|[\-/.])+[A-Za-z0-9]{1,4}){3,8}(?![A-Za-z0-9])`,
+    "g",
+  ),
   // Single hyphen after check digits, compact BBAN.
-  /\b[A-Za-z]{2}\d{2}-[A-Za-z0-9]{11,30}\b/g,
+  /(?<![A-Za-z])[A-Za-z]{2}\d{2}-[A-Za-z0-9]{11,30}(?![A-Za-z0-9])/g,
 ] as const;
 
 function ibanValid(value: string): boolean {
@@ -195,15 +208,20 @@ function scrubIban(text: string): { text: string; count: number } {
 
 export const ibanDetector: Detector = { type: "iban", scrub: scrubIban };
 
-const CC_SEP = String.raw`[ \t\n\xa0./\-\u2010-\u2015]`;
+// One or more whitespace / dash / punct separators between digit groups.
+const CC_SEP = String.raw`(?:${SEP_SPACE}|[./\-\u2010-\u2015])+`;
 
 const CREDIT_CARD_RES = [
   new RegExp(
-    String.raw`\b\d{4}${CC_SEP}\d{4}${CC_SEP}\d{4}${CC_SEP}\d{1,4}\b`,
+    String.raw`(?<!\d)\d{4}${CC_SEP}\d{4}${CC_SEP}\d{4}${CC_SEP}\d{1,4}(?!\d)`,
     "g",
   ),
-  new RegExp(String.raw`\b\d{4}${CC_SEP}\d{6}${CC_SEP}\d{5}\b`, "g"),
-  /\b\d{13,19}\b/g,
+  new RegExp(
+    String.raw`(?<!\d)\d{4}${CC_SEP}\d{6}${CC_SEP}\d{5}(?!\d)`,
+    "g",
+  ),
+  // Digit/letter glue: \b does not split 1N.
+  /(?<!\d)\d{13,19}(?!\d)/g,
 ] as const;
 
 function luhnValid(digits: string): boolean {
@@ -349,15 +367,15 @@ function scrubIp(text: string): { text: string; count: number } {
 export const ipDetector: Detector = { type: "ip", scrub: scrubIp };
 
 const LOCATION_RE =
-  /(?<![\d.+-])[-+]?\d{1,3}\.\d{3,8}\s*,\s*[-+]?\d{1,3}\.\d{3,8}(?![\d.])/g;
+  /(?<![\d.+-])[-+]?\d{1,3}\.\d{3,8}°?\s*,\s*[-+]?\d{1,3}\.\d{3,8}°?(?![\d.])/g;
 
 function locationValid(value: string): boolean {
   const parts = value.trim().split(/\s*,\s*/);
   if (parts.length !== 2) {
     return false;
   }
-  const lat = Number(parts[0]);
-  const lon = Number(parts[1]);
+  const lat = Number(parts[0]!.replace(/°$/, ""));
+  const lon = Number(parts[1]!.replace(/°$/, ""));
   if (!Number.isFinite(lat) || !Number.isFinite(lon)) {
     return false;
   }
@@ -531,7 +549,7 @@ const PHONE_NL_NATIONAL: readonly [RegExp, (value: string) => boolean] = [
 ];
 
 const PHONE_EN_NANP: readonly [RegExp, (value: string) => boolean] = [
-  /(?<![\w+])(?:1[ .-]?)?\(?\d{3}\)?[ .-]\d{3}[ .-]\d{4}(?!\d)/g,
+  /(?<![\w+])(?:1[ .-]?)?\(?\d{3}\)?[ .-]?\d{3}[ .-]\d{4}(?!\d)/g,
   (m) => {
     const digits = digitCount(m);
     return (

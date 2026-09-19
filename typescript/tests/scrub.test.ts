@@ -96,6 +96,18 @@ describe("scrubText", () => {
     expect(scrubText("1-415-555-0132", { languages: ["en"] }).text).toBe("[PHONE]");
   });
 
+  it("masks card|IBAN glue, email|SSN glue, degree location, compact NANP, double-spaced IBAN", () => {
+    expect(scrubText("4111111111111111NL91ABNA0417164300").text).toBe(
+      "[CREDIT_CARD][IBAN]",
+    );
+    expect(scrubText("ada@example.com078-05-1120", { languages: ["en"] }).text).toBe(
+      "[EMAIL][SSN]",
+    );
+    expect(scrubText("52.3676°, 4.9041°").text).toBe("[LOCATION]");
+    expect(scrubText("(415)555-0132", { languages: ["en"] }).text).toBe("[PHONE]");
+    expect(scrubText("NL91  ABNA  0417  1643  00").text).toBe("[IBAN]");
+  });
+
   it("masks BSN with nl pack and prefers it over SSN", () => {
     const result = scrubText("id 111222333", { languages: ["en", "nl"] });
     expect(result.text).toBe("id [BSN]");

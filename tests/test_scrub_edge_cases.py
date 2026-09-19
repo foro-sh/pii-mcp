@@ -41,6 +41,15 @@ class TestIbanSeparatorGaps:
         assert result["counts"]["iban"] == 1
         assert result["counts"]["phone"] == 0
 
+    def test_double_spaced_and_crlf_iban(self) -> None:
+        assert scrub_text("NL91  ABNA  0417  1643  00")["text"] == "[IBAN]"
+        assert scrub_text("NL91\r\nABNA\r\n0417\r\n1643\r\n00")["text"] == "[IBAN]"
+
+    def test_unicode_space_iban_and_card(self) -> None:
+        assert scrub_text("NL91\u2007ABNA\u20070417\u20071643\u200700")["text"] == "[IBAN]"
+        assert scrub_text("4111\u20091111\u20091111\u20091111")["text"] == "[CREDIT_CARD]"
+        assert scrub_text("4111\r\n1111\r\n1111\r\n1111")["text"] == "[CREDIT_CARD]"
+
     def test_single_hyphen_after_check_digits(self) -> None:
         result = scrub_text("wire NL91-ABNA0417164300 today")
         assert result["text"] == "wire [IBAN] today"
@@ -172,6 +181,33 @@ class TestEmailIbanGlue:
         assert result["text"] == "[EMAIL][IBAN]"
         assert result["counts"]["email"] == 1
         assert result["counts"]["iban"] == 1
+
+    def test_email_then_ssn_and_bsn(self) -> None:
+        assert scrub_text("ada@example.com078-05-1120", languages=["en"])["text"] == (
+            "[EMAIL][SSN]"
+        )
+        assert scrub_text("ada@example.com111222333", languages=["nl"])["text"] == (
+            "[EMAIL][BSN]"
+        )
+
+    def test_card_then_iban_glue(self) -> None:
+        result = scrub_text("4111111111111111NL91ABNA0417164300")
+        assert result["text"] == "[CREDIT_CARD][IBAN]"
+        assert result["counts"]["credit_card"] == 1
+        assert result["counts"]["iban"] == 1
+
+
+class TestLocationDegree:
+    def test_degree_symbol(self) -> None:
+        result = scrub_text("pin 52.3676°, 4.9041° downtown")
+        assert result["text"] == "pin [LOCATION] downtown"
+        assert result["counts"]["location"] == 1
+
+
+class TestNanpNoSpaceAfterParen:
+    def test_masks_compact_parens(self) -> None:
+        assert scrub_text("(415)555-0132", languages=["en"])["text"] == "[PHONE]"
+        assert scrub_text("1(415)555-0132", languages=["en"])["text"] == "[PHONE]"
 
 
 class TestImeiDots:

@@ -327,6 +327,26 @@ mod tests {
     }
 
     #[test]
+    fn masks_card_iban_glue_email_ssn_degree_nanp_double_spaced_iban() {
+        let glue = scrub_text("4111111111111111NL91ABNA0417164300", None, true).unwrap();
+        assert_eq!(glue.text, "[CREDIT_CARD][IBAN]");
+
+        let langs = vec!["en".to_string()];
+        let email_ssn =
+            scrub_text("ada@example.com078-05-1120", Some(&langs), true).unwrap();
+        assert_eq!(email_ssn.text, "[EMAIL][SSN]");
+
+        let loc = scrub_text("52.3676°, 4.9041°", None, true).unwrap();
+        assert_eq!(loc.text, "[LOCATION]");
+
+        let phone = scrub_text("(415)555-0132", Some(&langs), true).unwrap();
+        assert_eq!(phone.text, "[PHONE]");
+
+        let iban = scrub_text("NL91  ABNA  0417  1643  00", None, true).unwrap();
+        assert_eq!(iban.text, "[IBAN]");
+    }
+
+    #[test]
     fn language_gate_bsn() {
         let langs = vec!["en".to_string()];
         let r = scrub_text("BSN 100000009 on file", Some(&langs), true).unwrap();

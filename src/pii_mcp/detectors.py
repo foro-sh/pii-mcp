@@ -109,7 +109,11 @@ _EMAIL_NEXT_PII_RE = re.compile(
     r"(?:"
     r"[A-Za-z]{2}\d{2}[A-Za-z0-9]"  # IBAN
     r"|\d{13,19}"  # compact card
+    r"|\d{3}[- .]?\d{2}[- .]?\d{4}"  # SSN
+    r"|\d{3}[ .]\d{3}[ .]\d{3}"  # spaced BSN
+    r"|\d{8,9}(?!\d)"  # BSN / short national id
     r"|[A-Za-z0-9._%+-]{1,64}@"  # another email
+    r"|[+0]\d"  # phone-ish
     r")"
 )
 
@@ -162,14 +166,21 @@ def _scrub_email(text: str) -> tuple[str, int]:
 
 email_detector = Detector(type="email", scrub=_scrub_email)
 
+# Unicode Zs separators commonly used in OCR / rich text (thin/figure/nbsp…).
+_SEP_SPACE = r"[ \t\r\n\xa0\u2000-\u200a\u202f]"
+
 IBAN_RES: tuple[re.Pattern[str], ...] = (
-    re.compile(r"\b[A-Za-z]{2}\d{2}[A-Za-z0-9]{11,30}\b"),
-    re.compile(r"\b[A-Z]{2}\d{2}(?:[ \t\xa0]?[A-Z0-9]{1,4}){3,8}\b"),
-    re.compile(r"\b[a-z]{2}\d{2}(?:[ \t\xa0]?[a-z0-9]{1,4}){3,8}\b"),
-    # Mixed case / hyphen|tab|nbsp|slash|dot groups; required separators + boundary.
-    re.compile(r"\b[A-Za-z]{2}\d{2}(?:[ \t\xa0\-/.][A-Za-z0-9]{1,4}){3,8}\b"),
+    # Allow after digits (card|IBAN glue); still reject mid-letter (xNL91…).
+    re.compile(r"(?<![A-Za-z])[A-Za-z]{2}\d{2}[A-Za-z0-9]{11,30}(?![A-Za-z0-9])"),
+    re.compile(rf"\b[A-Z]{{2}}\d{{2}}(?:{_SEP_SPACE}?[A-Z0-9]{{1,4}}){{3,8}}\b"),
+    re.compile(rf"\b[a-z]{{2}}\d{{2}}(?:{_SEP_SPACE}?[a-z0-9]{{1,4}}){{3,8}}\b"),
+    # Mixed case / hyphen|slash|dot|whitespace groups (one or more seps).
+    re.compile(
+        rf"(?<![A-Za-z])[A-Za-z]{{2}}\d{{2}}"
+        rf"(?:(?:{_SEP_SPACE}|[\-/.])+[A-Za-z0-9]{{1,4}}){{3,8}}(?![A-Za-z0-9])"
+    ),
     # Single hyphen after check digits, compact BBAN.
-    re.compile(r"\b[A-Za-z]{2}\d{2}-[A-Za-z0-9]{11,30}\b"),
+    re.compile(r"(?<![A-Za-z])[A-Za-z]{2}\d{2}-[A-Za-z0-9]{11,30}(?![A-Za-z0-9])"),
 )
 
 
@@ -198,13 +209,14 @@ def _scrub_iban(text: str) -> tuple[str, int]:
 
 iban_detector = Detector(type="iban", scrub=_scrub_iban)
 
-# Grouped separators: ASCII space/tab/hyphen, nbsp, unicode dashes, . /
-_CC_SEP = r"[ \t\n\xa0./\-\u2010-\u2015]"
+# One or more whitespace / dash / punct separators between digit groups.
+_CC_SEP = rf"(?:{_SEP_SPACE}|[./\-\u2010-\u2015])+"
 
 CREDIT_CARD_RES: tuple[re.Pattern[str], ...] = (
-    re.compile(rf"\b\d{{4}}{_CC_SEP}\d{{4}}{_CC_SEP}\d{{4}}{_CC_SEP}\d{{1,4}}\b"),
-    re.compile(rf"\b\d{{4}}{_CC_SEP}\d{{6}}{_CC_SEP}\d{{5}}\b"),
-    re.compile(r"\b\d{13,19}\b"),
+    re.compile(rf"(?<!\d)\d{{4}}{_CC_SEP}\d{{4}}{_CC_SEP}\d{{4}}{_CC_SEP}\d{{1,4}}(?!\d)"),
+    re.compile(rf"(?<!\d)\d{{4}}{_CC_SEP}\d{{6}}{_CC_SEP}\d{{5}}(?!\d)"),
+    # Digit/letter glue: \b does not split 1N.
+    re.compile(r"(?<!\d)\d{13,19}(?!\d)"),
 )
 
 
@@ -367,7 +379,7 @@ ip_detector = Detector(type="ip", scrub=_scrub_ip)
 
 # Decimal degree pairs; ≥3 fractional digits cuts version-like ``1.0, 2.0``.
 LOCATION_RE = re.compile(
-    r"(?<![\d.+-])[-+]?\d{1,3}\.\d{3,8}\s*,\s*[-+]?\d{1,3}\.\d{3,8}(?![\d.])"
+    r"(?<![\d.+-])[-+]?\d{1,3}\.\d{3,8}°?\s*,\s*[-+]?\d{1,3}\.\d{3,8}°?(?![\d.])"
 )
 
 
@@ -377,8 +389,8 @@ def _location_valid(value: str) -> bool:
     if len(parts) != 2:
         return False
     try:
-        lat = float(parts[0])
-        lon = float(parts[1])
+        lat = float(parts[0].rstrip("°"))
+        lon = float(parts[1].rstrip("°"))
     except ValueError:
         return False
     return -90.0 <= lat <= 90.0 and -180.0 <= lon <= 180.0
@@ -534,7 +546,7 @@ PHONE_NL_NATIONAL = (
 
 PHONE_EN_NANP = (
     re.compile(
-        r"(?<![\w+])(?:1[ .-]?)?\(?\d{3}\)?[ .-]\d{3}[ .-]\d{4}(?!\d)"
+        r"(?<![\w+])(?:1[ .-]?)?\(?\d{3}\)?[ .-]?\d{3}[ .-]\d{4}(?!\d)"
     ),
     lambda m: _digit_count(m) in (10, 11) and (
         _digit_count(m) == 10 or re.sub(r"\D", "", m).startswith("1")
