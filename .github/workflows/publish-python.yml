@@ -27,26 +27,39 @@ jobs:
         include:
           - os: ubuntu-latest
             target: x86_64
+            test: true
           - os: ubuntu-latest
             target: aarch64
+            test: false # cross-compiled on x86_64 runners
           - os: macos-13
             target: x86_64
+            test: true
           - os: macos-14
             target: aarch64
+            test: true
           - os: windows-latest
             target: x64
+            test: true
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.12"
       - name: Build wheels
-        uses: PyO3/maturin-action@v1
+        uses: PyO3/maturin-action@e83996d129638aa358a18fbd1dfb82f0b0fb5d3b # v1.51.0
         with:
           target: ${{ matrix.target }}
           args: --release --out dist --find-interpreter
           sccache: "true"
           manylinux: auto
+          maturin-version: v1.15.0
+      - name: Smoke-test wheel
+        if: matrix.test
+        shell: bash
+        run: |
+          python -m pip install --upgrade pip
+          pip install --force-reinstall --verbose dist/*.whl
+          python -c "from pii_mcp import using_native, scrub_text; assert using_native(); assert scrub_text('a@b.co')['found']"
       - uses: actions/upload-artifact@v4
         with:
           name: wheels-${{ matrix.os }}-${{ matrix.target }}
