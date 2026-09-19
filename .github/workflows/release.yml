@@ -107,7 +107,7 @@ jobs:
           - os: ubuntu-latest
             target: aarch64
             test: false # cross-compiled on x86_64 runners
-          - os: macos-13
+          - os: macos-15-intel
             target: x86_64
             test: true
           - os: macos-14

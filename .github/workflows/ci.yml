@@ -108,7 +108,8 @@ jobs:
       - name: Run tests (native)
         env:
           PII_MCP_BACKEND: native
-        run: pytest -q
+        # Clear pyproject pythonpath so src/ does not shadow the installed wheel.
+        run: pytest -q -o pythonpath=
 
   test-typescript:
     name: TypeScript (Node 22 + napi)

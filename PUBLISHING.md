@@ -32,7 +32,8 @@ sdist (no Rust toolchain required).
 3. **build-wheels** — maturin platform matrix for the release commit
    (maturin `v1.15.0` via pinned maturin-action). Each native-arch job
    smoke-tests the wheel (`using_native()` + a sample scrub) before upload;
-   cross-compiled linux aarch64 skips the smoke test.
+   cross-compiled linux aarch64 skips the smoke test. Intel macOS wheels
+   build on `macos-15-intel` (macos-13 is retired).
 4. **build-sdist** — pure hatchling wheel + sdist via `uv build`.
 5. **publish-python** — downloads all artifacts and uploads via OIDC trusted
    publishing.
