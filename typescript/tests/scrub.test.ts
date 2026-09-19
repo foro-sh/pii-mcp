@@ -59,12 +59,30 @@ describe("scrubText", () => {
     const mixed = scrubText("Pay Nl91 AbNa 0417 1643 00 please");
     expect(mixed.text).toBe("Pay [IBAN] please");
     expect(mixed.counts.iban).toBe(1);
+
+    const slash = scrubText("Pay NL91/ABNA/0417/1643/00 please");
+    expect(slash.text).toBe("Pay [IBAN] please");
+    expect(slash.counts.iban).toBe(1);
   });
 
   it("masks glued emails as two hits", () => {
     const result = scrubText("a@b.comc@d.com");
     expect(result.text).toBe("[EMAIL][EMAIL]");
     expect(result.counts.email).toBe(2);
+  });
+
+  it("masks dotted cards, mapped IPs, spaced VAT, and lowercase plates", () => {
+    expect(scrubText("card 4111.1111.1111.1111").text).toBe("card [CREDIT_CARD]");
+    expect(scrubText("peer ::ffff:192.0.2.1 ok").text).toBe("peer [IP] ok");
+    expect(scrubText("factuur NL 000099998 B57", { languages: ["nl"] }).text).toBe(
+      "factuur [VAT_ID]",
+    );
+    expect(scrubText("kenteken ab-12-cd", { languages: ["nl"] }).text).toBe(
+      "kenteken [LICENSE_PLATE]",
+    );
+    expect(scrubText("reach 06/12345678", { languages: ["nl"] }).text).toBe(
+      "reach [PHONE]",
+    );
   });
 
   it("masks BSN with nl pack and prefers it over SSN", () => {

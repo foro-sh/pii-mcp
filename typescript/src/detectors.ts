@@ -9,32 +9,33 @@
  * - Email uses bounded quantifiers (unbounded local-part ``+`` is ReDoS-prone)
  *   and ``(?!@)`` so glued addresses (``a@b.comc@d.com``) backtrack to two hits.
  * - Spaced IBANs use separate upper- and lower-case optional-space patterns so a
- *   trailing word is not swallowed by a mixed-case class. A fourth pattern allows
- *   mixed case and hyphen separators when groups are explicitly separated
- *   (trailing word boundary blocks trailing-word swallow).
- * - Credit cards include Amex 4-6-5 groupings as well as 4-4-4-x and compact.
+ *   trailing word is not swallowed by a mixed-case class. Further patterns allow
+ *   mixed case and hyphen/tab/nbsp/slash separators, plus a single hyphen after
+ *   check digits. Soft hyphens are stripped before IBAN matching.
+ * - Credit cards include Amex 4-6-5 groupings as well as 4-4-4-x and compact;
+ *   grouped forms also accept tab, nbsp, unicode dashes, ``.``, and ``/``.
  * - BIC/SWIFT: 8 or 11 alnum with ISO 3166-1 country letters (AP: financial data).
  * - MAC: colon/dash IEEE and Cisco dotted forms (AP: device MAC is personal data).
  * - IMEI: hyphen/space-grouped 15-digit forms with Luhn (AP: gegevens over
  *   elektronische communicatie / device identifiers). Compact 15-digit IMEIs
  *   that are also Luhn-valid collide with Amex and stay under ``credit_card``.
- * - IP: IPv4 octet-bounded regex; IPv6 candidate shapes validated via
- *   ``node:net`` ``isIP`` (AP notes IP addresses can be personal data).
+ * - IP: IPv4-mapped IPv6 (``::ffff:a.b.c.d``) is matched whole before bare IPv4;
+ *   IPv4 rejects a preceding ``:`` so mapped forms are not partially eaten.
  * - Location: decimal lat/lon pairs with ≥3 fractional digits and range checks
  *   (AP lists locatiegegevens as privacy-sensitive).
  * - US SSN: hyphenated or compact 9-digit with SSA area/group/serial rejects.
  * - German Steuer-IdNr (tax_id): 11 digits with structure + mod-11/10 check.
- * - NL BTW-id (``vat_id``): ``NL`` + 9 digits + ``B`` + 2 digits (format only —
- *   post-2020 sole-trader ids are not elfproef-gated).
+ * - NL BTW-id (``vat_id``): ``NL`` + 9 digits + ``B`` + 2 digits with optional
+ *   spaces/dots (format only — post-2020 sole-trader ids are not elfproef-gated).
  * - NL passport / ID-card number (``passport``): 9-char RvIG document number
  *   (``[A-Za-z]{2}[0-9A-Za-z]{6}[0-9]``, letter O forbidden after uppercasing)
  *   — national identificatienummer alongside BSN; format only, no check digit.
  * - NL postcode (``address``): ``1234 AB`` / ``1234AB`` with uppercase letters
  *   only and SA/SD/SS rejects — structured fragment, not street-address NER.
- * - NL kenteken (``license_plate``): hyphenated RDW sidecodes 1–14, uppercase,
- *   with SA/SD/SS letter-pair rejects.
- * - Phone packs: international (any active pack), NL national, NANP, DE national
- *   (DE excludes exact Dutch ``06…`` 10-digit mobiles).
+ * - NL kenteken (``license_plate``): hyphenated RDW sidecodes 1–14 (case-
+ *   insensitive), with SA/SD/SS letter-pair rejects.
+ * - Phone packs: international (any active pack), NL national (allows ``/``),
+ *   NANP, DE national (DE excludes exact Dutch ``06…`` 10-digit mobiles).
  *
  * ``UNIVERSAL_DETECTORS`` (email, IBAN, credit card, BIC, MAC, IMEI, IP, location)
  * always run; locale detectors are selected by ``languages=`` in the scrub layer.
@@ -98,14 +99,16 @@ export const emailDetector: Detector = { type: "email", scrub: scrubEmail };
 
 const IBAN_RES = [
   /\b[A-Za-z]{2}\d{2}[A-Za-z0-9]{11,30}\b/g,
-  /\b[A-Z]{2}\d{2}(?:[ ]?[A-Z0-9]{1,4}){3,8}\b/g,
-  /\b[a-z]{2}\d{2}(?:[ ]?[a-z0-9]{1,4}){3,8}\b/g,
-  // Mixed case / hyphenated groups; required separators + word-boundary guard.
-  /\b[A-Za-z]{2}\d{2}(?:[ -][A-Za-z0-9]{1,4}){3,8}\b/g,
+  /\b[A-Z]{2}\d{2}(?:[ \t\xa0]?[A-Z0-9]{1,4}){3,8}\b/g,
+  /\b[a-z]{2}\d{2}(?:[ \t\xa0]?[a-z0-9]{1,4}){3,8}\b/g,
+  // Mixed case / hyphen|tab|nbsp|slash groups; required separators + boundary.
+  /\b[A-Za-z]{2}\d{2}(?:[ \t\xa0\-/][A-Za-z0-9]{1,4}){3,8}\b/g,
+  // Single hyphen after check digits, compact BBAN.
+  /\b[A-Za-z]{2}\d{2}-[A-Za-z0-9]{11,30}\b/g,
 ] as const;
 
 function ibanValid(value: string): boolean {
-  const compact = value.replace(/[\s-]+/g, "").toUpperCase();
+  const compact = value.replace(/[\s\-\u00ad/]+/g, "").toUpperCase();
   if (!/^[A-Z]{2}\d{2}[A-Z0-9]{11,30}$/.test(compact)) {
     return false;
   }
@@ -122,7 +125,7 @@ function ibanValid(value: string): boolean {
 }
 
 function scrubIban(text: string): { text: string; count: number } {
-  let out = text;
+  let out = text.replace(/\u00ad/g, "");
   let count = 0;
   for (const pattern of IBAN_RES) {
     const result = replaceMatches(out, pattern, "[IBAN]", ibanValid);
@@ -134,9 +137,14 @@ function scrubIban(text: string): { text: string; count: number } {
 
 export const ibanDetector: Detector = { type: "iban", scrub: scrubIban };
 
+const CC_SEP = String.raw`[ \t\n\xa0./\-\u2010-\u2015]`;
+
 const CREDIT_CARD_RES = [
-  /\b\d{4}[ -]\d{4}[ -]\d{4}[ -]\d{1,4}\b/g,
-  /\b\d{4}[ -]\d{6}[ -]\d{5}\b/g,
+  new RegExp(
+    String.raw`\b\d{4}${CC_SEP}\d{4}${CC_SEP}\d{4}${CC_SEP}\d{1,4}\b`,
+    "g",
+  ),
+  new RegExp(String.raw`\b\d{4}${CC_SEP}\d{6}${CC_SEP}\d{5}\b`, "g"),
   /\b\d{13,19}\b/g,
 ] as const;
 
@@ -168,7 +176,7 @@ function scrubCreditCard(text: string): { text: string; count: number } {
       out,
       pattern,
       "[CREDIT_CARD]",
-      (m) => luhnValid(m.replace(/[ -]/g, "")),
+      (m) => luhnValid(m.replace(/\D/g, "")),
     );
     out = result.text;
     count += result.count;
@@ -258,7 +266,10 @@ function scrubImei(text: string): { text: string; count: number } {
 export const imeiDetector: Detector = { type: "imei", scrub: scrubImei };
 
 const IPV4_RE =
-  /(?<![\w.])(?:(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\.){3}(?:25[0-5]|2[0-4]\d|[01]?\d\d?)(?![\w.])/g;
+  /(?<![\w.:])(?:(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\.){3}(?:25[0-5]|2[0-4]\d|[01]?\d\d?)(?![\w.])/g;
+
+const IPV4_MAPPED_RE =
+  /(?<![\w:])::[Ff]{4}:(?:(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\.){3}(?:25[0-5]|2[0-4]\d|[01]?\d\d?)(?![\w.])/g;
 
 const IPV6_RE =
   /(?<![\w:])(?:(?:[0-9a-fA-F]{1,4}:){7}[0-9a-fA-F]{1,4}|::(?:[0-9a-fA-F]{1,4}:){0,6}[0-9a-fA-F]{1,4}|(?:[0-9a-fA-F]{1,4}:){1,7}:|(?:[0-9a-fA-F]{1,4}:){1,6}:[0-9a-fA-F]{1,4}|(?:[0-9a-fA-F]{1,4}:){1,5}(?::[0-9a-fA-F]{1,4}){1,2}|(?:[0-9a-fA-F]{1,4}:){1,4}(?::[0-9a-fA-F]{1,4}){1,3}|(?:[0-9a-fA-F]{1,4}:){1,3}(?::[0-9a-fA-F]{1,4}){1,4}|(?:[0-9a-fA-F]{1,4}:){1,2}(?::[0-9a-fA-F]{1,4}){1,5}|[0-9a-fA-F]{1,4}:(?::[0-9a-fA-F]{1,4}){1,6}|::)(?![\w:])/g;
@@ -268,9 +279,13 @@ function ipValid(value: string): boolean {
 }
 
 function scrubIp(text: string): { text: string; count: number } {
-  const v4 = replaceMatches(text, IPV4_RE, "[IP]", ipValid);
+  const mapped = replaceMatches(text, IPV4_MAPPED_RE, "[IP]", ipValid);
+  const v4 = replaceMatches(mapped.text, IPV4_RE, "[IP]", ipValid);
   const v6 = replaceMatches(v4.text, IPV6_RE, "[IP]", ipValid);
-  return { text: v6.text, count: v4.count + v6.count };
+  return {
+    text: v6.text,
+    count: mapped.count + v4.count + v6.count,
+  };
 }
 
 export const ipDetector: Detector = { type: "ip", scrub: scrubIp };
@@ -395,7 +410,7 @@ function scrubTaxId(text: string): { text: string; count: number } {
 
 export const taxIdDetector: Detector = { type: "tax_id", scrub: scrubTaxId };
 
-const NL_VAT_RE = /\b[Nn][Ll]\d{9}[Bb]\d{2}\b/g;
+const NL_VAT_RE = /\b[Nn][Ll][.\s]*\d{9}[.\s]*[Bb][.\s]*\d{2}\b/g;
 
 function scrubNlVat(text: string): { text: string; count: number } {
   return replaceMatches(text, NL_VAT_RE, "[VAT_ID]");
@@ -441,7 +456,7 @@ const PHONE_INTERNATIONAL: readonly [RegExp, (value: string) => boolean] = [
 ];
 
 const PHONE_NL_NATIONAL: readonly [RegExp, (value: string) => boolean] = [
-  /(?<![\w+])0\d(?:[ .-]?\d){8}(?!\d)/g,
+  /(?<![\w+])0\d(?:[ .\-/]?\d){8}(?!\d)/g,
   (m) => digitCount(m) === 10,
 ];
 
@@ -506,7 +521,7 @@ export const nlPostcodeDetector: Detector = {
 };
 
 const NL_LICENSE_PLATE_RE =
-  /(?<![\w-])(?:[A-Z]{2}-\d{2}-\d{2}|\d{2}-\d{2}-[A-Z]{2}|\d{2}-[A-Z]{2}-\d{2}|[A-Z]{2}-\d{2}-[A-Z]{2}|[A-Z]{2}-[A-Z]{2}-\d{2}|\d{2}-[A-Z]{2}-[A-Z]{2}|\d{2}-[A-Z]{3}-\d|\d-[A-Z]{3}-\d{2}|[A-Z]{2}-\d{3}-[A-Z]|[A-Z]-\d{3}-[A-Z]{2}|[A-Z]{3}-\d{2}-[A-Z]|[A-Z]-\d{2}-[A-Z]{3}|\d-[A-Z]{2}-\d{3}|\d{3}-[A-Z]{2}-\d)(?![\w-])/g;
+  /(?<![\w-])(?:[A-Z]{2}-\d{2}-\d{2}|\d{2}-\d{2}-[A-Z]{2}|\d{2}-[A-Z]{2}-\d{2}|[A-Z]{2}-\d{2}-[A-Z]{2}|[A-Z]{2}-[A-Z]{2}-\d{2}|\d{2}-[A-Z]{2}-[A-Z]{2}|\d{2}-[A-Z]{3}-\d|\d-[A-Z]{3}-\d{2}|[A-Z]{2}-\d{3}-[A-Z]|[A-Z]-\d{3}-[A-Z]{2}|[A-Z]{3}-\d{2}-[A-Z]|[A-Z]-\d{2}-[A-Z]{3}|\d-[A-Z]{2}-\d{3}|\d{3}-[A-Z]{2}-\d)(?![\w-])/gi;
 
 const NL_PLATE_LETTER_REJECTS = new Set(["SA", "SD", "SS"]);
 
