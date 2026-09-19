@@ -6,9 +6,12 @@
  * numeric detectors run.
  *
  * Patterns:
- * - Email uses bounded quantifiers (unbounded local-part ``+`` is ReDoS-prone).
- * - Spaced IBANs use separate upper- and lower-case patterns so a trailing word
- *   is not swallowed by a mixed-case class.
+ * - Email uses bounded quantifiers (unbounded local-part ``+`` is ReDoS-prone)
+ *   and ``(?!@)`` so glued addresses (``a@b.comc@d.com``) backtrack to two hits.
+ * - Spaced IBANs use separate upper- and lower-case optional-space patterns so a
+ *   trailing word is not swallowed by a mixed-case class. A fourth pattern allows
+ *   mixed case and hyphen separators when groups are explicitly separated
+ *   (trailing word boundary blocks trailing-word swallow).
  * - Credit cards include Amex 4-6-5 groupings as well as 4-4-4-x and compact.
  * - BIC/SWIFT: 8 or 11 alnum with ISO 3166-1 country letters (AP: financial data).
  * - MAC: colon/dash IEEE and Cisco dotted forms (AP: device MAC is personal data).
@@ -84,7 +87,8 @@ function replaceMatches(
   return { text: out, count };
 }
 
-const EMAIL_RE = /\b[A-Za-z0-9._%+-]{1,64}@[A-Za-z0-9-]{1,63}(?:\.[A-Za-z0-9-]{1,63})*\.[A-Za-z]{2,24}\b/g;
+const EMAIL_RE =
+  /[A-Za-z0-9._%+-]{1,64}@[A-Za-z0-9-]{1,63}(?:\.[A-Za-z0-9-]{1,63})*\.[A-Za-z]{2,24}(?!@)/g;
 
 function scrubEmail(text: string): { text: string; count: number } {
   return replaceMatches(text, EMAIL_RE, "[EMAIL]");
@@ -96,10 +100,12 @@ const IBAN_RES = [
   /\b[A-Za-z]{2}\d{2}[A-Za-z0-9]{11,30}\b/g,
   /\b[A-Z]{2}\d{2}(?:[ ]?[A-Z0-9]{1,4}){3,8}\b/g,
   /\b[a-z]{2}\d{2}(?:[ ]?[a-z0-9]{1,4}){3,8}\b/g,
+  // Mixed case / hyphenated groups; required separators + word-boundary guard.
+  /\b[A-Za-z]{2}\d{2}(?:[ -][A-Za-z0-9]{1,4}){3,8}\b/g,
 ] as const;
 
 function ibanValid(value: string): boolean {
-  const compact = value.replace(/\s+/g, "").toUpperCase();
+  const compact = value.replace(/[\s-]+/g, "").toUpperCase();
   if (!/^[A-Z]{2}\d{2}[A-Z0-9]{11,30}$/.test(compact)) {
     return false;
   }

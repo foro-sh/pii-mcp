@@ -50,6 +50,23 @@ describe("scrubText", () => {
     expect(result.counts.credit_card).toBe(1);
   });
 
+  it("masks dashed and mixed-case spaced IBANs", () => {
+    const dashed = scrubText("Pay NL91-ABNA-0417-1643-00 please");
+    expect(dashed.text).toBe("Pay [IBAN] please");
+    expect(dashed.counts.iban).toBe(1);
+    expect(dashed.counts.phone).toBe(0);
+
+    const mixed = scrubText("Pay Nl91 AbNa 0417 1643 00 please");
+    expect(mixed.text).toBe("Pay [IBAN] please");
+    expect(mixed.counts.iban).toBe(1);
+  });
+
+  it("masks glued emails as two hits", () => {
+    const result = scrubText("a@b.comc@d.com");
+    expect(result.text).toBe("[EMAIL][EMAIL]");
+    expect(result.counts.email).toBe(2);
+  });
+
   it("masks BSN with nl pack and prefers it over SSN", () => {
     const result = scrubText("id 111222333", { languages: ["en", "nl"] });
     expect(result.text).toBe("id [BSN]");

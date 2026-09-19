@@ -142,8 +142,54 @@ fn email_re() -> &'static Regex {
     })
 }
 
+/// Python/JS use ``(?!@)`` so glued addresses backtrack; the linear ``regex``
+/// crate has no lookaround, so shorten a match that is immediately followed by
+/// ``@`` until the TLD no longer absorbed the next local-part prefix.
 fn scrub_email(text: &str) -> (Option<String>, u32) {
-    replace_matches(text, email_re(), "[EMAIL]", |_, _, _| true, false)
+    let pattern = email_re();
+    let mut count = 0u32;
+    let mut out: Option<String> = None;
+    let mut last = 0usize;
+    let mut pos = 0usize;
+    while let Some(m) = pattern.find_at(text, pos) {
+        let start = m.start();
+        let mut end = m.end();
+        if end < text.len() && text.as_bytes()[end] == b'@' {
+            let mut shortened = None;
+            for try_end in (start + 1..end).rev() {
+                if try_end < text.len() && text.as_bytes()[try_end] == b'@' {
+                    continue;
+                }
+                let cand = &text[start..try_end];
+                if let Some(mm) = pattern.find(cand) {
+                    if mm.start() == 0 && mm.end() == cand.len() {
+                        shortened = Some(try_end);
+                        break;
+                    }
+                }
+            }
+            match shortened {
+                Some(e) => end = e,
+                None => {
+                    pos = start + 1;
+                    continue;
+                }
+            }
+        }
+        let buf = out.get_or_insert_with(|| String::with_capacity(text.len()));
+        buf.push_str(&text[last..start]);
+        buf.push_str("[EMAIL]");
+        last = end;
+        pos = end;
+        count += 1;
+    }
+    match out {
+        None => (None, 0),
+        Some(mut buf) => {
+            buf.push_str(&text[last..]);
+            (Some(buf), count)
+        }
+    }
 }
 
 fn iban_res() -> &'static [Regex] {
@@ -153,6 +199,8 @@ fn iban_res() -> &'static [Regex] {
             Regex::new(r"\b[A-Za-z]{2}\d{2}[A-Za-z0-9]{11,30}\b").unwrap(),
             Regex::new(r"\b[A-Z]{2}\d{2}(?:[ ]?[A-Z0-9]{1,4}){3,8}\b").unwrap(),
             Regex::new(r"\b[a-z]{2}\d{2}(?:[ ]?[a-z0-9]{1,4}){3,8}\b").unwrap(),
+            // Mixed case / hyphenated groups; required separators + word-boundary guard.
+            Regex::new(r"\b[A-Za-z]{2}\d{2}(?:[ -][A-Za-z0-9]{1,4}){3,8}\b").unwrap(),
         ]
     })
 }

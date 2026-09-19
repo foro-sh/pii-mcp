@@ -24,13 +24,13 @@ fn fold_iban_mod97(chars: impl Iterator<Item = char>, mut remainder: u32) -> u32
     remainder
 }
 
-/// IBAN mod-97 after compacting whitespace and uppercasing.
+/// IBAN mod-97 after compacting whitespace/hyphens and uppercasing.
 pub fn iban_valid(value: &str) -> bool {
     // Max IBAN length is 34; keep a stack buffer for the ASCII path.
     let mut compact = [0u8; 34];
     let mut len = 0usize;
     for c in value.chars() {
-        if c.is_whitespace() {
+        if c.is_whitespace() || c == '-' {
             continue;
         }
         if !c.is_ascii() || len >= compact.len() {
@@ -247,6 +247,8 @@ mod tests {
     fn iban_nl_valid() {
         assert!(iban_valid("NL91ABNA0417164300"));
         assert!(iban_valid("NL91 ABNA 0417 1643 00"));
+        assert!(iban_valid("NL91-ABNA-0417-1643-00"));
+        assert!(iban_valid("Nl91 AbNa 0417 1643 00"));
         assert!(!iban_valid("NL91ABNA0417164301"));
     }
 
