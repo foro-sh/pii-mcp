@@ -1,0 +1,61 @@
+name: Publish TypeScript
+
+# Callable only, deliberately. npm permits one trusted-publisher filename per
+# package and resolves the calling workflow, so that filename has to be
+# release.yml — which leaves this file unable to authenticate a publish when
+# triggered directly. A workflow_dispatch here would present a working button
+# that always fails ENEEDAUTH. Manual republishes go through Release with the
+# publish_npm input instead. Pattern copied from foro-sh/foro.
+on:
+  workflow_call:
+    inputs:
+      ref:
+        description: >-
+          Commit to build and publish. The release workflow passes the exact
+          commit carrying the version bump; empty means the triggering ref.
+        type: string
+        required: false
+        default: ""
+
+# Required by npm's trusted publishing, and required on *both* this workflow
+# and any workflow that calls it — npm mints the OIDC token in whichever job
+# runs `npm publish`, but the calling job has to be allowed to hand the
+# permission down.
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  publish:
+    # GitHub-hosted deliberately: npm builds the provenance attestation from
+    # the runner's OIDC claims and rejects third-party runners.
+    runs-on: ubuntu-latest
+    environment: npm
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.ref }}
+      # Node 22.14+ and npm 11.5.1+ are the floor for trusted publishing. Node
+      # 22 satisfies the runtime half but still ships npm 10.x, so npm is
+      # upgraded explicitly. Deliberately no `registry-url`: it makes
+      # setup-node write an .npmrc with `_authToken=${NODE_AUTH_TOKEN}` that
+      # blocks the OIDC exchange when no token is set.
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+      - run: npm install -g npm@^11.5.1
+      - name: Confirm npm is new enough to mint an OIDC token
+        run: |
+          version="$(npm --version)"
+          echo "npm $version"
+          if [ "$(printf '%s\n11.5.1\n' "$version" | sort -V | head -1)" != "11.5.1" ]; then
+            echo "npm $version is older than the 11.5.1 required for trusted publishing" >&2
+            exit 1
+          fi
+      - run: npm ci
+        working-directory: typescript
+      - run: npm run build
+        working-directory: typescript
+      # No NODE_AUTH_TOKEN: authentication is the OIDC exchange.
+      - run: npm publish --access public
+        working-directory: typescript

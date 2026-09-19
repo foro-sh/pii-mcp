@@ -9,15 +9,26 @@ name: Release
 # the job before semantic-release runs. When a release is cut, platform wheels
 # (maturin) plus a pure-Python wheel/sdist (hatchling) upload to PyPI via OIDC,
 # and the TypeScript package publishes to npm (JS-only; napi prebuilds later).
+#
+# npm allows exactly one trusted-publisher workflow filename per package, and
+# it resolves the *calling* workflow — so this file is the only one that can
+# ever authenticate an npm publish. Manual recovery therefore has to be
+# dispatched from here rather than from publish-typescript.yml.
 on:
   push:
     branches: [main]
+  workflow_dispatch:
+    inputs:
+      publish_npm:
+        description: Republish the npm package from this ref, without cutting a release.
+        type: boolean
+        default: false
 
 permissions:
   contents: write # create tags/releases and push the changelog commit
   issues: write # comment on released issues
   pull-requests: write # comment on released PRs
-  id-token: write # OIDC for PyPI trusted publishing
+  id-token: write # OIDC for PyPI and npm trusted publishing
 
 concurrency:
   group: release
@@ -26,6 +37,7 @@ concurrency:
 jobs:
   release:
     name: Release
+    if: github.event_name == 'push'
     runs-on: ubuntu-latest
     outputs:
       published: ${{ steps.semantic-release.outputs.published }}
@@ -184,36 +196,33 @@ jobs:
         with:
           packages-dir: dist/
 
-  # JS-only TypeScript package (native napi prebuilds are out of scope for now).
-  # Duplicated in publish-npm.yml for the same trusted-publisher reason as PyPI.
-  publish-npm:
+  # npm's trusted publishing resolves the *calling* workflow's filename, not
+  # the one holding the publish step — the opposite of PyPI — and npm allows
+  # only one such filename per package. So every npm publish, automatic or
+  # manual, has to be called from this file for the publisher to match.
+  #
+  # Two ways in:
+  #   - a release was cut on push
+  #   - someone dispatched this workflow with publish_npm (recovery)
+  #
+  # `always()` is needed because the release job is skipped entirely on a
+  # dispatch, and a skipped dependency would otherwise skip this job too.
+  # needs.release.result is checked explicitly so a *failed* release still
+  # blocks the automatic arm. Pattern from foro-sh/foro.
+  publish-typescript:
     name: Publish to npm
     needs: release
-    if: needs.release.outputs.published == 'true'
-    runs-on: ubuntu-latest
-    environment: npm
-    defaults:
-      run:
-        working-directory: typescript
+    if: >-
+      always() && (
+        (needs.release.result == 'success'
+          && needs.release.outputs.published == 'true')
+        || (github.event_name == 'workflow_dispatch' && inputs.publish_npm)
+      )
     permissions:
       contents: read
       id-token: write
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          ref: ${{ needs.release.outputs.sha }}
-      - uses: actions/setup-node@v4
-        with:
-          node-version: "24"
-          cache: npm
-          cache-dependency-path: typescript/package-lock.json
-      # Trusted publishing needs npm >= 11.5.1; do not set NODE_AUTH_TOKEN or
-      # setup-node registry-url (that writes an empty _authToken and blocks OIDC).
-      - name: Ensure npm supports OIDC
-        run: npm install -g npm@latest
-      - name: Install dependencies
-        run: npm ci
-      - name: Build
-        run: npm run build
-      - name: Publish to npm
-        run: npm publish --access public
+    uses: ./.github/workflows/publish-typescript.yml
+    with:
+      # Empty on a dispatch, which makes the called workflow check out the
+      # dispatched ref — main's head, already carrying the version bump.
+      ref: ${{ needs.release.outputs.sha }}

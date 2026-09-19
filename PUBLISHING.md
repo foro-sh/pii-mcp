@@ -45,28 +45,64 @@ JS-only until that lands.
 4. **build-sdist** — pure hatchling wheel + sdist via `uv build`.
 5. **publish-python** — downloads all artifacts and uploads via OIDC trusted
    publishing.
-6. **publish-npm** — builds `typescript/` and runs `npm publish` via OIDC
-   trusted publishing (no `NPM_TOKEN`).
+6. **publish-typescript** — calls `publish-typescript.yml` to build
+   `typescript/` and run `npm publish` via OIDC (no `NPM_TOKEN`).
+
+The npm upload is a reusable-workflow call. The PyPI upload cannot be — see
+[Credentials](#credentials) — so those steps stay duplicated. Same shape as
+`foro-sh/foro`.
 
 ## Manual publishing
 
 If an upload fails after the release was tagged, republish from the Actions
-tab rather than cutting another release:
+tab rather than cutting another release. Dispatching builds the branch head,
+which after a release is the commit carrying the version bump.
 
-- Dispatch **Publish Python** — wheel matrix + pure fallback for the branch
-  head (after a release, that is the version-bump commit).
-- Dispatch **Publish npm** — rebuilds and publishes `typescript/` for the
-  branch head.
+- **PyPI** — dispatch **Publish Python**.
+- **npm** — dispatch **Release** with `publish_npm` checked. It skips the
+  release itself and only runs the npm upload. Dispatching *Publish
+  TypeScript* directly is not possible, by design — see below.
 
 ## Credentials
 
-Both registries use trusted publishing (OIDC). There is no long-lived publish
-token in GitHub secrets for the steady state.
+Both registries use trusted publishing (OIDC). There is no stored token for
+either in the steady state.
 
 | Registry | Publisher workflow filename | GitHub environment |
 | --- | --- | --- |
 | PyPI | `release.yml` (automatic) **and** `publish-python.yml` (manual) | `pypi` |
-| npm | `release.yml` (automatic) **and** `publish-npm.yml` (manual) | `npm` |
+| npm | `release.yml` — one only | `npm` |
+
+The environment must match the `environment:` on the job performing the
+upload.
+
+npm permits only **one** trusted-publisher filename per package, and resolves
+the *calling* workflow — so `release.yml` is the only filename that can ever
+authenticate an npm publish. Every npm upload, automatic or manual, is
+therefore called from that file. `publish-typescript.yml` is
+`workflow_call`-only for this reason: triggered directly it would fail
+`ENEEDAUTH`, so it deliberately offers no button that cannot work.
+
+PyPI allows several publishers, so it keeps a genuine manual path
+(`publish-python.yml`).
+
+They land on the same table for opposite reasons. PyPI [cannot authorize an
+upload inside a reusable workflow][pypi-reusable] at all, so its steps are
+duplicated into `release.yml`. npm can, but [resolves the *calling*
+workflow's filename][npm-reusable] rather than the one holding the publish
+step — so the reusable call is fine, and npm simply sees `release.yml`.
+
+npm additionally requires npm ≥ 11.5.1, Node ≥ 22.14, and `id-token: write` on
+**both** the calling and the called workflow. `publish-typescript.yml` asserts
+the npm version explicitly, so a runner image shipping an older npm fails with
+a legible message instead of an auth error that looks like a broken publisher.
+
+Do **not** configure `actions/setup-node` `registry-url` for the OIDC publish
+jobs — that writes an empty `_authToken` and blocks trusted publishing
+([npm/documentation#1960](https://github.com/npm/documentation/issues/1960)).
+
+[npm-reusable]: https://docs.npmjs.com/trusted-publishers
+[pypi-reusable]: https://docs.pypi.org/trusted-publishers/troubleshooting/
 
 ### One-time setup (PyPI)
 
@@ -85,46 +121,37 @@ token in GitHub secrets for the steady state.
 3. After merge, dispatch **Publish Python** once so the pending publisher
    creates the project and uploads the current version (if needed).
 
-Both workflow files need their own trusted publisher — PyPI cannot authorize
-an upload that runs inside a reusable workflow, so the publish steps are
-duplicated rather than shared via `workflow_call`.
-
 ### One-time setup (npm)
 
-npm trusted publishers attach to an **existing** package. Bootstrap once:
+npm trusted publishers attach to an **existing** package. Bootstrap once
+(same account/org that already publishes `@foro-sh/foro` can own `pii-mcp`):
 
 1. Create a GitHub Environment named `npm` on this repository (no secrets
    required for OIDC).
-2. Create / claim the unscoped name `pii-mcp` on npm under an account that
-   can publish (org or user). The package does not exist yet until the first
-   successful publish.
-3. **First publish (chicken-and-egg):** trusted publishing cannot be configured
-   before the package exists. Either:
-   - From a clean checkout of the release commit: `cd typescript && npm ci &&
-     npm run build && npm publish --access public` while logged in with
-     `npm login`, **or**
-   - Temporarily add a granular npm automation token as repo secret
-     `NPM_TOKEN`, set `NODE_AUTH_TOKEN` in a one-off local/dispatch publish,
-     then remove the secret.
-4. On [npmjs.com](https://www.npmjs.com/) → package `pii-mcp` → **Settings** →
-   **Trusted Publisher**, add GitHub Actions publishers:
+2. **First publish (chicken-and-egg):** trusted publishing cannot be configured
+   before the package exists. From a clean checkout of a release commit:
 
-   | Field | Automatic | Manual |
-   | --- | --- | --- |
-   | Organization or user | `foro-sh` | `foro-sh` |
-   | Repository | `pii-mcp` | `pii-mcp` |
-   | Workflow filename | `release.yml` | `publish-npm.yml` |
-   | Environment | `npm` | `npm` |
-   | Allowed actions | include `npm publish` | include `npm publish` |
+   ```bash
+   cd typescript && npm ci && npm run build && npm publish --access public
+   ```
 
-5. Optionally restrict package publishing access to “Require 2FA and disallow
+   (after `npm login`), **or** temporarily use a granular automation token
+   once, then remove it.
+3. On [npmjs.com](https://www.npmjs.com/) → package `pii-mcp` → **Settings** →
+   **Trusted Publisher**, add **one** GitHub Actions publisher:
+
+   | Field | Value |
+   | --- | --- |
+   | Organization or user | `foro-sh` |
+   | Repository | `pii-mcp` |
+   | Workflow filename | `release.yml` |
+   | Environment | `npm` |
+   | Allowed actions | include `npm publish` |
+
+4. Optionally restrict package publishing access to “Require 2FA and disallow
    tokens” after OIDC works.
-6. If the first automatic publish was skipped, dispatch **Publish npm** once
-   so registry version matches the latest Git tag / PyPI version.
-
-Do **not** configure `actions/setup-node` `registry-url` for the OIDC publish
-jobs — that writes an empty `_authToken` and blocks trusted publishing
-([npm/documentation#1960](https://github.com/npm/documentation/issues/1960)).
+5. If the registry is behind the Git tag, Actions → **Release** → Run workflow
+   with `publish_npm` checked.
 
 ## Local sanity checks
 
