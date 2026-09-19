@@ -1,18 +1,19 @@
 """Language packs and scrub walk for pattern-based detectors.
 
-Universal detectors (email, IBAN, credit card, BIC, MAC, IP, location) always
-run. Locale packs add national IDs / phone shapes / NL postcodes / kentekens /
-BTW-ids. Counts always include every ``PiiType`` key (0 when unused), including
-reserved ``person`` (unused until NER is added). ``address`` is reserved for
-street-address NER and also receives NL postcode hits from the pattern pack.
+Universal detectors (email, IBAN, credit card, BIC, MAC, IMEI, IP, location)
+always run. Locale packs add national IDs / phone shapes / NL postcodes /
+kentekens / BTW-ids / passport numbers. Counts always include every
+``PiiType`` key (0 when unused), including reserved ``person`` (unused until
+NER is added). ``address`` is reserved for street-address NER and also
+receives NL postcode hits from the pattern pack.
 
 ``MAX_SCRUB_BYTES`` matches foro-proxy (32 MiB). Oversize raises
 ``PiiScrubError`` so callers withhold rather than forward unscrubbed text.
 
 Detector pack order (see ``_detectors_for``): universal → checksum/rule-backed
-national IDs (BSN before SSN when both packs are on; NL BTW after BSN) → NL
-postcode / kenteken when ``nl`` → phones (international when any pack is
-active, then locale forms).
+national IDs (BSN before SSN when both packs are on; NL BTW and passport after
+BSN) → NL postcode / kenteken when ``nl`` → phones (international when any
+pack is active, then locale forms).
 
 Optional Rust acceleration: when ``pii_mcp._native`` is importable (shipped in
 platform wheels, or built via maturin), ``scrub_text`` / ``scrub_payload``
@@ -33,6 +34,7 @@ from pii_mcp.detectors import (
     Detector,
     bsn_detector,
     nl_license_plate_detector,
+    nl_passport_detector,
     nl_postcode_detector,
     nl_vat_detector,
     phone_de_detector,
@@ -49,12 +51,14 @@ PiiType = Literal[
     "credit_card",
     "bic",
     "mac",
+    "imei",
     "ip",
     "location",
     "bsn",
     "ssn",
     "tax_id",
     "vat_id",
+    "passport",
     "phone",
     "person",
     "address",
@@ -67,12 +71,14 @@ PII_TYPES: tuple[PiiType, ...] = (
     "credit_card",
     "bic",
     "mac",
+    "imei",
     "ip",
     "location",
     "bsn",
     "ssn",
     "tax_id",
     "vat_id",
+    "passport",
     "phone",
     "person",
     "address",
@@ -176,6 +182,7 @@ def _detectors_for(languages: Sequence[str] | None) -> tuple[Detector, ...]:
     if "nl" in langs:
         pack.append(bsn_detector)
         pack.append(nl_vat_detector)
+        pack.append(nl_passport_detector)
     if "de" in langs:
         pack.append(tax_id_detector)
     if "en" in langs:

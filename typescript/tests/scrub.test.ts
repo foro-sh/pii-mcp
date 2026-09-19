@@ -94,6 +94,22 @@ describe("scrubText", () => {
     );
   });
 
+  it("masks grouped IMEI and NL passport", () => {
+    const result = scrubText(
+      "device 49-015420-323751-8 paspoort XR1001R58",
+      { languages: ["nl"] },
+    );
+    expect(result.text).toBe("device [IMEI] paspoort [PASSPORT]");
+    expect(result.counts.imei).toBe(1);
+    expect(result.counts.passport).toBe(1);
+  });
+
+  it("masks lowercased NL passport", () => {
+    const result = scrubText("paspoort xr1001r58", { languages: ["nl"] });
+    expect(result.text).toBe("paspoort [PASSPORT]");
+    expect(result.counts.passport).toBe(1);
+  });
+
   it("rejects unknown language", () => {
     expect(() => scrubText("hi", { languages: ["fr"] })).toThrow(
       /unknown language/,
