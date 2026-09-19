@@ -1,7 +1,7 @@
 name: Publish Python
 
-# Manual and recovery publishes only — the automatic publish on merge is a job
-# in release.yml, which duplicates these steps rather than calling this file.
+# Manual and recovery publishes only — the automatic publish on merge is in
+# release.yml, which duplicates these jobs rather than calling this file.
 # PyPI's trusted publishing cannot authorize an upload that runs inside a
 # reusable workflow ("Reusable workflows cannot currently be used as the
 # workflow in a Trusted Publisher"), so `workflow_call` is not an option here
@@ -15,11 +15,46 @@ on:
 
 permissions:
   id-token: write
+  contents: read
 
 jobs:
-  publish:
+  build-wheels:
+    name: Build wheels (${{ matrix.target }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64
+          - os: ubuntu-latest
+            target: aarch64
+          - os: macos-13
+            target: x86_64
+          - os: macos-14
+            target: aarch64
+          - os: windows-latest
+            target: x64
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+      - name: Build wheels
+        uses: PyO3/maturin-action@v1
+        with:
+          target: ${{ matrix.target }}
+          args: --release --out dist --find-interpreter
+          sccache: "true"
+          manylinux: auto
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wheels-${{ matrix.os }}-${{ matrix.target }}
+          path: dist
+
+  build-sdist:
+    name: Build sdist + pure wheel
     runs-on: ubuntu-latest
-    environment: pypi
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
@@ -27,6 +62,21 @@ jobs:
           python-version: "3.12"
       - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
       - run: uv build
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wheels-pure
+          path: dist
+
+  publish:
+    name: Publish to PyPI
+    needs: [build-wheels, build-sdist]
+    runs-on: ubuntu-latest
+    environment: pypi
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
       - name: Publish to PyPI
         uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # release/v1
         with:
