@@ -15,8 +15,7 @@ core scrub API for Node/TypeScript callers.
 npm install pii-mcp
 ```
 
-Default installs are pure TypeScript (no Rust toolchain). A registry
-`npm install pii-mcp` is JS-only until optional native artifacts ship.
+Published `npm install pii-mcp` is JS-only until optional native artifacts ship.
 
 ### Optional Rust core
 
