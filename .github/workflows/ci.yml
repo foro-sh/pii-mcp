@@ -108,7 +108,6 @@ jobs:
       - name: Run tests (native)
         env:
           PII_MCP_BACKEND: native
-        # Clear pyproject pythonpath so src/ does not shadow the installed wheel.
         run: pytest -q -o pythonpath=
 
   test-typescript:
