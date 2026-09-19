@@ -1,12 +1,67 @@
 # pii-mcp
 
-Pattern-based PII scrubbing for MCP servers (regex + checksums). Mask emails,
-IBANs, cards, BICs, MACs, IMEIs, IPs, coordinates, BSNs, US SSNs, German tax
-IDs, Dutch BTW-ids, Dutch passport/ID numbers, phones, Dutch postcodes, and
-Dutch license plates in tool results — not NER for person names or full street
-addresses. Language packs: `en`, `nl`, and opt-in `de`.
+**Scrub PII before it reaches the model.**
 
-Aligned with [AP: wat zijn persoonsgegevens](https://www.autoriteitpersoonsgegevens.nl/themas/basis-avg/privacy-en-persoonsgegevens/wat-zijn-persoonsgegevens)
+Pattern-based redaction for [MCP](https://modelcontextprotocol.io/) tool results
+(regex + checksums). Drop-in FastMCP middleware — no cloud NER, no shipping
+payloads to a third-party redactor. Language packs: `en`, `nl`, and opt-in `de`.
+
+[![PyPI](https://img.shields.io/pypi/v/pii-mcp.svg)](https://pypi.org/project/pii-mcp/)
+[![npm](https://img.shields.io/npm/v/pii-mcp.svg)](https://www.npmjs.com/package/pii-mcp)
+[![CI](https://github.com/foro-sh/pii-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/foro-sh/pii-mcp/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
+
+## Why
+
+Agent stacks leak structured identifiers through tool results: emails, IBANs,
+cards, national IDs. `pii-mcp` masks those at the MCP boundary so they never
+reach the model. On scrub failure or oversize input, the result is **withheld**
+— never forwarded unmasked.
+
+## Demo
+
+```python
+from pii_mcp import scrub_text
+
+scrub_text(
+    "Contact ada@example.com — IBAN NL91 ABNA 0417 1643 00 — card 4111111111111111"
+)
+# → Contact [EMAIL] — IBAN [IBAN] — card [CREDIT_CARD]
+```
+
+## Quick start
+
+```bash
+pip install "pii-mcp[fastmcp]"   # FastMCP >= 3.0.0
+# or: pip install pii-mcp        # core only (Rust-accelerated wheels on supported platforms)
+# or: npm install pii-mcp
+```
+
+```python
+from fastmcp import FastMCP
+from pii_mcp.fastmcp import PiiScrubMiddleware
+
+mcp = FastMCP("MyServer")
+mcp.add_middleware(PiiScrubMiddleware())  # languages=["en", "nl"] by default
+# mcp.add_middleware(PiiScrubMiddleware(languages=["en", "nl", "de"]))
+```
+
+```python
+from pii_mcp import scrub_text, scrub_payload
+
+scrub_text("mail ada@example.com")
+scrub_payload({"email": "ada@example.com"}, languages=["en"])
+```
+
+## Scope
+
+Masks emails, IBANs, cards, BICs, MACs, IMEIs, IPs, coordinates, BSNs, US SSNs,
+German tax IDs, Dutch BTW-ids, Dutch passport/ID numbers, phones, Dutch
+postcodes, and Dutch license plates — **not** NER for person names or full
+street addresses.
+
+Aligned with
+[AP: wat zijn persoonsgegevens](https://www.autoriteitpersoonsgegevens.nl/themas/basis-avg/privacy-en-persoonsgegevens/wat-zijn-persoonsgegevens)
 where pattern/checksum detection can reach them. Names, free-text health data
 (allergies), photos/audio/video, unstructured klant-/personeelsnummers, and
 full street addresses need NER or media handling and stay out of scope.
@@ -25,7 +80,7 @@ full street addresses need NER or media handling and stay out of scope.
 | Kenteken                                      | `license_plate`                        | nl pack                       |
 | Naam, pasfoto, allergieën, koopgedrag, camera | —                                      | NER / media                   |
 
-Packages:
+## Packages
 
 | Runtime    | Path              | Install                       |
 | ---------- | ----------------- | ----------------------------- |
@@ -74,26 +129,4 @@ Medians from `scripts/bench_backends.py` on macOS arm64 / CPython 3.14.7
 
 ```bash
 python scripts/bench_backends.py
-```
-
-## FastMCP (Python)
-
-```python
-from fastmcp import FastMCP
-from pii_mcp.fastmcp import PiiScrubMiddleware
-
-mcp = FastMCP("MyServer")
-mcp.add_middleware(PiiScrubMiddleware())  # languages=["en", "nl"] by default
-# mcp.add_middleware(PiiScrubMiddleware(languages=["en", "nl", "de"]))
-```
-
-Results only. On scrub failure or oversize, the result is withheld — never forwarded unmasked.
-
-## Core (Python)
-
-```python
-from pii_mcp import scrub_text, scrub_payload
-
-scrub_text("mail ada@example.com")
-scrub_payload({"email": "ada@example.com"}, languages=["en"])
 ```
