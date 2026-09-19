@@ -5,10 +5,20 @@ matters — earlier matches become digit-free placeholders before looser
 numeric detectors run.
 
 Patterns:
-- Email uses bounded quantifiers (unbounded local-part ``+`` is ReDoS-prone).
-- Spaced IBANs use separate upper- and lower-case patterns so a trailing word
-  is not swallowed by a mixed-case class.
-- Credit cards include Amex 4-6-5 groupings as well as 4-4-4-x and compact.
+- Email uses bounded quantifiers (unbounded local-part ``+`` is ReDoS-prone)
+  and ``(?!@)`` so glued addresses (``a@b.comc@d.com``) backtrack to two hits.
+  When a TLD absorbs a following IBAN/card (``ada@example.comNL91…``), the
+  match is shortened so both hits still redact.
+- Spaced IBANs use separate upper- and lower-case optional-space patterns so a
+  trailing word is not swallowed by a mixed-case class. A fourth pattern allows
+  mixed case and hyphen/tab/nbsp/slash separators when groups are explicitly separated
+  (trailing word boundary blocks trailing-word swallow). A fifth matches a single
+  hyphen after the check digits (``NL91-ABNA0417164300``). Soft hyphens are
+  stripped before IBAN matching.
+- Credit cards include Amex 4-6-5 groupings as well as 4-4-4-x and compact;
+  grouped forms also accept tab, nbsp, unicode dashes, ``.``, and ``/``.
+- IP: IPv4-mapped IPv6 (``::ffff:a.b.c.d``) is matched whole before bare IPv4;
+  IPv4 rejects a preceding ``:`` so mapped forms are not partially eaten.
 - BIC/SWIFT: 8 or 11 alnum with ISO 3166-1 country letters (AP: financial data).
 - MAC: colon/dash IEEE and Cisco dotted forms (AP: device MAC is personal data).
 - IMEI: hyphen/space-grouped 15-digit forms with Luhn (AP: gegevens over
@@ -20,17 +30,17 @@ Patterns:
   (AP lists locatiegegevens as privacy-sensitive).
 - US SSN: hyphenated or compact 9-digit with SSA area/group/serial rejects.
 - German Steuer-IdNr (tax_id): 11 digits with structure + mod-11/10 check.
-- NL BTW-id (``vat_id``): ``NL`` + 9 digits + ``B`` + 2 digits (format only —
-  post-2020 sole-trader ids are not elfproef-gated).
+- NL BTW-id (``vat_id``): ``NL`` + 9 digits + ``B`` + 2 digits with optional
+  spaces/dots (format only — post-2020 sole-trader ids are not elfproef-gated).
 - NL passport / ID-card number (``passport``): 9-char RvIG document number
   (``[A-Za-z]{2}[0-9A-Za-z]{6}[0-9]``, letter O forbidden after uppercasing)
   — national identificatienummer alongside BSN; format only, no check digit.
 - NL postcode (``address``): ``1234 AB`` / ``1234AB`` with uppercase letters
   only and SA/SD/SS rejects — structured fragment, not street-address NER.
-- NL kenteken (``license_plate``): hyphenated RDW sidecodes 1–14, uppercase,
-  with SA/SD/SS letter-pair rejects.
-- Phone packs: international (any active pack), NL national, NANP, DE national
-  (DE excludes exact Dutch ``06…`` 10-digit mobiles).
+- NL kenteken (``license_plate``): hyphenated RDW sidecodes 1–14 (case-
+  insensitive), with SA/SD/SS letter-pair rejects.
+- Phone packs: international (any active pack), NL national (allows ``/``),
+  NANP, DE national (DE excludes exact Dutch ``06…`` 10-digit mobiles).
 
 ``UNIVERSAL_DETECTORS`` (email, IBAN, credit card, BIC, MAC, IMEI, IP, location)
 always run; locale detectors are selected by ``languages=`` in the scrub layer.
@@ -91,25 +101,80 @@ def _replace_matches(
 
 EMAIL_RE = re.compile(
     r"[A-Za-z0-9._%+-]{1,64}@[A-Za-z0-9-]{1,63}"
-    r"(?:\.[A-Za-z0-9-]{1,63})*\.[A-Za-z]{2,24}"
+    r"(?:\.[A-Za-z0-9-]{1,63})*\.[A-Za-z]{2,24}(?!@)"
+)
+
+# After a shortened email, remainder may start a new structured hit.
+_EMAIL_NEXT_PII_RE = re.compile(
+    r"(?:"
+    r"[A-Za-z]{2}\d{2}[A-Za-z0-9]"  # IBAN
+    r"|\d{13,19}"  # compact card
+    r"|[A-Za-z0-9._%+-]{1,64}@"  # another email
+    r")"
 )
 
 
+def _email_end_ok(text: str, end: int) -> bool:
+    if end >= len(text):
+        return True
+    ch = text[end]
+    if ch == "@":
+        return False
+    if not ch.isalnum():
+        return True
+    return _EMAIL_NEXT_PII_RE.match(text, end) is not None
+
+
 def _scrub_email(text: str) -> tuple[str, int]:
-    return _replace_matches(text, EMAIL_RE, "[EMAIL]")
+    """Mask emails; shorten when the TLD absorbed a following IBAN/card/email."""
+    count = 0
+    parts: list[str] = []
+    last = 0
+    pos = 0
+    while True:
+        match = EMAIL_RE.search(text, pos)
+        if match is None:
+            break
+        start, end = match.start(), match.end()
+        if not _email_end_ok(text, end):
+            shortened = None
+            for try_end in range(end - 1, start, -1):
+                cand = text[start:try_end]
+                if EMAIL_RE.fullmatch(cand) is None:
+                    continue
+                if _email_end_ok(text, try_end):
+                    shortened = try_end
+                    break
+            if shortened is None:
+                pos = start + 1
+                continue
+            end = shortened
+        parts.append(text[last:start])
+        parts.append("[EMAIL]")
+        last = end
+        pos = end
+        count += 1
+    if count == 0:
+        return text, 0
+    parts.append(text[last:])
+    return "".join(parts), count
 
 
 email_detector = Detector(type="email", scrub=_scrub_email)
 
 IBAN_RES: tuple[re.Pattern[str], ...] = (
     re.compile(r"\b[A-Za-z]{2}\d{2}[A-Za-z0-9]{11,30}\b"),
-    re.compile(r"\b[A-Z]{2}\d{2}(?:[ ]?[A-Z0-9]{1,4}){3,8}\b"),
-    re.compile(r"\b[a-z]{2}\d{2}(?:[ ]?[a-z0-9]{1,4}){3,8}\b"),
+    re.compile(r"\b[A-Z]{2}\d{2}(?:[ \t\xa0]?[A-Z0-9]{1,4}){3,8}\b"),
+    re.compile(r"\b[a-z]{2}\d{2}(?:[ \t\xa0]?[a-z0-9]{1,4}){3,8}\b"),
+    # Mixed case / hyphen|tab|nbsp|slash|dot groups; required separators + boundary.
+    re.compile(r"\b[A-Za-z]{2}\d{2}(?:[ \t\xa0\-/.][A-Za-z0-9]{1,4}){3,8}\b"),
+    # Single hyphen after check digits, compact BBAN.
+    re.compile(r"\b[A-Za-z]{2}\d{2}-[A-Za-z0-9]{11,30}\b"),
 )
 
 
 def _iban_valid(value: str) -> bool:
-    compact = re.sub(r"\s+", "", value).upper()
+    compact = re.sub(r"[\s\-\u00ad/.]+", "", value).upper()
     if not re.fullmatch(r"[A-Z]{2}\d{2}[A-Z0-9]{11,30}", compact):
         return False
     rearranged = compact[4:] + compact[:4]
@@ -123,7 +188,7 @@ def _iban_valid(value: str) -> bool:
 
 
 def _scrub_iban(text: str) -> tuple[str, int]:
-    out = text
+    out = text.replace("\u00ad", "")
     count = 0
     for pattern in IBAN_RES:
         out, n = _replace_matches(out, pattern, "[IBAN]", _iban_valid)
@@ -133,9 +198,12 @@ def _scrub_iban(text: str) -> tuple[str, int]:
 
 iban_detector = Detector(type="iban", scrub=_scrub_iban)
 
+# Grouped separators: ASCII space/tab/hyphen, nbsp, unicode dashes, . /
+_CC_SEP = r"[ \t\n\xa0./\-\u2010-\u2015]"
+
 CREDIT_CARD_RES: tuple[re.Pattern[str], ...] = (
-    re.compile(r"\b\d{4}[ -]\d{4}[ -]\d{4}[ -]\d{1,4}\b"),
-    re.compile(r"\b\d{4}[ -]\d{6}[ -]\d{5}\b"),
+    re.compile(rf"\b\d{{4}}{_CC_SEP}\d{{4}}{_CC_SEP}\d{{4}}{_CC_SEP}\d{{1,4}}\b"),
+    re.compile(rf"\b\d{{4}}{_CC_SEP}\d{{6}}{_CC_SEP}\d{{5}}\b"),
     re.compile(r"\b\d{13,19}\b"),
 )
 
@@ -164,7 +232,7 @@ def _scrub_credit_card(text: str) -> tuple[str, int]:
             out,
             pattern,
             "[CREDIT_CARD]",
-            lambda m: _luhn_valid(re.sub(r"[ -]", "", m)),
+            lambda m: _luhn_valid(re.sub(r"\D", "", m)),
         )
         count += n
     return out, count
@@ -229,14 +297,14 @@ mac_detector = Detector(type="mac", scrub=_scrub_mac)
 
 # Grouped only — compact 15-digit Luhn values collide with Amex credit cards.
 IMEI_RES: tuple[re.Pattern[str], ...] = (
-    re.compile(r"(?<![\w-])\d{2}[- ]\d{6}[- ]\d{6}[- ]\d(?![\w-])"),
-    re.compile(r"(?<![\w-])\d{8}[- ]\d{6}[- ]\d(?![\w-])"),
-    re.compile(r"(?<![\w-])\d{2}[- ]\d{6}[- ]\d{7}(?![\w-])"),
+    re.compile(r"(?<![\w.-])\d{2}[- .]\d{6}[- .]\d{6}[- .]\d(?![\w.-])"),
+    re.compile(r"(?<![\w.-])\d{8}[- .]\d{6}[- .]\d(?![\w.-])"),
+    re.compile(r"(?<![\w.-])\d{2}[- .]\d{6}[- .]\d{7}(?![\w.-])"),
 )
 
 
 def _imei_valid(value: str) -> bool:
-    digits = re.sub(r"[ -]", "", value)
+    digits = re.sub(r"[ .-]", "", value)
     return len(digits) == 15 and digits.isdigit() and _luhn_valid(digits)
 
 
@@ -252,7 +320,13 @@ def _scrub_imei(text: str) -> tuple[str, int]:
 imei_detector = Detector(type="imei", scrub=_scrub_imei)
 
 IPV4_RE = re.compile(
-    r"(?<![\w.])(?:(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\.){3}"
+    r"(?<![\w.:])(?:(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\.){3}"
+    r"(?:25[0-5]|2[0-4]\d|[01]?\d\d?)(?![\w.])"
+)
+
+# IPv4-mapped IPv6 must win before bare IPv4 / truncated IPv6 candidates.
+IPV4_MAPPED_RE = re.compile(
+    r"(?<![\w:])::[Ff]{4}:(?:(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\.){3}"
     r"(?:25[0-5]|2[0-4]\d|[01]?\d\d?)(?![\w.])"
 )
 
@@ -282,7 +356,9 @@ def _ip_valid(value: str) -> bool:
 
 
 def _scrub_ip(text: str) -> tuple[str, int]:
-    out, count = _replace_matches(text, IPV4_RE, "[IP]", _ip_valid)
+    out, count = _replace_matches(text, IPV4_MAPPED_RE, "[IP]", _ip_valid)
+    out, n = _replace_matches(out, IPV4_RE, "[IP]", _ip_valid)
+    count += n
     out, n = _replace_matches(out, IPV6_RE, "[IP]", _ip_valid)
     return out, count + n
 
@@ -314,11 +390,15 @@ def _scrub_location(text: str) -> tuple[str, int]:
 
 location_detector = Detector(type="location", scrub=_scrub_location)
 
-BSN_RE = re.compile(r"\b\d{8,9}\b")
+BSN_RES: tuple[re.Pattern[str], ...] = (
+    re.compile(r"\b\d{8,9}\b"),
+    re.compile(r"\b\d{3}[ .]\d{3}[ .]\d{3}\b"),
+)
 
 
-def _bsn_valid(digits: str) -> bool:
-    if len(digits) < 8 or len(digits) > 9:
+def _bsn_valid(value: str) -> bool:
+    digits = re.sub(r"[ .]", "", value)
+    if len(digits) < 8 or len(digits) > 9 or not digits.isdigit():
         return False
     padded = digits.zfill(9)
     if padded == "000000000":
@@ -329,20 +409,26 @@ def _bsn_valid(digits: str) -> bool:
 
 
 def _scrub_bsn(text: str) -> tuple[str, int]:
-    return _replace_matches(text, BSN_RE, "[BSN]", _bsn_valid)
+    out = text
+    count = 0
+    for pattern in BSN_RES:
+        out, n = _replace_matches(out, pattern, "[BSN]", _bsn_valid)
+        count += n
+    return out, count
 
 
 bsn_detector = Detector(type="bsn", scrub=_scrub_bsn)
 
 SSN_RES: tuple[re.Pattern[str], ...] = (
     re.compile(r"\b\d{3}-\d{2}-\d{4}\b"),
+    re.compile(r"\b\d{3}[ .]\d{2}[ .]\d{4}\b"),
     re.compile(r"\b\d{9}\b"),
 )
 
 
 def _ssn_valid(value: str) -> bool:
     """SSA rejects: area 000/666/9xx, group 00, serial 0000."""
-    digits = value.replace("-", "")
+    digits = re.sub(r"[ .\-]", "", value)
     if len(digits) != 9 or not digits.isdigit():
         return False
     area = int(digits[:3])
@@ -400,7 +486,7 @@ def _scrub_tax_id(text: str) -> tuple[str, int]:
 
 tax_id_detector = Detector(type="tax_id", scrub=_scrub_tax_id)
 
-NL_VAT_RE = re.compile(r"\b[Nn][Ll]\d{9}[Bb]\d{2}\b")
+NL_VAT_RE = re.compile(r"\b[Nn][Ll][.\s]*\d{9}[.\s]*[Bb][.\s]*\d{2}\b")
 
 
 def _scrub_nl_vat(text: str) -> tuple[str, int]:
@@ -442,17 +528,21 @@ PHONE_INTERNATIONAL = (
 )
 
 PHONE_NL_NATIONAL = (
-    re.compile(r"(?<![\w+])0\d(?:[ .-]?\d){8}(?!\d)"),
+    re.compile(r"(?<![\w+])0\d(?:[ .\-/]?\d){8}(?!\d)"),
     lambda m: _digit_count(m) == 10,
 )
 
 PHONE_EN_NANP = (
-    re.compile(r"(?<![\w+])\(?\d{3}\)?[ .-]\d{3}[ .-]\d{4}(?!\d)"),
-    lambda m: _digit_count(m) == 10,
+    re.compile(
+        r"(?<![\w+])(?:1[ .-]?)?\(?\d{3}\)?[ .-]\d{3}[ .-]\d{4}(?!\d)"
+    ),
+    lambda m: _digit_count(m) in (10, 11) and (
+        _digit_count(m) == 10 or re.sub(r"\D", "", m).startswith("1")
+    ),
 )
 
 PHONE_DE_NATIONAL = (
-    re.compile(r"(?<![\w+])0\d(?:[ .-]?\d){8,10}(?!\d)"),
+    re.compile(r"(?<![\w+])0\d(?:[ .\-/]?\d){8,10}(?!\d)"),
     lambda m: (
         10 <= _digit_count(m) <= 12
         and not (
@@ -516,7 +606,8 @@ NL_LICENSE_PLATE_RE = re.compile(
     r"|[A-Z]-\d{2}-[A-Z]{3}"
     r"|\d-[A-Z]{2}-\d{3}"
     r"|\d{3}-[A-Z]{2}-\d"
-    r")(?![\w-])"
+    r")(?![\w-])",
+    re.IGNORECASE,
 )
 _NL_PLATE_LETTER_REJECTS = frozenset({"SA", "SD", "SS"})
 

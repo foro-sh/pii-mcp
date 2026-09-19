@@ -50,6 +50,52 @@ describe("scrubText", () => {
     expect(result.counts.credit_card).toBe(1);
   });
 
+  it("masks dashed and mixed-case spaced IBANs", () => {
+    const dashed = scrubText("Pay NL91-ABNA-0417-1643-00 please");
+    expect(dashed.text).toBe("Pay [IBAN] please");
+    expect(dashed.counts.iban).toBe(1);
+    expect(dashed.counts.phone).toBe(0);
+
+    const mixed = scrubText("Pay Nl91 AbNa 0417 1643 00 please");
+    expect(mixed.text).toBe("Pay [IBAN] please");
+    expect(mixed.counts.iban).toBe(1);
+
+    const slash = scrubText("Pay NL91/ABNA/0417/1643/00 please");
+    expect(slash.text).toBe("Pay [IBAN] please");
+    expect(slash.counts.iban).toBe(1);
+  });
+
+  it("masks glued emails as two hits", () => {
+    const result = scrubText("a@b.comc@d.com");
+    expect(result.text).toBe("[EMAIL][EMAIL]");
+    expect(result.counts.email).toBe(2);
+  });
+
+  it("masks dotted cards, mapped IPs, spaced VAT, and lowercase plates", () => {
+    expect(scrubText("card 4111.1111.1111.1111").text).toBe("card [CREDIT_CARD]");
+    expect(scrubText("peer ::ffff:192.0.2.1 ok").text).toBe("peer [IP] ok");
+    expect(scrubText("factuur NL 000099998 B57", { languages: ["nl"] }).text).toBe(
+      "factuur [VAT_ID]",
+    );
+    expect(scrubText("kenteken ab-12-cd", { languages: ["nl"] }).text).toBe(
+      "kenteken [LICENSE_PLATE]",
+    );
+    expect(scrubText("reach 06/12345678", { languages: ["nl"] }).text).toBe(
+      "reach [PHONE]",
+    );
+  });
+
+  it("masks dotted IBAN, email+IBAN glue, spaced SSN/BSN, and dotted IMEI", () => {
+    expect(scrubText("NL91.ABNA.0417.1643.00").text).toBe("[IBAN]");
+    expect(scrubText("ada@example.comNL91ABNA0417164300").text).toBe(
+      "[EMAIL][IBAN]",
+    );
+    expect(scrubText("078 05 1120", { languages: ["en"] }).text).toBe("[SSN]");
+    expect(scrubText("111.222.333", { languages: ["nl"] }).text).toBe("[BSN]");
+    expect(scrubText("49.015420.323751.8").text).toBe("[IMEI]");
+    expect(scrubText("1-415-555-0132", { languages: ["en"] }).text).toBe("[PHONE]");
+  });
+
   it("masks BSN with nl pack and prefers it over SSN", () => {
     const result = scrubText("id 111222333", { languages: ["en", "nl"] });
     expect(result.text).toBe("id [BSN]");
