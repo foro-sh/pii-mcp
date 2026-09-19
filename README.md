@@ -3,7 +3,7 @@
 Pattern-based PII scrubbing for MCP servers (regex + checksums). Masks emails,
 IBANs, cards, BICs, MACs, IMEIs, IPs, coordinates, BSNs, US SSNs, German tax
 IDs, Dutch BTW-ids, Dutch passport/ID numbers, phones, Dutch postcodes, and
-Dutch license plates in tool results — not NER for person names or full street
+Dutch license plates in tool results. Not NER for person names or full street
 addresses. Language packs: `en`, `nl`, and opt-in `de`.
 
 [![PyPI](https://img.shields.io/pypi/v/pii-mcp.svg)](https://pypi.org/project/pii-mcp/)
@@ -17,9 +17,9 @@ addresses. Language packs: `en`, `nl`, and opt-in `de`.
 from pii_mcp import scrub_text
 
 scrub_text(
-    "Contact ada@example.com — IBAN NL91 ABNA 0417 1643 00 — card 4111111111111111"
+    "Contact ada@example.com. IBAN NL91 ABNA 0417 1643 00. card 4111111111111111"
 )
-# Contact [EMAIL] — IBAN [IBAN] — card [CREDIT_CARD]
+# Contact [EMAIL]. IBAN [IBAN]. card [CREDIT_CARD]
 ```
 
 ## Install
@@ -43,7 +43,7 @@ mcp.add_middleware(PiiScrubMiddleware())  # languages=["en", "nl"] by default
 # mcp.add_middleware(PiiScrubMiddleware(languages=["en", "nl", "de"]))
 ```
 
-Results only. On scrub failure or oversize, the result is withheld — never
+Results only. On scrub failure or oversize, the result is withheld, never
 forwarded unmasked.
 
 ### Core
@@ -75,7 +75,7 @@ full street addresses need NER or media handling and stay out of scope.
 | Online / device IDs                           | `mac`, `imei`                          | IMEI: grouped forms + Luhn    |
 | Adres (structured)                            | `address`                              | NL postcode only              |
 | Kenteken                                      | `license_plate`                        | nl pack                       |
-| Naam, pasfoto, allergieën, koopgedrag, camera | —                                      | NER / media                   |
+| Naam, pasfoto, allergieën, koopgedrag, camera |                                        | NER / media                   |
 
 ## Packages
 
@@ -109,12 +109,12 @@ Medians from `scripts/bench_backends.py` on macOS arm64 / CPython 3.14.7
 
 | Case                  | Python   | Rust     | Speedup |
 | --------------------- | -------- | -------- | ------- |
-| Short clean text      | 0.234 ms | 0.023 ms | 10.2×   |
-| Short mixed PII       | 0.058 ms | 0.007 ms | 8.9×    |
-| 100 KiB sparse PII    | 20.4 ms  | 2.0 ms   | 10.2×   |
-| 1 MiB sparse PII      | 203 ms   | 20.4 ms  | 10.0×   |
-| Nested JSON payload   | 12.4 ms  | 1.2 ms   | 10.3×   |
-| 1k× tiny `scrub_text` | 54.3 ms  | 6.8 ms   | 8.0×    |
+| Short clean text      | 0.234 ms | 0.023 ms | 10.2x   |
+| Short mixed PII       | 0.058 ms | 0.007 ms | 8.9x    |
+| 100 KiB sparse PII    | 20.4 ms  | 2.0 ms   | 10.2x   |
+| 1 MiB sparse PII      | 203 ms   | 20.4 ms  | 10.0x   |
+| Nested JSON payload   | 12.4 ms  | 1.2 ms   | 10.3x   |
+| 1k x tiny `scrub_text` | 54.3 ms  | 6.8 ms   | 8.0x    |
 
 ```bash
 python scripts/bench_backends.py
