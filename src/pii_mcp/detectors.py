@@ -7,6 +7,8 @@ numeric detectors run.
 Patterns:
 - Email uses bounded quantifiers (unbounded local-part ``+`` is ReDoS-prone)
   and ``(?!@)`` so glued addresses (``a@b.comc@d.com``) backtrack to two hits.
+  When a TLD absorbs a following IBAN/card (``ada@example.comNL91…``), the
+  match is shortened so both hits still redact.
 - Spaced IBANs use separate upper- and lower-case optional-space patterns so a
   trailing word is not swallowed by a mixed-case class. A fourth pattern allows
   mixed case and hyphen/tab/nbsp/slash separators when groups are explicitly separated
@@ -102,9 +104,60 @@ EMAIL_RE = re.compile(
     r"(?:\.[A-Za-z0-9-]{1,63})*\.[A-Za-z]{2,24}(?!@)"
 )
 
+# After a shortened email, remainder may start a new structured hit.
+_EMAIL_NEXT_PII_RE = re.compile(
+    r"(?:"
+    r"[A-Za-z]{2}\d{2}[A-Za-z0-9]"  # IBAN
+    r"|\d{13,19}"  # compact card
+    r"|[A-Za-z0-9._%+-]{1,64}@"  # another email
+    r")"
+)
+
+
+def _email_end_ok(text: str, end: int) -> bool:
+    if end >= len(text):
+        return True
+    ch = text[end]
+    if ch == "@":
+        return False
+    if not ch.isalnum():
+        return True
+    return _EMAIL_NEXT_PII_RE.match(text, end) is not None
+
 
 def _scrub_email(text: str) -> tuple[str, int]:
-    return _replace_matches(text, EMAIL_RE, "[EMAIL]")
+    """Mask emails; shorten when the TLD absorbed a following IBAN/card/email."""
+    count = 0
+    parts: list[str] = []
+    last = 0
+    pos = 0
+    while True:
+        match = EMAIL_RE.search(text, pos)
+        if match is None:
+            break
+        start, end = match.start(), match.end()
+        if not _email_end_ok(text, end):
+            shortened = None
+            for try_end in range(end - 1, start, -1):
+                cand = text[start:try_end]
+                if EMAIL_RE.fullmatch(cand) is None:
+                    continue
+                if _email_end_ok(text, try_end):
+                    shortened = try_end
+                    break
+            if shortened is None:
+                pos = start + 1
+                continue
+            end = shortened
+        parts.append(text[last:start])
+        parts.append("[EMAIL]")
+        last = end
+        pos = end
+        count += 1
+    if count == 0:
+        return text, 0
+    parts.append(text[last:])
+    return "".join(parts), count
 
 
 email_detector = Detector(type="email", scrub=_scrub_email)
@@ -113,15 +166,15 @@ IBAN_RES: tuple[re.Pattern[str], ...] = (
     re.compile(r"\b[A-Za-z]{2}\d{2}[A-Za-z0-9]{11,30}\b"),
     re.compile(r"\b[A-Z]{2}\d{2}(?:[ \t\xa0]?[A-Z0-9]{1,4}){3,8}\b"),
     re.compile(r"\b[a-z]{2}\d{2}(?:[ \t\xa0]?[a-z0-9]{1,4}){3,8}\b"),
-    # Mixed case / hyphen|tab|nbsp|slash groups; required separators + boundary.
-    re.compile(r"\b[A-Za-z]{2}\d{2}(?:[ \t\xa0\-/][A-Za-z0-9]{1,4}){3,8}\b"),
+    # Mixed case / hyphen|tab|nbsp|slash|dot groups; required separators + boundary.
+    re.compile(r"\b[A-Za-z]{2}\d{2}(?:[ \t\xa0\-/.][A-Za-z0-9]{1,4}){3,8}\b"),
     # Single hyphen after check digits, compact BBAN.
     re.compile(r"\b[A-Za-z]{2}\d{2}-[A-Za-z0-9]{11,30}\b"),
 )
 
 
 def _iban_valid(value: str) -> bool:
-    compact = re.sub(r"[\s\-\u00ad/]+", "", value).upper()
+    compact = re.sub(r"[\s\-\u00ad/.]+", "", value).upper()
     if not re.fullmatch(r"[A-Z]{2}\d{2}[A-Z0-9]{11,30}", compact):
         return False
     rearranged = compact[4:] + compact[:4]
@@ -244,14 +297,14 @@ mac_detector = Detector(type="mac", scrub=_scrub_mac)
 
 # Grouped only — compact 15-digit Luhn values collide with Amex credit cards.
 IMEI_RES: tuple[re.Pattern[str], ...] = (
-    re.compile(r"(?<![\w-])\d{2}[- ]\d{6}[- ]\d{6}[- ]\d(?![\w-])"),
-    re.compile(r"(?<![\w-])\d{8}[- ]\d{6}[- ]\d(?![\w-])"),
-    re.compile(r"(?<![\w-])\d{2}[- ]\d{6}[- ]\d{7}(?![\w-])"),
+    re.compile(r"(?<![\w.-])\d{2}[- .]\d{6}[- .]\d{6}[- .]\d(?![\w.-])"),
+    re.compile(r"(?<![\w.-])\d{8}[- .]\d{6}[- .]\d(?![\w.-])"),
+    re.compile(r"(?<![\w.-])\d{2}[- .]\d{6}[- .]\d{7}(?![\w.-])"),
 )
 
 
 def _imei_valid(value: str) -> bool:
-    digits = re.sub(r"[ -]", "", value)
+    digits = re.sub(r"[ .-]", "", value)
     return len(digits) == 15 and digits.isdigit() and _luhn_valid(digits)
 
 
@@ -337,11 +390,15 @@ def _scrub_location(text: str) -> tuple[str, int]:
 
 location_detector = Detector(type="location", scrub=_scrub_location)
 
-BSN_RE = re.compile(r"\b\d{8,9}\b")
+BSN_RES: tuple[re.Pattern[str], ...] = (
+    re.compile(r"\b\d{8,9}\b"),
+    re.compile(r"\b\d{3}[ .]\d{3}[ .]\d{3}\b"),
+)
 
 
-def _bsn_valid(digits: str) -> bool:
-    if len(digits) < 8 or len(digits) > 9:
+def _bsn_valid(value: str) -> bool:
+    digits = re.sub(r"[ .]", "", value)
+    if len(digits) < 8 or len(digits) > 9 or not digits.isdigit():
         return False
     padded = digits.zfill(9)
     if padded == "000000000":
@@ -352,20 +409,26 @@ def _bsn_valid(digits: str) -> bool:
 
 
 def _scrub_bsn(text: str) -> tuple[str, int]:
-    return _replace_matches(text, BSN_RE, "[BSN]", _bsn_valid)
+    out = text
+    count = 0
+    for pattern in BSN_RES:
+        out, n = _replace_matches(out, pattern, "[BSN]", _bsn_valid)
+        count += n
+    return out, count
 
 
 bsn_detector = Detector(type="bsn", scrub=_scrub_bsn)
 
 SSN_RES: tuple[re.Pattern[str], ...] = (
     re.compile(r"\b\d{3}-\d{2}-\d{4}\b"),
+    re.compile(r"\b\d{3}[ .]\d{2}[ .]\d{4}\b"),
     re.compile(r"\b\d{9}\b"),
 )
 
 
 def _ssn_valid(value: str) -> bool:
     """SSA rejects: area 000/666/9xx, group 00, serial 0000."""
-    digits = value.replace("-", "")
+    digits = re.sub(r"[ .\-]", "", value)
     if len(digits) != 9 or not digits.isdigit():
         return False
     area = int(digits[:3])
@@ -470,12 +533,16 @@ PHONE_NL_NATIONAL = (
 )
 
 PHONE_EN_NANP = (
-    re.compile(r"(?<![\w+])\(?\d{3}\)?[ .-]\d{3}[ .-]\d{4}(?!\d)"),
-    lambda m: _digit_count(m) == 10,
+    re.compile(
+        r"(?<![\w+])(?:1[ .-]?)?\(?\d{3}\)?[ .-]\d{3}[ .-]\d{4}(?!\d)"
+    ),
+    lambda m: _digit_count(m) in (10, 11) and (
+        _digit_count(m) == 10 or re.sub(r"\D", "", m).startswith("1")
+    ),
 )
 
 PHONE_DE_NATIONAL = (
-    re.compile(r"(?<![\w+])0\d(?:[ .-]?\d){8,10}(?!\d)"),
+    re.compile(r"(?<![\w+])0\d(?:[ .\-/]?\d){8,10}(?!\d)"),
     lambda m: (
         10 <= _digit_count(m) <= 12
         and not (

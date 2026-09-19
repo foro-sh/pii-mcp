@@ -35,6 +35,12 @@ class TestIbanSeparatorGaps:
         assert result["counts"]["iban"] == 1
         assert result["counts"]["phone"] == 0
 
+    def test_dot_separated_iban(self) -> None:
+        result = scrub_text("Pay NL91.ABNA.0417.1643.00 please")
+        assert result["text"] == "Pay [IBAN] please"
+        assert result["counts"]["iban"] == 1
+        assert result["counts"]["phone"] == 0
+
     def test_single_hyphen_after_check_digits(self) -> None:
         result = scrub_text("wire NL91-ABNA0417164300 today")
         assert result["text"] == "wire [IBAN] today"
@@ -144,6 +150,42 @@ class TestLocaleFormatVariants:
     def test_slash_nl_phone(self) -> None:
         result = scrub_text("reach 06/12345678 today", languages=["nl"])
         assert result["text"] == "reach [PHONE] today"
+        assert result["counts"]["phone"] == 1
+
+    def test_slash_de_phone(self) -> None:
+        result = scrub_text("ruf 030/12345678 heute", languages=["de"])
+        assert result["text"] == "ruf [PHONE] heute"
+        assert result["counts"]["phone"] == 1
+
+    def test_spaced_and_dotted_ssn(self) -> None:
+        assert scrub_text("ssn 078 05 1120", languages=["en"])["text"] == "ssn [SSN]"
+        assert scrub_text("ssn 078.05.1120", languages=["en"])["text"] == "ssn [SSN]"
+
+    def test_spaced_and_dotted_bsn(self) -> None:
+        assert scrub_text("id 111 222 333", languages=["nl"])["text"] == "id [BSN]"
+        assert scrub_text("id 111.222.333", languages=["nl"])["text"] == "id [BSN]"
+
+
+class TestEmailIbanGlue:
+    def test_email_tld_does_not_eat_iban(self) -> None:
+        result = scrub_text("ada@example.comNL91ABNA0417164300")
+        assert result["text"] == "[EMAIL][IBAN]"
+        assert result["counts"]["email"] == 1
+        assert result["counts"]["iban"] == 1
+
+
+class TestImeiDots:
+    def test_dot_grouped_imei_not_phone(self) -> None:
+        result = scrub_text("device 49.015420.323751.8 registered")
+        assert result["text"] == "device [IMEI] registered"
+        assert result["counts"]["imei"] == 1
+        assert result["counts"]["phone"] == 0
+
+
+class TestNanpLeadingOne:
+    def test_masks_one_prefix(self) -> None:
+        result = scrub_text("call 1-415-555-0132 now", languages=["en"])
+        assert result["text"] == "call [PHONE] now"
         assert result["counts"]["phone"] == 1
 
 

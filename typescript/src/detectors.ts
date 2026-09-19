@@ -91,8 +91,66 @@ function replaceMatches(
 const EMAIL_RE =
   /[A-Za-z0-9._%+-]{1,64}@[A-Za-z0-9-]{1,63}(?:\.[A-Za-z0-9-]{1,63})*\.[A-Za-z]{2,24}(?!@)/g;
 
+const EMAIL_NEXT_PII_RE =
+  /^(?:[A-Za-z]{2}\d{2}[A-Za-z0-9]|\d{13,19}|[A-Za-z0-9._%+-]{1,64}@)/;
+
+function emailEndOk(text: string, end: number): boolean {
+  if (end >= text.length) {
+    return true;
+  }
+  const ch = text[end]!;
+  if (ch === "@") {
+    return false;
+  }
+  if (!/[A-Za-z0-9]/.test(ch)) {
+    return true;
+  }
+  return EMAIL_NEXT_PII_RE.test(text.slice(end));
+}
+
 function scrubEmail(text: string): { text: string; count: number } {
-  return replaceMatches(text, EMAIL_RE, "[EMAIL]");
+  let count = 0;
+  const parts: string[] = [];
+  let last = 0;
+  let pos = 0;
+  const re = cloneRegExp(EMAIL_RE);
+  re.lastIndex = 0;
+  let match: RegExpExecArray | null;
+  while ((match = re.exec(text)) !== null) {
+    let start = match.index;
+    let end = start + match[0].length;
+    if (!emailEndOk(text, end)) {
+      let shortened: number | null = null;
+      for (let tryEnd = end - 1; tryEnd > start; tryEnd -= 1) {
+        const cand = text.slice(start, tryEnd);
+        const full = cloneRegExp(EMAIL_RE);
+        full.lastIndex = 0;
+        const m = full.exec(cand);
+        if (m === null || m.index !== 0 || m[0].length !== cand.length) {
+          continue;
+        }
+        if (emailEndOk(text, tryEnd)) {
+          shortened = tryEnd;
+          break;
+        }
+      }
+      if (shortened === null) {
+        re.lastIndex = start + 1;
+        continue;
+      }
+      end = shortened;
+    }
+    parts.push(text.slice(last, start));
+    parts.push("[EMAIL]");
+    last = end;
+    count += 1;
+    re.lastIndex = end;
+  }
+  if (count === 0) {
+    return { text, count: 0 };
+  }
+  parts.push(text.slice(last));
+  return { text: parts.join(""), count };
 }
 
 export const emailDetector: Detector = { type: "email", scrub: scrubEmail };
@@ -101,14 +159,14 @@ const IBAN_RES = [
   /\b[A-Za-z]{2}\d{2}[A-Za-z0-9]{11,30}\b/g,
   /\b[A-Z]{2}\d{2}(?:[ \t\xa0]?[A-Z0-9]{1,4}){3,8}\b/g,
   /\b[a-z]{2}\d{2}(?:[ \t\xa0]?[a-z0-9]{1,4}){3,8}\b/g,
-  // Mixed case / hyphen|tab|nbsp|slash groups; required separators + boundary.
-  /\b[A-Za-z]{2}\d{2}(?:[ \t\xa0\-/][A-Za-z0-9]{1,4}){3,8}\b/g,
+  // Mixed case / hyphen|tab|nbsp|slash|dot groups; required separators + boundary.
+  /\b[A-Za-z]{2}\d{2}(?:[ \t\xa0\-/.][A-Za-z0-9]{1,4}){3,8}\b/g,
   // Single hyphen after check digits, compact BBAN.
   /\b[A-Za-z]{2}\d{2}-[A-Za-z0-9]{11,30}\b/g,
 ] as const;
 
 function ibanValid(value: string): boolean {
-  const compact = value.replace(/[\s\-\u00ad/]+/g, "").toUpperCase();
+  const compact = value.replace(/[\s\-\u00ad/.]+/g, "").toUpperCase();
   if (!/^[A-Z]{2}\d{2}[A-Z0-9]{11,30}$/.test(compact)) {
     return false;
   }
@@ -242,13 +300,13 @@ export const macDetector: Detector = { type: "mac", scrub: scrubMac };
 
 // Grouped only — compact 15-digit Luhn values collide with Amex credit cards.
 const IMEI_RES = [
-  /(?<![\w-])\d{2}[- ]\d{6}[- ]\d{6}[- ]\d(?![\w-])/g,
-  /(?<![\w-])\d{8}[- ]\d{6}[- ]\d(?![\w-])/g,
-  /(?<![\w-])\d{2}[- ]\d{6}[- ]\d{7}(?![\w-])/g,
+  /(?<![\w.-])\d{2}[- .]\d{6}[- .]\d{6}[- .]\d(?![\w.-])/g,
+  /(?<![\w.-])\d{8}[- .]\d{6}[- .]\d(?![\w.-])/g,
+  /(?<![\w.-])\d{2}[- .]\d{6}[- .]\d{7}(?![\w.-])/g,
 ] as const;
 
 function imeiValid(value: string): boolean {
-  const digits = value.replace(/[ -]/g, "");
+  const digits = value.replace(/[ .-]/g, "");
   return digits.length === 15 && /^\d+$/.test(digits) && luhnValid(digits);
 }
 
@@ -315,10 +373,11 @@ export const locationDetector: Detector = {
   scrub: scrubLocation,
 };
 
-const BSN_RE = /\b\d{8,9}\b/g;
+const BSN_RES = [/\b\d{8,9}\b/g, /\b\d{3}[ .]\d{3}[ .]\d{3}\b/g] as const;
 
-function bsnValid(digits: string): boolean {
-  if (digits.length < 8 || digits.length > 9) {
+function bsnValid(value: string): boolean {
+  const digits = value.replace(/[ .]/g, "");
+  if (digits.length < 8 || digits.length > 9 || !/^\d+$/.test(digits)) {
     return false;
   }
   const padded = digits.padStart(9, "0");
@@ -334,15 +393,26 @@ function bsnValid(digits: string): boolean {
 }
 
 function scrubBsn(text: string): { text: string; count: number } {
-  return replaceMatches(text, BSN_RE, "[BSN]", bsnValid);
+  let out = text;
+  let count = 0;
+  for (const pattern of BSN_RES) {
+    const result = replaceMatches(out, pattern, "[BSN]", bsnValid);
+    out = result.text;
+    count += result.count;
+  }
+  return { text: out, count };
 }
 
 export const bsnDetector: Detector = { type: "bsn", scrub: scrubBsn };
 
-const SSN_RES = [/\b\d{3}-\d{2}-\d{4}\b/g, /\b\d{9}\b/g] as const;
+const SSN_RES = [
+  /\b\d{3}-\d{2}-\d{4}\b/g,
+  /\b\d{3}[ .]\d{2}[ .]\d{4}\b/g,
+  /\b\d{9}\b/g,
+] as const;
 
 function ssnValid(value: string): boolean {
-  const digits = value.replace(/-/g, "");
+  const digits = value.replace(/[ .\-]/g, "");
   if (digits.length !== 9 || !/^\d{9}$/.test(digits)) {
     return false;
   }
@@ -461,12 +531,17 @@ const PHONE_NL_NATIONAL: readonly [RegExp, (value: string) => boolean] = [
 ];
 
 const PHONE_EN_NANP: readonly [RegExp, (value: string) => boolean] = [
-  /(?<![\w+])\(?\d{3}\)?[ .-]\d{3}[ .-]\d{4}(?!\d)/g,
-  (m) => digitCount(m) === 10,
+  /(?<![\w+])(?:1[ .-]?)?\(?\d{3}\)?[ .-]\d{3}[ .-]\d{4}(?!\d)/g,
+  (m) => {
+    const digits = digitCount(m);
+    return (
+      digits === 10 || (digits === 11 && m.replace(/\D/g, "").startsWith("1"))
+    );
+  },
 ];
 
 const PHONE_DE_NATIONAL: readonly [RegExp, (value: string) => boolean] = [
-  /(?<![\w+])0\d(?:[ .-]?\d){8,10}(?!\d)/g,
+  /(?<![\w+])0\d(?:[ .\-/]?\d){8,10}(?!\d)/g,
   (m) => {
     const digits = digitCount(m);
     return (

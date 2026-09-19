@@ -85,6 +85,17 @@ describe("scrubText", () => {
     );
   });
 
+  it("masks dotted IBAN, email+IBAN glue, spaced SSN/BSN, and dotted IMEI", () => {
+    expect(scrubText("NL91.ABNA.0417.1643.00").text).toBe("[IBAN]");
+    expect(scrubText("ada@example.comNL91ABNA0417164300").text).toBe(
+      "[EMAIL][IBAN]",
+    );
+    expect(scrubText("078 05 1120", { languages: ["en"] }).text).toBe("[SSN]");
+    expect(scrubText("111.222.333", { languages: ["nl"] }).text).toBe("[BSN]");
+    expect(scrubText("49.015420.323751.8").text).toBe("[IMEI]");
+    expect(scrubText("1-415-555-0132", { languages: ["en"] }).text).toBe("[PHONE]");
+  });
+
   it("masks BSN with nl pack and prefers it over SSN", () => {
     const result = scrubText("id 111222333", { languages: ["en", "nl"] });
     expect(result.text).toBe("id [BSN]");

@@ -286,6 +286,14 @@ mod tests {
     }
 
     #[test]
+    fn email_tld_does_not_eat_iban() {
+        let r = scrub_text("ada@example.comNL91ABNA0417164300", None, true).unwrap();
+        assert_eq!(r.text, "[EMAIL][IBAN]");
+        assert_eq!(r.counts["email"], 1);
+        assert_eq!(r.counts["iban"], 1);
+    }
+
+    #[test]
     fn masks_iban_and_card() {
         let r = scrub_text("Pay NL91ABNA0417164300 with 4111111111111111", None, true).unwrap();
         assert_eq!(r.text, "Pay [IBAN] with [CREDIT_CARD]");
