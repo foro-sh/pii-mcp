@@ -9,17 +9,34 @@ semantic-release cuts a new version. Nothing is published from a pull request.
 | --- | --- | --- |
 | PyPI | `pii-mcp` | repo root (`pyproject.toml`) |
 
+Artifacts per release:
+
+| Artifact | Builder | Contents |
+| --- | --- | --- |
+| Platform wheels (`manylinux` / macOS / Windows) | maturin | Python package + `pii_mcp._native` |
+| `py3-none-any` wheel + sdist | hatchling (`uv build`) | Pure Python fallback |
+
+Pip prefers a matching platform wheel; otherwise it installs the pure wheel or
+sdist (no Rust toolchain required).
+
 ## What happens on merge
 
 `.github/workflows/release.yml` runs:
 
 1. **commitlint** — rejects commits that don't follow Conventional Commits.
 2. **release** — semantic-release analyzes commits. If a release is warranted,
-   it stamps the version into `pyproject.toml` (`scripts/set-version.sh`),
-   updates `CHANGELOG.md`, commits `chore(release):`, tags, and creates a
-   GitHub release.
-3. **publish-python** — runs only when a release was cut. Builds the exact
-   release commit with `uv build` and uploads via OIDC trusted publishing.
+   it stamps the version into `pyproject.toml` and
+   `crates/pii-mcp-native/Cargo.toml` (`scripts/set-version.sh`), updates
+   `CHANGELOG.md`, commits `chore(release):`, tags, and creates a GitHub
+   release.
+3. **build-wheels** — maturin platform matrix for the release commit
+   (maturin `v1.15.0` via pinned maturin-action). Each native-arch job
+   smoke-tests the wheel (`using_native()` + a sample scrub) before upload;
+   cross-compiled linux aarch64 skips the smoke test. Intel macOS wheels
+   build on `macos-15-intel` (macos-13 is retired).
+4. **build-sdist** — pure hatchling wheel + sdist via `uv build`.
+5. **publish-python** — downloads all artifacts and uploads via OIDC trusted
+   publishing.
 
 ## Manual publishing
 
@@ -27,7 +44,8 @@ If an upload fails after the release was tagged, republish from the Actions
 tab rather than cutting another release:
 
 - Dispatch **Publish Python**. It builds the branch head (after a release,
-  that is the commit carrying the version bump).
+  that is the commit carrying the version bump), including the same wheel
+  matrix and pure fallback.
 
 Use this once after the first merge of PyPI wiring to upload the current
 tagged version (e.g. `1.3.1`) without waiting for the next `feat:` / `fix:`.
@@ -64,6 +82,7 @@ duplicated rather than shared via `workflow_call`.
 ## Local sanity checks
 
 ```bash
-uv build
+uv build                                          # pure wheel + sdist
+maturin build --release --out dist                # platform wheel with _native
 uv run --with "fastmcp==3.0.0" pytest
 ```

@@ -38,21 +38,25 @@ Packages:
 ```bash
 pip install "pii-mcp[fastmcp]"   # FastMCP >= 3.0.0
 # or
-pip install pii-mcp              # core only (pure Python, no Rust toolchain)
+pip install pii-mcp              # core; platform wheels include Rust acceleration
 ```
 
-### Optional Rust core (Python)
+### Rust core (Python)
 
-Default installs stay pure Python. To accelerate scrubbing with the shared
-`pii-core` crate (PyO3), build the optional extension locally:
+Published platform wheels ship `pii_mcp._native` (PyO3 over `pii-core`). Pip
+prefers those on supported OS/arch; elsewhere (or with `--no-binary`) you get
+the pure-Python hatchling wheel/sdist and the same scrub API.
+
+When `_native` is importable, `scrub_text` / `scrub_payload` use it. Force the
+Python path with `PII_MCP_BACKEND=python`; require native with
+`PII_MCP_BACKEND=native`.
+
+Local development from a clone (optional):
 
 ```bash
 pip install -e ".[native]"
 maturin develop --release --manifest-path crates/pii-mcp-native/Cargo.toml
 ```
-
-When `pii_mcp._native` is importable, `scrub_text` / `scrub_payload` use it.
-Force the Python path with `PII_MCP_BACKEND=python`.
 
 #### Performance (Python vs Rust release)
 
