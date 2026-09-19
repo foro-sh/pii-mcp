@@ -12,7 +12,7 @@ pii-core = { path = "crates/pii-core" }
 regex = "1"
 serde_json = "1"
 thiserror = "2"
-pyo3 = { version = "0.25", features = ["extension-module"] }
+pyo3 = { version = "0.25", features = ["extension-module", "abi3-py310"] }
 napi = { version = "2", default-features = false, features = ["napi4", "serde-json"] }
 napi-derive = "2"
 napi-build = "2"
