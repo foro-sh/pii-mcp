@@ -7,7 +7,8 @@ name: Release
 #
 # Commitlint is a blocking first step: a non-conventional pushed commit fails
 # the job before semantic-release runs. When a release is cut, platform wheels
-# (maturin) plus a pure-Python wheel/sdist (hatchling) upload via OIDC.
+# (maturin) plus a pure-Python wheel/sdist (hatchling) upload to PyPI via OIDC,
+# and the TypeScript package publishes to npm (JS-only; napi prebuilds later).
 on:
   push:
     branches: [main]
@@ -182,3 +183,37 @@ jobs:
         uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # release/v1
         with:
           packages-dir: dist/
+
+  # JS-only TypeScript package (native napi prebuilds are out of scope for now).
+  # Duplicated in publish-npm.yml for the same trusted-publisher reason as PyPI.
+  publish-npm:
+    name: Publish to npm
+    needs: release
+    if: needs.release.outputs.published == 'true'
+    runs-on: ubuntu-latest
+    environment: npm
+    defaults:
+      run:
+        working-directory: typescript
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.release.outputs.sha }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: typescript/package-lock.json
+      # Trusted publishing needs npm >= 11.5.1; do not set NODE_AUTH_TOKEN or
+      # setup-node registry-url (that writes an empty _authToken and blocks OIDC).
+      - name: Ensure npm supports OIDC
+        run: npm install -g npm@latest
+      - name: Install dependencies
+        run: npm ci
+      - name: Build
+        run: npm run build
+      - name: Publish to npm
+        run: npm publish --access public
