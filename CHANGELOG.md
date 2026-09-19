@@ -1,3 +1,18 @@
+## [1.5.0](https://github.com/foro-sh/pii-mcp/compare/v1.4.0...v1.5.0) (2026-09-19)
+
+### Features
+
+* **ci:** publish maturin platform wheels to PyPI ([fac6dfb](https://github.com/foro-sh/pii-mcp/commit/fac6dfb80e9d26f9dfdb0c5b5fc3dd99373a6cd2))
+* merge IMEI and Dutch passport detectors ([c421bb3](https://github.com/foro-sh/pii-mcp/commit/c421bb38e5308e030d3d35e2a5efcd470180d467))
+* **python:** enable abi3 and sync native crate version ([736fc5c](https://github.com/foro-sh/pii-mcp/commit/736fc5c9688d872efa72e1c69810c87039f50174))
+* scrub IMEI and Dutch passport numbers ([171fe1e](https://github.com/foro-sh/pii-mcp/commit/171fe1ea0ed9400ca27300becbba8b679f14a97c))
+* TypeScript SDK with napi pii-core bindings ([#13](https://github.com/foro-sh/pii-mcp/issues/13)) ([414a8ed](https://github.com/foro-sh/pii-mcp/commit/414a8ed13915e015adc703f7d6427e290c32f9ca))
+
+### Bug Fixes
+
+* accept lowercased Dutch passport numbers ([c232e09](https://github.com/foro-sh/pii-mcp/commit/c232e09ace15489d2c313c6302370cd5a9ab2308))
+* **ci:** avoid wheel shadowing and retire macos-13 ([c1643fe](https://github.com/foro-sh/pii-mcp/commit/c1643febe2c0ffb1129bd200ccade31aebf05d36))
+
 ## [1.4.0](https://github.com/foro-sh/pii-mcp/compare/v1.3.1...v1.4.0) (2026-09-18)
 
 ### Features
