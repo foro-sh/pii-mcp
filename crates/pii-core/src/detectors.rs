@@ -142,47 +142,291 @@ fn email_re() -> &'static Regex {
     })
 }
 
+/// Python/JS shorten when ``(?!@)`` is not enough — TLD may also absorb a
+/// following IBAN/card/SSN/phone. The linear ``regex`` crate has no lookaround;
+/// digit-bounded BSN/phone tails are checked in ``email_next_pii``.
+fn email_next_pii_re() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| {
+        Regex::new(
+            r"^(?:[A-Za-z]{2}\d{2}[A-Za-z0-9]|\d{13,19}|\d{3}[- ./]?\d{2}[- ./]?\d{4}|\d{3}[ .]\d{3}[ .]\d{3}|(?:\d{1,3}\.){3}\d{1,3}|\d{1,3}\.\d{3,8}|[0-9A-Fa-f]{2}([-:/.])[0-9A-Fa-f]{2}|(?:[0-9A-Fa-f]{3,4}:|::)|[A-Za-z0-9._%+-]{1,64}@|[+0]\d)",
+        )
+        .unwrap()
+    })
+}
+
+fn email_next_pii(text: &str, end: usize) -> bool {
+    let rest = &text[end..];
+    if email_next_pii_re().is_match(rest) {
+        return true;
+    }
+    // ``\d{8,9}(?!\d)`` — BSN / short national id without lookaround.
+    let bytes = rest.as_bytes();
+    let mut n = 0usize;
+    while n < bytes.len() && bytes[n].is_ascii_digit() {
+        n += 1;
+    }
+    (8..=9).contains(&n)
+}
+
+fn email_end_ok(text: &str, end: usize) -> bool {
+    if end >= text.len() {
+        return true;
+    }
+    let next = text[end..].chars().next().unwrap();
+    if next == '@' {
+        return false;
+    }
+    if !next.is_ascii_alphanumeric() {
+        return true;
+    }
+    email_next_pii(text, end)
+}
+
+fn email_should_peel(text: &str, start: usize, end: usize) -> bool {
+    let pattern = email_re();
+    let mut try_end = end;
+    while try_end > start {
+        try_end -= 1;
+        while try_end > start && !text.is_char_boundary(try_end) {
+            try_end -= 1;
+        }
+        let ch = text[try_end..].chars().next().unwrap();
+        if !ch.is_ascii_alphabetic() {
+            break;
+        }
+        let cand = &text[start..try_end];
+        if let Some(mm) = pattern.find(cand) {
+            if mm.start() == 0 && mm.end() == cand.len() && email_next_pii(text, try_end) {
+                return true;
+            }
+        }
+    }
+    false
+}
+
 fn scrub_email(text: &str) -> (Option<String>, u32) {
-    replace_matches(text, email_re(), "[EMAIL]", |_, _, _| true, false)
+    let pattern = email_re();
+    let mut count = 0u32;
+    let mut out: Option<String> = None;
+    let mut last = 0usize;
+    let mut pos = 0usize;
+    while let Some(m) = pattern.find_at(text, pos) {
+        let start = m.start();
+        let mut end = m.end();
+        if !email_end_ok(text, end) || email_should_peel(text, start, end) {
+            let mut shortened = None;
+            for try_end in (start + 1..end).rev() {
+                if !text.is_char_boundary(try_end) {
+                    continue;
+                }
+                let cand = &text[start..try_end];
+                if let Some(mm) = pattern.find(cand) {
+                    if mm.start() == 0 && mm.end() == cand.len() && email_end_ok(text, try_end)
+                    {
+                        shortened = Some(try_end);
+                        break;
+                    }
+                }
+            }
+            match shortened {
+                Some(e) => end = e,
+                None => {
+                    pos = start + 1;
+                    continue;
+                }
+            }
+        }
+        let buf = out.get_or_insert_with(|| String::with_capacity(text.len()));
+        buf.push_str(&text[last..start]);
+        buf.push_str("[EMAIL]");
+        last = end;
+        pos = end;
+        count += 1;
+    }
+    match out {
+        None => (None, 0),
+        Some(mut buf) => {
+            buf.push_str(&text[last..]);
+            (Some(buf), count)
+        }
+    }
 }
 
 fn iban_res() -> &'static [Regex] {
     static RES: OnceLock<Vec<Regex>> = OnceLock::new();
     RES.get_or_init(|| {
+        // Unicode Zs separators commonly used in OCR / rich text.
+        let sep = r"[ \t\r\n\u{00a0}\u{2000}-\u{200a}\u{202f}\u{3000}]";
         vec![
-            Regex::new(r"\b[A-Za-z]{2}\d{2}[A-Za-z0-9]{11,30}\b").unwrap(),
-            Regex::new(r"\b[A-Z]{2}\d{2}(?:[ ]?[A-Z0-9]{1,4}){3,8}\b").unwrap(),
-            Regex::new(r"\b[a-z]{2}\d{2}(?:[ ]?[a-z0-9]{1,4}){3,8}\b").unwrap(),
+            // Compact: boundary emulated in ``iban_glue_boundary_ok``.
+            Regex::new(r"[A-Za-z]{2}\d{2}[A-Za-z0-9]{11,30}").unwrap(),
+            Regex::new(&format!(
+                r"\b[A-Z]{{2}}\d{{2}}(?:{sep}?[A-Z0-9]{{1,4}}){{3,8}}\b"
+            ))
+            .unwrap(),
+            Regex::new(&format!(
+                r"\b[a-z]{{2}}\d{{2}}(?:{sep}?[a-z0-9]{{1,4}}){{3,8}}\b"
+            ))
+            .unwrap(),
+            // Mixed case / hyphen|slash|dot|whitespace groups (one or more seps).
+            Regex::new(&format!(
+                r"[A-Za-z]{{2}}\d{{2}}(?:(?:{sep}|[\-/.])+[A-Za-z0-9]{{1,4}}){{3,8}}"
+            ))
+            .unwrap(),
+            // Single hyphen after check digits, compact BBAN.
+            Regex::new(r"[A-Za-z]{2}\d{2}-[A-Za-z0-9]{11,30}").unwrap(),
         ]
     })
 }
 
+/// ``(?<![A-Za-z])…(?![A-Za-z0-9])`` — allow after digits (card|IBAN glue).
+fn iban_glue_boundary_ok(text: &str, start: usize, end: usize) -> bool {
+    if start > 0 {
+        let prev = text[..start].chars().next_back().unwrap();
+        if prev.is_ascii_alphabetic() {
+            return false;
+        }
+    }
+    if end < text.len() {
+        let next = text[end..].chars().next().unwrap();
+        if next.is_ascii_alphanumeric() {
+            return false;
+        }
+    }
+    true
+}
+
+/// Emulate ``(?![A-Za-z0-9])`` backtracking: greedy sep-groups may swallow the
+/// next word (``…00 please`` → ``…00 plea``); walk the end left until the
+/// candidate is a full pattern match, boundary-ok, and checksum-valid.
+fn iban_glue_accept(text: &str, pattern: &Regex, start: usize, end: usize) -> Option<usize> {
+    let mut try_end = end;
+    while try_end > start {
+        if iban_glue_boundary_ok(text, start, try_end) {
+            let cand = &text[start..try_end];
+            if let Some(m) = pattern.find(cand) {
+                if m.start() == 0 && m.end() == cand.len() && iban_valid(cand) {
+                    return Some(try_end);
+                }
+            }
+        }
+        try_end -= 1;
+        while try_end > start && !text.is_char_boundary(try_end) {
+            try_end -= 1;
+        }
+    }
+    None
+}
+
+fn strip_invisible(text: &str) -> String {
+    text.chars()
+        .filter(|c| {
+            !matches!(
+                c,
+                '\u{00ad}' | '\u{200b}' | '\u{200c}' | '\u{200d}' | '\u{feff}'
+            )
+        })
+        .collect()
+}
+
 fn scrub_iban(text: &str) -> (Option<String>, u32) {
-    scrub_patterns(text, iban_res(), "[IBAN]", |v, _, _| iban_valid(v), false)
+    let cleaned = strip_invisible(text);
+    let patterns = iban_res();
+    let mut current: Option<String> = None;
+    let mut count = 0u32;
+    for (i, pattern) in patterns.iter().enumerate() {
+        let need_glue = i == 0 || i == 3 || i == 4;
+        let src = current.as_deref().unwrap_or(cleaned.as_str());
+        if need_glue {
+            let (next, n) = replace_iban_glue(src, pattern);
+            count += n;
+            if let Some(s) = next {
+                current = Some(s);
+            }
+        } else {
+            let (next, n) = replace_matches(src, pattern, "[IBAN]", |v, _, _| iban_valid(v), false);
+            count += n;
+            if let Some(s) = next {
+                current = Some(s);
+            }
+        }
+    }
+    match current {
+        Some(s) => (Some(s), count),
+        None if cleaned.as_str() != text => (Some(cleaned), count),
+        None => (None, count),
+    }
+}
+
+fn replace_iban_glue(text: &str, pattern: &Regex) -> (Option<String>, u32) {
+    let mut count = 0u32;
+    let mut out: Option<String> = None;
+    let mut last = 0usize;
+    let mut pos = 0usize;
+    while let Some(m) = pattern.find_at(text, pos) {
+        let start = m.start();
+        let end = m.end();
+        let Some(ok_end) = iban_glue_accept(text, pattern, start, end) else {
+            pos = start + 1;
+            continue;
+        };
+        let buf = out.get_or_insert_with(|| String::with_capacity(text.len()));
+        buf.push_str(&text[last..start]);
+        buf.push_str("[IBAN]");
+        last = ok_end;
+        pos = ok_end;
+        count += 1;
+    }
+    match out {
+        None => (None, 0),
+        Some(mut buf) => {
+            buf.push_str(&text[last..]);
+            (Some(buf), count)
+        }
+    }
 }
 
 fn credit_card_res() -> &'static [Regex] {
     static RES: OnceLock<Vec<Regex>> = OnceLock::new();
     RES.get_or_init(|| {
+        // One or more whitespace / dash / punct separators between digit groups.
+        let sep_space = r"[ \t\r\n\u{00a0}\u{2000}-\u{200a}\u{202f}\u{3000}]";
+        let sep = format!(r"(?:{sep_space}|[./\-\u{{2010}}-\u{{2015}}])+");
         vec![
-            Regex::new(r"\b\d{4}[ -]\d{4}[ -]\d{4}[ -]\d{1,4}\b").unwrap(),
-            Regex::new(r"\b\d{4}[ -]\d{6}[ -]\d{5}\b").unwrap(),
-            Regex::new(r"\b\d{13,19}\b").unwrap(),
+            Regex::new(&format!(
+                r"\d{{4}}{sep}\d{{4}}{sep}\d{{4}}{sep}\d{{1,4}}"
+            ))
+            .unwrap(),
+            Regex::new(&format!(r"\d{{4}}{sep}\d{{6}}{sep}\d{{5}}")).unwrap(),
+            // Digit/letter glue: \b does not split 1N.
+            Regex::new(r"\d{13,19}").unwrap(),
         ]
     })
+}
+
+/// ``(?<!\d)…(?!\d)`` emulation for compact / grouped cards.
+fn digit_boundary_ok(text: &str, start: usize, end: usize) -> bool {
+    if start > 0 && text.as_bytes()[start - 1].is_ascii_digit() {
+        return false;
+    }
+    if end < text.len() && text.as_bytes()[end].is_ascii_digit() {
+        return false;
+    }
+    true
 }
 
 fn credit_card_valid(value: &str) -> bool {
     let mut digits = [0u8; 19];
     let mut len = 0usize;
-    for b in value.bytes() {
-        if b == b' ' || b == b'-' {
+    for c in value.chars() {
+        if !c.is_ascii_digit() {
             continue;
         }
-        if !b.is_ascii_digit() || len >= digits.len() {
+        if len >= digits.len() {
             return false;
         }
-        digits[len] = b;
+        digits[len] = c as u8;
         len += 1;
     }
     // SAFETY: len <= 19; digits[..len] are ASCII digits.
@@ -190,13 +434,26 @@ fn credit_card_valid(value: &str) -> bool {
 }
 
 fn scrub_credit_card(text: &str) -> (Option<String>, u32) {
-    scrub_patterns(
-        text,
-        credit_card_res(),
-        "[CREDIT_CARD]",
-        |v, _, _| credit_card_valid(v),
-        false,
-    )
+    let cleaned = strip_invisible(text);
+    let mut current: Option<String> = None;
+    let mut count = 0u32;
+    for pattern in credit_card_res() {
+        let (next, n) = {
+            let src = current.as_deref().unwrap_or(cleaned.as_str());
+            replace_matches(
+                src,
+                pattern,
+                "[CREDIT_CARD]",
+                |v, s, e| digit_boundary_ok(src, s, e) && credit_card_valid(v),
+                true,
+            )
+        };
+        count += n;
+        if let Some(s) = next {
+            current = Some(s);
+        }
+    }
+    (current, count)
 }
 
 // Sorted for binary_search.
@@ -305,24 +562,24 @@ fn imei_res() -> &'static [Regex] {
     static RES: OnceLock<Vec<Regex>> = OnceLock::new();
     RES.get_or_init(|| {
         vec![
-            Regex::new(r"\d{2}[- ]\d{6}[- ]\d{6}[- ]\d").unwrap(),
-            Regex::new(r"\d{8}[- ]\d{6}[- ]\d").unwrap(),
-            Regex::new(r"\d{2}[- ]\d{6}[- ]\d{7}").unwrap(),
+            Regex::new(r"\d{2}[- .]\d{6}[- .]\d{6}[- .]\d").unwrap(),
+            Regex::new(r"\d{8}[- .]\d{6}[- .]\d").unwrap(),
+            Regex::new(r"\d{2}[- .]\d{6}[- .]\d{7}").unwrap(),
         ]
     })
 }
 
 fn imei_boundary_ok(text: &str, start: usize, end: usize) -> bool {
-    // (?<![\w-]) … (?![\w-])
+    // (?<![\w.-]) … (?![\w.-])
     if start > 0 {
         let prev = text[..start].chars().next_back().unwrap();
-        if is_word_char(prev) || prev == '-' {
+        if is_word_char(prev) || prev == '-' || prev == '.' {
             return false;
         }
     }
     if end < text.len() {
         let next = text[end..].chars().next().unwrap();
-        if is_word_char(next) || next == '-' {
+        if is_word_char(next) || next == '-' || next == '.' {
             return false;
         }
     }
@@ -353,7 +610,12 @@ fn scrub_imei(text: &str) -> (Option<String>, u32) {
 
 fn location_re() -> &'static Regex {
     static RE: OnceLock<Regex> = OnceLock::new();
-    RE.get_or_init(|| Regex::new(r"[-+]?\d{1,3}\.\d{3,8}\s*,\s*[-+]?\d{1,3}\.\d{3,8}").unwrap())
+    RE.get_or_init(|| {
+        Regex::new(
+            r"[-+]?\d{1,3}\.\d{3,8}°?(?:\s*[NnSs])?\s*,\s*[-+]?\d{1,3}\.\d{3,8}°?(?:\s*[EeWw])?",
+        )
+        .unwrap()
+    })
 }
 
 fn location_boundary_ok(text: &str, start: usize, end: usize) -> bool {
@@ -365,11 +627,19 @@ fn location_boundary_ok(text: &str, start: usize, end: usize) -> bool {
     }
     if end < text.len() {
         let next = text[end..].chars().next().unwrap();
-        if next.is_ascii_digit() || next == '.' {
+        if next.is_ascii_digit() || next == '.' || next.is_ascii_alphabetic() {
             return false;
         }
     }
     true
+}
+
+fn coord_component(part: &str) -> Option<f64> {
+    let cleaned: String = part
+        .chars()
+        .filter(|c| c.is_ascii_digit() || *c == '.' || *c == '+' || *c == '-')
+        .collect();
+    cleaned.parse().ok()
 }
 
 fn location_valid(value: &str) -> bool {
@@ -384,10 +654,10 @@ fn location_valid(value: &str) -> bool {
     if parts.next().is_some() {
         return false;
     }
-    let Ok(lat) = lat_s.trim().parse::<f64>() else {
+    let Some(lat) = coord_component(lat_s) else {
         return false;
     };
-    let Ok(lon) = lon_s.trim().parse::<f64>() else {
+    let Some(lon) = coord_component(lon_s) else {
         return false;
     };
     (-90.0..=90.0).contains(&lat) && (-180.0..=180.0).contains(&lon)
@@ -411,6 +681,16 @@ fn ipv4_re() -> &'static Regex {
     })
 }
 
+fn ipv4_mapped_re() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| {
+        Regex::new(
+            r"(?i)::ffff:(?:(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\.){3}(?:25[0-5]|2[0-4]\d|[01]?\d\d?)",
+        )
+        .unwrap()
+    })
+}
+
 fn ipv6_re() -> &'static Regex {
     static RE: OnceLock<Regex> = OnceLock::new();
     // Candidate shapes; ``ip_valid`` drops non-addresses. Alternatives that end
@@ -425,15 +705,65 @@ fn ipv6_re() -> &'static Regex {
     })
 }
 
+fn normalize_ipv4_octets(value: &str) -> Option<String> {
+    let parts: Vec<&str> = value.split('.').collect();
+    if parts.len() != 4 {
+        return None;
+    }
+    let mut nums = [0u32; 4];
+    for (i, p) in parts.iter().enumerate() {
+        if p.is_empty() || p.len() > 3 || !p.bytes().all(|b| b.is_ascii_digit()) {
+            return None;
+        }
+        let n: u32 = p.parse().ok()?;
+        if n > 255 {
+            return None;
+        }
+        nums[i] = n;
+    }
+    Some(format!("{}.{}.{}.{}", nums[0], nums[1], nums[2], nums[3]))
+}
+
 fn ip_valid(value: &str) -> bool {
-    value.parse::<std::net::IpAddr>().is_ok()
+    if value.parse::<std::net::IpAddr>().is_ok() {
+        return true;
+    }
+    let lower = value.to_ascii_lowercase();
+    if let Some(rest) = lower.strip_prefix("::ffff:") {
+        let v4_part = &value[value.len() - rest.len()..];
+        if let Some(norm) = normalize_ipv4_octets(v4_part) {
+            return format!("::ffff:{norm}").parse::<std::net::IpAddr>().is_ok();
+        }
+        return false;
+    }
+    if value.contains(':') {
+        return false;
+    }
+    normalize_ipv4_octets(value).is_some()
 }
 
 fn ipv4_boundary_ok(text: &str, start: usize, end: usize) -> bool {
-    // (?<![\w.]) ... (?![\w.])
+    // (?<![\w.:]) ... (?![\w.]) — reject preceding ':' so ::ffff:a.b.c.d is not split.
     if start > 0 {
         let prev = text[..start].chars().next_back().unwrap();
-        if is_word_char(prev) || prev == '.' {
+        if is_word_char(prev) || prev == '.' || prev == ':' {
+            return false;
+        }
+    }
+    if end < text.len() {
+        let next = text[end..].chars().next().unwrap();
+        if is_word_char(next) || next == '.' {
+            return false;
+        }
+    }
+    true
+}
+
+fn ipv4_mapped_boundary_ok(text: &str, start: usize, end: usize) -> bool {
+    // (?<![\w:]) ... (?![\w.])
+    if start > 0 {
+        let prev = text[..start].chars().next_back().unwrap();
+        if is_word_char(prev) || prev == ':' {
             return false;
         }
     }
@@ -464,15 +794,29 @@ fn ipv6_boundary_ok(text: &str, start: usize, end: usize) -> bool {
 }
 
 fn scrub_ip(text: &str) -> (Option<String>, u32) {
-    let (first, mut count) = replace_matches(
+    let (mapped, mut count) = replace_matches(
         text,
-        ipv4_re(),
+        ipv4_mapped_re(),
         "[IP]",
-        |v, s, e| ipv4_boundary_ok(text, s, e) && ip_valid(v),
+        |v, s, e| ipv4_mapped_boundary_ok(text, s, e) && ip_valid(v),
         true,
     );
+    let (first, n) = {
+        let src = mapped.as_deref().unwrap_or(text);
+        replace_matches(
+            src,
+            ipv4_re(),
+            "[IP]",
+            |v, s, e| ipv4_boundary_ok(src, s, e) && ip_valid(v),
+            true,
+        )
+    };
+    count += n;
     let (second, n) = {
-        let src = first.as_deref().unwrap_or(text);
+        let src = first
+            .as_deref()
+            .or(mapped.as_deref())
+            .unwrap_or(text);
         replace_matches(
             src,
             ipv6_re(),
@@ -482,16 +826,21 @@ fn scrub_ip(text: &str) -> (Option<String>, u32) {
         )
     };
     count += n;
-    (second.or(first), count)
+    (second.or(first).or(mapped), count)
 }
 
-fn bsn_re() -> &'static Regex {
-    static RE: OnceLock<Regex> = OnceLock::new();
-    RE.get_or_init(|| Regex::new(r"\b\d{8,9}\b").unwrap())
+fn bsn_res() -> &'static [Regex] {
+    static RES: OnceLock<Vec<Regex>> = OnceLock::new();
+    RES.get_or_init(|| {
+        vec![
+            Regex::new(r"\b\d{8,9}\b").unwrap(),
+            Regex::new(r"\b\d{3}[ .]\d{3}[ .]\d{3}\b").unwrap(),
+        ]
+    })
 }
 
 fn scrub_bsn(text: &str) -> (Option<String>, u32) {
-    replace_matches(text, bsn_re(), "[BSN]", |v, _, _| bsn_valid(v), false)
+    scrub_patterns(text, bsn_res(), "[BSN]", |v, _, _| bsn_valid(v), false)
 }
 
 fn ssn_res() -> &'static [Regex] {
@@ -499,6 +848,8 @@ fn ssn_res() -> &'static [Regex] {
     RES.get_or_init(|| {
         vec![
             Regex::new(r"\b\d{3}-\d{2}-\d{4}\b").unwrap(),
+            Regex::new(r"\b\d{3}/\d{2}/\d{4}\b").unwrap(),
+            Regex::new(r"\b\d{3}[ .]\d{2}[ .]\d{4}\b").unwrap(),
             Regex::new(r"\b\d{9}\b").unwrap(),
         ]
     })
@@ -553,7 +904,7 @@ fn phone_international_valid(m: &str) -> bool {
 
 fn phone_nl_re() -> &'static Regex {
     static RE: OnceLock<Regex> = OnceLock::new();
-    RE.get_or_init(|| Regex::new(r"0\d(?:[ .\-]?\d){8}").unwrap())
+    RE.get_or_init(|| Regex::new(r"0\d(?:[ .\-/]?\d){8}").unwrap())
 }
 
 fn phone_nl_valid(m: &str) -> bool {
@@ -562,16 +913,25 @@ fn phone_nl_valid(m: &str) -> bool {
 
 fn phone_en_re() -> &'static Regex {
     static RE: OnceLock<Regex> = OnceLock::new();
-    RE.get_or_init(|| Regex::new(r"\(?\d{3}\)?[ .\-]\d{3}[ .\-]\d{4}").unwrap())
+    RE.get_or_init(|| {
+        Regex::new(r"(?:1[ .\-]?)?\(?\d{3}\)?[ .\-]?\d{3}[ .\-]\d{4}").unwrap()
+    })
 }
 
 fn phone_en_valid(m: &str) -> bool {
-    digit_count(m) == 10
+    let n = digit_count(m);
+    if n == 10 {
+        return true;
+    }
+    if n != 11 {
+        return false;
+    }
+    m.bytes().find(|b| b.is_ascii_digit()) == Some(b'1')
 }
 
 fn phone_de_re() -> &'static Regex {
     static RE: OnceLock<Regex> = OnceLock::new();
-    RE.get_or_init(|| Regex::new(r"0\d(?:[ .\-]?\d){8,10}").unwrap())
+    RE.get_or_init(|| Regex::new(r"0\d(?:[ .\-/]?\d){8,10}").unwrap())
 }
 
 fn phone_de_valid(m: &str) -> bool {
@@ -647,7 +1007,7 @@ fn scrub_nl_postcode(text: &str) -> (Option<String>, u32) {
 
 fn nl_vat_re() -> &'static Regex {
     static RE: OnceLock<Regex> = OnceLock::new();
-    RE.get_or_init(|| Regex::new(r"\b[Nn][Ll]\d{9}[Bb]\d{2}\b").unwrap())
+    RE.get_or_init(|| Regex::new(r"\b[Nn][Ll][.\s]*\d{9}[.\s]*[Bb][.\s]*\d{2}\b").unwrap())
 }
 
 fn scrub_nl_vat(text: &str) -> (Option<String>, u32) {
@@ -673,7 +1033,7 @@ fn nl_license_plate_re() -> &'static Regex {
     static RE: OnceLock<Regex> = OnceLock::new();
     RE.get_or_init(|| {
         Regex::new(
-            r"(?:[A-Z]{2}-\d{2}-\d{2}|\d{2}-\d{2}-[A-Z]{2}|\d{2}-[A-Z]{2}-\d{2}|[A-Z]{2}-\d{2}-[A-Z]{2}|[A-Z]{2}-[A-Z]{2}-\d{2}|\d{2}-[A-Z]{2}-[A-Z]{2}|\d{2}-[A-Z]{3}-\d|\d-[A-Z]{3}-\d{2}|[A-Z]{2}-\d{3}-[A-Z]|[A-Z]-\d{3}-[A-Z]{2}|[A-Z]{3}-\d{2}-[A-Z]|[A-Z]-\d{2}-[A-Z]{3}|\d-[A-Z]{2}-\d{3}|\d{3}-[A-Z]{2}-\d)",
+            r"(?i)(?:[A-Z]{2}-\d{2}-\d{2}|\d{2}-\d{2}-[A-Z]{2}|\d{2}-[A-Z]{2}-\d{2}|[A-Z]{2}-\d{2}-[A-Z]{2}|[A-Z]{2}-[A-Z]{2}-\d{2}|\d{2}-[A-Z]{2}-[A-Z]{2}|\d{2}-[A-Z]{3}-\d|\d-[A-Z]{3}-\d{2}|[A-Z]{2}-\d{3}-[A-Z]|[A-Z]-\d{3}-[A-Z]{2}|[A-Z]{3}-\d{2}-[A-Z]|[A-Z]-\d{2}-[A-Z]{3}|\d-[A-Z]{2}-\d{3}|\d{3}-[A-Z]{2}-\d)",
         )
         .unwrap()
     })

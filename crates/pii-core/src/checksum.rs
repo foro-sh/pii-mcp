@@ -24,13 +24,22 @@ fn fold_iban_mod97(chars: impl Iterator<Item = char>, mut remainder: u32) -> u32
     remainder
 }
 
-/// IBAN mod-97 after compacting whitespace and uppercasing.
+/// IBAN mod-97 after compacting whitespace/hyphens/slashes/soft-hyphens and uppercasing.
 pub fn iban_valid(value: &str) -> bool {
     // Max IBAN length is 34; keep a stack buffer for the ASCII path.
     let mut compact = [0u8; 34];
     let mut len = 0usize;
     for c in value.chars() {
-        if c.is_whitespace() {
+        if c.is_whitespace()
+            || c == '-'
+            || c == '/'
+            || c == '.'
+            || c == '\u{00ad}'
+            || c == '\u{200b}'
+            || c == '\u{200c}'
+            || c == '\u{200d}'
+            || c == '\u{feff}'
+        {
             continue;
         }
         if !c.is_ascii() || len >= compact.len() {
@@ -71,12 +80,12 @@ pub fn luhn_valid(digits: &str) -> bool {
     total % 10 == 0
 }
 
-/// IMEI: exactly 15 digits after stripping spaces/hyphens, Luhn-valid.
+/// IMEI: exactly 15 digits after stripping spaces/hyphens/dots, Luhn-valid.
 pub fn imei_valid(value: &str) -> bool {
     let mut digits = [0u8; 15];
     let mut len = 0usize;
     for b in value.bytes() {
-        if b == b' ' || b == b'-' {
+        if b == b' ' || b == b'-' || b == b'.' {
             continue;
         }
         if !b.is_ascii_digit() || len >= digits.len() {
@@ -119,14 +128,25 @@ pub fn nl_passport_valid(value: &str) -> bool {
     true
 }
 
-/// Dutch BSN 11-check (8–9 digits, zero-padded to 9).
-pub fn bsn_valid(digits: &str) -> bool {
-    let len = digits.len();
-    if !(8..=9).contains(&len) || !digits.bytes().all(|b| b.is_ascii_digit()) {
+/// Dutch BSN 11-check (8–9 digits, zero-padded to 9). Accepts spaced/dotted groups.
+pub fn bsn_valid(value: &str) -> bool {
+    let mut digits = [0u8; 9];
+    let mut len = 0usize;
+    for b in value.bytes() {
+        if b == b' ' || b == b'.' {
+            continue;
+        }
+        if !b.is_ascii_digit() || len >= 9 {
+            return false;
+        }
+        digits[len] = b;
+        len += 1;
+    }
+    if !(8..=9).contains(&len) {
         return false;
     }
     let mut padded = [b'0'; 9];
-    padded[9 - len..].copy_from_slice(digits.as_bytes());
+    padded[9 - len..].copy_from_slice(&digits[..len]);
     if padded == *b"000000000" {
         return false;
     }
@@ -144,7 +164,7 @@ pub fn ssn_valid(value: &str) -> bool {
     let mut digits = [0u8; 9];
     let mut len = 0usize;
     for b in value.bytes() {
-        if b == b'-' {
+        if b == b'-' || b == b' ' || b == b'.' || b == b'/' {
             continue;
         }
         if !b.is_ascii_digit() || len >= 9 {
@@ -247,6 +267,8 @@ mod tests {
     fn iban_nl_valid() {
         assert!(iban_valid("NL91ABNA0417164300"));
         assert!(iban_valid("NL91 ABNA 0417 1643 00"));
+        assert!(iban_valid("NL91-ABNA-0417-1643-00"));
+        assert!(iban_valid("Nl91 AbNa 0417 1643 00"));
         assert!(!iban_valid("NL91ABNA0417164301"));
     }
 

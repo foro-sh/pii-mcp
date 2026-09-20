@@ -279,9 +279,114 @@ mod tests {
     }
 
     #[test]
+    fn masks_glued_emails() {
+        let r = scrub_text("a@b.comc@d.com", None, true).unwrap();
+        assert_eq!(r.text, "[EMAIL][EMAIL]");
+        assert_eq!(r.counts["email"], 2);
+    }
+
+    #[test]
+    fn email_tld_does_not_eat_iban() {
+        let r = scrub_text("ada@example.comNL91ABNA0417164300", None, true).unwrap();
+        assert_eq!(r.text, "[EMAIL][IBAN]");
+        assert_eq!(r.counts["email"], 1);
+        assert_eq!(r.counts["iban"], 1);
+    }
+
+    #[test]
     fn masks_iban_and_card() {
         let r = scrub_text("Pay NL91ABNA0417164300 with 4111111111111111", None, true).unwrap();
         assert_eq!(r.text, "Pay [IBAN] with [CREDIT_CARD]");
+    }
+
+    #[test]
+    fn masks_dashed_and_mixed_case_iban() {
+        let dashed = scrub_text("Pay NL91-ABNA-0417-1643-00 please", None, true).unwrap();
+        assert_eq!(dashed.text, "Pay [IBAN] please");
+        assert_eq!(dashed.counts["iban"], 1);
+        assert_eq!(dashed.counts["phone"], 0);
+
+        let mixed = scrub_text("Pay Nl91 AbNa 0417 1643 00 please", None, true).unwrap();
+        assert_eq!(mixed.text, "Pay [IBAN] please");
+        assert_eq!(mixed.counts["iban"], 1);
+
+        let slash = scrub_text("Pay NL91/ABNA/0417/1643/00 please", None, true).unwrap();
+        assert_eq!(slash.text, "Pay [IBAN] please");
+        assert_eq!(slash.counts["iban"], 1);
+    }
+
+    #[test]
+    fn masks_grouped_card_separators_and_mapped_ip() {
+        let card = scrub_text("card 4111.1111.1111.1111", None, true).unwrap();
+        assert_eq!(card.text, "card [CREDIT_CARD]");
+        assert_eq!(card.counts["credit_card"], 1);
+
+        let mapped = scrub_text("peer ::ffff:192.0.2.1 ok", None, true).unwrap();
+        assert_eq!(mapped.text, "peer [IP] ok");
+        assert_eq!(mapped.counts["ip"], 1);
+    }
+
+    #[test]
+    fn masks_card_iban_glue_email_ssn_degree_nanp_double_spaced_iban() {
+        let glue = scrub_text("4111111111111111NL91ABNA0417164300", None, true).unwrap();
+        assert_eq!(glue.text, "[CREDIT_CARD][IBAN]");
+
+        let langs = vec!["en".to_string()];
+        let email_ssn =
+            scrub_text("ada@example.com078-05-1120", Some(&langs), true).unwrap();
+        assert_eq!(email_ssn.text, "[EMAIL][SSN]");
+
+        let loc = scrub_text("52.3676°, 4.9041°", None, true).unwrap();
+        assert_eq!(loc.text, "[LOCATION]");
+
+        let phone = scrub_text("(415)555-0132", Some(&langs), true).unwrap();
+        assert_eq!(phone.text, "[PHONE]");
+
+        let iban = scrub_text("NL91  ABNA  0417  1643  00", None, true).unwrap();
+        assert_eq!(iban.text, "[IBAN]");
+    }
+
+    #[test]
+    fn masks_email_ip_mac_location_slash_ssn_padded_ip() {
+        assert_eq!(
+            scrub_text("ada@example.com192.0.2.1", None, true)
+                .unwrap()
+                .text,
+            "[EMAIL][IP]"
+        );
+        assert_eq!(
+            scrub_text("ada@example.comaa:bb:cc:dd:ee:ff", None, true)
+                .unwrap()
+                .text,
+            "[EMAIL][MAC]"
+        );
+        assert_eq!(
+            scrub_text("ada@example.com52.3676,4.9041", None, true)
+                .unwrap()
+                .text,
+            "[EMAIL][LOCATION]"
+        );
+        let en = vec!["en".to_string()];
+        assert_eq!(
+            scrub_text("078/05/1120", Some(&en), true).unwrap().text,
+            "[SSN]"
+        );
+        assert_eq!(
+            scrub_text("192.168.001.001", None, true).unwrap().text,
+            "[IP]"
+        );
+        assert_eq!(
+            scrub_text("52.3676 N, 4.9041 E", None, true)
+                .unwrap()
+                .text,
+            "[LOCATION]"
+        );
+        assert_eq!(
+            scrub_text("NL91\u{200b}ABNA0417164300", None, true)
+                .unwrap()
+                .text,
+            "[IBAN]"
+        );
     }
 
     #[test]
