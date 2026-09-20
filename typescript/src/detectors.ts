@@ -8,22 +8,29 @@
  * Patterns:
  * - Email uses bounded quantifiers (unbounded local-part ``+`` is ReDoS-prone)
  *   and ``(?!@)`` so glued addresses (``a@b.comc@d.com``) backtrack to two hits.
+ *   When a TLD absorbs a following IBAN/card/IP/MAC/location, the match is
+ *   shortened so both hits still redact.
  * - Spaced IBANs use separate upper- and lower-case optional-space patterns so a
  *   trailing word is not swallowed by a mixed-case class. Further patterns allow
  *   mixed case and hyphen/tab/nbsp/slash separators, plus a single hyphen after
- *   check digits. Soft hyphens are stripped before IBAN matching.
+ *   check digits. Soft hyphens and zero-width characters are stripped before
+ *   IBAN matching.
  * - Credit cards include Amex 4-6-5 groupings as well as 4-4-4-x and compact;
- *   grouped forms also accept tab, nbsp, unicode dashes, ``.``, and ``/``.
+ *   grouped forms also accept tab, nbsp, ideographic space, unicode dashes,
+ *   ``.``, and ``/``; zero-width characters are stripped before matching.
  * - BIC/SWIFT: 8 or 11 alnum with ISO 3166-1 country letters (AP: financial data).
  * - MAC: colon/dash IEEE and Cisco dotted forms (AP: device MAC is personal data).
  * - IMEI: hyphen/space-grouped 15-digit forms with Luhn (AP: gegevens over
  *   elektronische communicatie / device identifiers). Compact 15-digit IMEIs
  *   that are also Luhn-valid collide with Amex and stay under ``credit_card``.
  * - IP: IPv4-mapped IPv6 (``::ffff:a.b.c.d``) is matched whole before bare IPv4;
- *   IPv4 rejects a preceding ``:`` so mapped forms are not partially eaten.
- * - Location: decimal lat/lon pairs with ≥3 fractional digits and range checks
- *   (AP lists locatiegegevens as privacy-sensitive).
- * - US SSN: hyphenated or compact 9-digit with SSA area/group/serial rejects.
+ *   IPv4 rejects a preceding ``:`` so mapped forms are not partially eaten;
+ *   leading zeros in octets are accepted (``192.168.001.001``).
+ * - Location: decimal lat/lon pairs with ≥3 fractional digits, optional
+ *   ``N``/``S``/``E``/``W`` hemisphere letters, and range checks (AP lists
+ *   locatiegegevens as privacy-sensitive).
+ * - US SSN: hyphen/space/dot/slash or compact 9-digit with SSA area/group/serial
+ *   rejects.
  * - German Steuer-IdNr (tax_id): 11 digits with structure + mod-11/10 check.
  * - NL BTW-id (``vat_id``): ``NL`` + 9 digits + ``B`` + 2 digits with optional
  *   spaces/dots (format only — post-2020 sole-trader ids are not elfproef-gated).
@@ -92,7 +99,7 @@ const EMAIL_RE =
   /[A-Za-z0-9._%+-]{1,64}@[A-Za-z0-9-]{1,63}(?:\.[A-Za-z0-9-]{1,63})*\.[A-Za-z]{2,24}(?!@)/g;
 
 const EMAIL_NEXT_PII_RE =
-  /^(?:[A-Za-z]{2}\d{2}[A-Za-z0-9]|\d{13,19}|\d{3}[- .]?\d{2}[- .]?\d{4}|\d{3}[ .]\d{3}[ .]\d{3}|\d{8,9}(?!\d)|[A-Za-z0-9._%+-]{1,64}@|[+0]\d)/;
+  /^(?:[A-Za-z]{2}\d{2}[A-Za-z0-9]|\d{13,19}|\d{3}[- ./]?\d{2}[- ./]?\d{4}|\d{3}[ .]\d{3}[ .]\d{3}|\d{8,9}(?!\d)|(?:\d{1,3}\.){3}\d{1,3}|\d{1,3}\.\d{3,8}|[0-9A-Fa-f]{2}([-:/.])[0-9A-Fa-f]{2}|(?:[0-9A-Fa-f]{3,4}:|::)|[A-Za-z0-9._%+-]{1,64}@|[+0]\d)/;
 
 function emailEndOk(text: string, end: number): boolean {
   if (end >= text.length) {
@@ -108,6 +115,25 @@ function emailEndOk(text: string, end: number): boolean {
   return EMAIL_NEXT_PII_RE.test(text.slice(end));
 }
 
+function emailShouldPeel(text: string, start: number, end: number): boolean {
+  for (let tryEnd = end - 1; tryEnd > start; tryEnd -= 1) {
+    if (!/[A-Za-z]/.test(text[tryEnd]!)) {
+      break;
+    }
+    const cand = text.slice(start, tryEnd);
+    const full = cloneRegExp(EMAIL_RE);
+    full.lastIndex = 0;
+    const m = full.exec(cand);
+    if (m === null || m.index !== 0 || m[0].length !== cand.length) {
+      continue;
+    }
+    if (EMAIL_NEXT_PII_RE.test(text.slice(tryEnd))) {
+      return true;
+    }
+  }
+  return false;
+}
+
 function scrubEmail(text: string): { text: string; count: number } {
   let count = 0;
   const parts: string[] = [];
@@ -119,7 +145,7 @@ function scrubEmail(text: string): { text: string; count: number } {
   while ((match = re.exec(text)) !== null) {
     let start = match.index;
     let end = start + match[0].length;
-    if (!emailEndOk(text, end)) {
+    if (!emailEndOk(text, end) || emailShouldPeel(text, start, end)) {
       let shortened: number | null = null;
       for (let tryEnd = end - 1; tryEnd > start; tryEnd -= 1) {
         const cand = text.slice(start, tryEnd);
@@ -156,7 +182,8 @@ function scrubEmail(text: string): { text: string; count: number } {
 export const emailDetector: Detector = { type: "email", scrub: scrubEmail };
 
 // Unicode Zs separators commonly used in OCR / rich text (thin/figure/nbsp…).
-const SEP_SPACE = String.raw`[ \t\r\n\xa0\u2000-\u200a\u202f]`;
+const SEP_SPACE = String.raw`[ \t\r\n\xa0\u2000-\u200a\u202f\u3000]`;
+const INVISIBLE = /[\u00ad\u200b\u200c\u200d\ufeff]/g;
 
 const IBAN_RES = [
   // Allow after digits (card|IBAN glue); still reject mid-letter (xNL91…).
@@ -179,7 +206,9 @@ const IBAN_RES = [
 ] as const;
 
 function ibanValid(value: string): boolean {
-  const compact = value.replace(/[\s\-\u00ad/.]+/g, "").toUpperCase();
+  const compact = value
+    .replace(/[\s\-\u00ad\u200b\u200c\u200d\ufeff/.]+/g, "")
+    .toUpperCase();
   if (!/^[A-Z]{2}\d{2}[A-Z0-9]{11,30}$/.test(compact)) {
     return false;
   }
@@ -196,7 +225,7 @@ function ibanValid(value: string): boolean {
 }
 
 function scrubIban(text: string): { text: string; count: number } {
-  let out = text.replace(/\u00ad/g, "");
+  let out = text.replace(INVISIBLE, "");
   let count = 0;
   for (const pattern of IBAN_RES) {
     const result = replaceMatches(out, pattern, "[IBAN]", ibanValid);
@@ -245,7 +274,7 @@ function luhnValid(digits: string): boolean {
 }
 
 function scrubCreditCard(text: string): { text: string; count: number } {
-  let out = text;
+  let out = text.replace(INVISIBLE, "");
   let count = 0;
   for (const pattern of CREDIT_CARD_RES) {
     const result = replaceMatches(
@@ -350,8 +379,34 @@ const IPV4_MAPPED_RE =
 const IPV6_RE =
   /(?<![\w:])(?:(?:[0-9a-fA-F]{1,4}:){7}[0-9a-fA-F]{1,4}|::(?:[0-9a-fA-F]{1,4}:){0,6}[0-9a-fA-F]{1,4}|(?:[0-9a-fA-F]{1,4}:){1,7}:|(?:[0-9a-fA-F]{1,4}:){1,6}:[0-9a-fA-F]{1,4}|(?:[0-9a-fA-F]{1,4}:){1,5}(?::[0-9a-fA-F]{1,4}){1,2}|(?:[0-9a-fA-F]{1,4}:){1,4}(?::[0-9a-fA-F]{1,4}){1,3}|(?:[0-9a-fA-F]{1,4}:){1,3}(?::[0-9a-fA-F]{1,4}){1,4}|(?:[0-9a-fA-F]{1,4}:){1,2}(?::[0-9a-fA-F]{1,4}){1,5}|[0-9a-fA-F]{1,4}:(?::[0-9a-fA-F]{1,4}){1,6}|::)(?![\w:])/g;
 
+function normalizeIpv4Octets(value: string): string | null {
+  const parts = value.split(".");
+  if (
+    parts.length !== 4 ||
+    !parts.every((p) => /^\d{1,3}$/.test(p))
+  ) {
+    return null;
+  }
+  const nums = parts.map((p) => Number(p));
+  if (nums.some((n) => n > 255)) {
+    return null;
+  }
+  return nums.join(".");
+}
+
 function ipValid(value: string): boolean {
-  return isIP(value) !== 0;
+  if (isIP(value) !== 0) {
+    return true;
+  }
+  const lower = value.toLowerCase();
+  if (lower.startsWith("::ffff:")) {
+    const v4 = normalizeIpv4Octets(value.slice(7));
+    return v4 !== null && isIP(`::ffff:${v4}`) !== 0;
+  }
+  if (value.includes(":")) {
+    return false;
+  }
+  return normalizeIpv4Octets(value) !== null;
 }
 
 function scrubIp(text: string): { text: string; count: number } {
@@ -367,15 +422,19 @@ function scrubIp(text: string): { text: string; count: number } {
 export const ipDetector: Detector = { type: "ip", scrub: scrubIp };
 
 const LOCATION_RE =
-  /(?<![\d.+-])[-+]?\d{1,3}\.\d{3,8}°?\s*,\s*[-+]?\d{1,3}\.\d{3,8}°?(?![\d.])/g;
+  /(?<![\d.+-])[-+]?\d{1,3}\.\d{3,8}°?(?:\s*[NnSs])?\s*,\s*[-+]?\d{1,3}\.\d{3,8}°?(?:\s*[EeWw])?(?![A-Za-z\d.])/g;
+
+function coordComponent(part: string): number {
+  return Number(part.replace(/[^\d.+-]/g, ""));
+}
 
 function locationValid(value: string): boolean {
   const parts = value.trim().split(/\s*,\s*/);
   if (parts.length !== 2) {
     return false;
   }
-  const lat = Number(parts[0]!.replace(/°$/, ""));
-  const lon = Number(parts[1]!.replace(/°$/, ""));
+  const lat = coordComponent(parts[0]!);
+  const lon = coordComponent(parts[1]!);
   if (!Number.isFinite(lat) || !Number.isFinite(lon)) {
     return false;
   }
@@ -425,12 +484,13 @@ export const bsnDetector: Detector = { type: "bsn", scrub: scrubBsn };
 
 const SSN_RES = [
   /\b\d{3}-\d{2}-\d{4}\b/g,
+  /\b\d{3}\/\d{2}\/\d{4}\b/g,
   /\b\d{3}[ .]\d{2}[ .]\d{4}\b/g,
   /\b\d{9}\b/g,
 ] as const;
 
 function ssnValid(value: string): boolean {
-  const digits = value.replace(/[ .\-]/g, "");
+  const digits = value.replace(/[ .\-/]/g, "");
   if (digits.length !== 9 || !/^\d{9}$/.test(digits)) {
     return false;
   }

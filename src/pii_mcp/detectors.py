@@ -7,18 +7,20 @@ numeric detectors run.
 Patterns:
 - Email uses bounded quantifiers (unbounded local-part ``+`` is ReDoS-prone)
   and ``(?!@)`` so glued addresses (``a@b.comc@d.com``) backtrack to two hits.
-  When a TLD absorbs a following IBAN/card (``ada@example.comNL91…``), the
-  match is shortened so both hits still redact.
+  When a TLD absorbs a following IBAN/card/IP/MAC/location
+  (``ada@example.comNL91…`` / ``…com192.0.2.1`` / ``…comaa:bb:…``), the match
+  is shortened so both hits still redact.
 - Spaced IBANs use separate upper- and lower-case optional-space patterns so a
   trailing word is not swallowed by a mixed-case class. A fourth pattern allows
   mixed case and hyphen/tab/nbsp/slash separators when groups are explicitly separated
   (trailing word boundary blocks trailing-word swallow). A fifth matches a single
-  hyphen after the check digits (``NL91-ABNA0417164300``). Soft hyphens are
-  stripped before IBAN matching.
+  hyphen after the check digits (``NL91-ABNA0417164300``).   Soft hyphens and zero-width characters are stripped before IBAN matching.
 - Credit cards include Amex 4-6-5 groupings as well as 4-4-4-x and compact;
-  grouped forms also accept tab, nbsp, unicode dashes, ``.``, and ``/``.
+  grouped forms also accept tab, nbsp, ideographic space, unicode dashes,
+  ``.``, and ``/``; zero-width characters are stripped before matching.
 - IP: IPv4-mapped IPv6 (``::ffff:a.b.c.d``) is matched whole before bare IPv4;
-  IPv4 rejects a preceding ``:`` so mapped forms are not partially eaten.
+  IPv4 rejects a preceding ``:`` so mapped forms are not partially eaten;
+  leading zeros in octets are accepted (``192.168.001.001``).
 - BIC/SWIFT: 8 or 11 alnum with ISO 3166-1 country letters (AP: financial data).
 - MAC: colon/dash IEEE and Cisco dotted forms (AP: device MAC is personal data).
 - IMEI: hyphen/space-grouped 15-digit forms with Luhn (AP: gegevens over
@@ -26,9 +28,11 @@ Patterns:
   that are also Luhn-valid collide with Amex and stay under ``credit_card``.
 - IP: IPv4 octet-bounded regex; IPv6 candidate shapes validated via
   ``ipaddress`` (AP notes IP addresses can be personal data).
-- Location: decimal lat/lon pairs with ≥3 fractional digits and range checks
-  (AP lists locatiegegevens as privacy-sensitive).
-- US SSN: hyphenated or compact 9-digit with SSA area/group/serial rejects.
+- Location: decimal lat/lon pairs with ≥3 fractional digits, optional
+  ``N``/``S``/``E``/``W`` hemisphere letters, and range checks (AP lists
+  locatiegegevens as privacy-sensitive).
+- US SSN: hyphen/space/dot/slash or compact 9-digit with SSA area/group/serial
+  rejects.
 - German Steuer-IdNr (tax_id): 11 digits with structure + mod-11/10 check.
 - NL BTW-id (``vat_id``): ``NL`` + 9 digits + ``B`` + 2 digits with optional
   spaces/dots (format only — post-2020 sole-trader ids are not elfproef-gated).
@@ -109,9 +113,13 @@ _EMAIL_NEXT_PII_RE = re.compile(
     r"(?:"
     r"[A-Za-z]{2}\d{2}[A-Za-z0-9]"  # IBAN
     r"|\d{13,19}"  # compact card
-    r"|\d{3}[- .]?\d{2}[- .]?\d{4}"  # SSN
+    r"|\d{3}[- ./]?\d{2}[- ./]?\d{4}"  # SSN
     r"|\d{3}[ .]\d{3}[ .]\d{3}"  # spaced BSN
     r"|\d{8,9}(?!\d)"  # BSN / short national id
+    r"|(?:\d{1,3}\.){3}\d{1,3}"  # IPv4
+    r"|\d{1,3}\.\d{3,8}"  # location lat
+    r"|[0-9A-Fa-f]{2}([-:/.])[0-9A-Fa-f]{2}"  # MAC
+    r"|(?:[0-9A-Fa-f]{3,4}:|::)"  # IPv6 (3–4 digit hextet or compressed)
     r"|[A-Za-z0-9._%+-]{1,64}@"  # another email
     r"|[+0]\d"  # phone-ish
     r")"
@@ -129,8 +137,21 @@ def _email_end_ok(text: str, end: int) -> bool:
     return _EMAIL_NEXT_PII_RE.match(text, end) is not None
 
 
+def _email_should_peel(text: str, start: int, end: int) -> bool:
+    """True when trailing TLD letters belong to following letter-led PII (MAC)."""
+    for try_end in range(end - 1, start, -1):
+        if not text[try_end].isalpha():
+            break
+        cand = text[start:try_end]
+        if EMAIL_RE.fullmatch(cand) is None:
+            continue
+        if _EMAIL_NEXT_PII_RE.match(text, try_end) is not None:
+            return True
+    return False
+
+
 def _scrub_email(text: str) -> tuple[str, int]:
-    """Mask emails; shorten when the TLD absorbed a following IBAN/card/email."""
+    """Mask emails; shorten when the TLD absorbed a following structured hit."""
     count = 0
     parts: list[str] = []
     last = 0
@@ -140,7 +161,7 @@ def _scrub_email(text: str) -> tuple[str, int]:
         if match is None:
             break
         start, end = match.start(), match.end()
-        if not _email_end_ok(text, end):
+        if not _email_end_ok(text, end) or _email_should_peel(text, start, end):
             shortened = None
             for try_end in range(end - 1, start, -1):
                 cand = text[start:try_end]
@@ -167,7 +188,9 @@ def _scrub_email(text: str) -> tuple[str, int]:
 email_detector = Detector(type="email", scrub=_scrub_email)
 
 # Unicode Zs separators commonly used in OCR / rich text (thin/figure/nbsp…).
-_SEP_SPACE = r"[ \t\r\n\xa0\u2000-\u200a\u202f]"
+_SEP_SPACE = r"[ \t\r\n\xa0\u2000-\u200a\u202f\u3000]"
+# Soft hyphen + zero-width chars that OCR/copy-paste insert between groups.
+_INVISIBLE = "\u00ad\u200b\u200c\u200d\ufeff"
 
 IBAN_RES: tuple[re.Pattern[str], ...] = (
     # Allow after digits (card|IBAN glue); still reject mid-letter (xNL91…).
@@ -185,7 +208,7 @@ IBAN_RES: tuple[re.Pattern[str], ...] = (
 
 
 def _iban_valid(value: str) -> bool:
-    compact = re.sub(r"[\s\-\u00ad/.]+", "", value).upper()
+    compact = re.sub(r"[\s\-\u00ad\u200b\u200c\u200d\ufeff/.]+", "", value).upper()
     if not re.fullmatch(r"[A-Z]{2}\d{2}[A-Z0-9]{11,30}", compact):
         return False
     rearranged = compact[4:] + compact[:4]
@@ -199,7 +222,9 @@ def _iban_valid(value: str) -> bool:
 
 
 def _scrub_iban(text: str) -> tuple[str, int]:
-    out = text.replace("\u00ad", "")
+    out = text
+    for ch in _INVISIBLE:
+        out = out.replace(ch, "")
     count = 0
     for pattern in IBAN_RES:
         out, n = _replace_matches(out, pattern, "[IBAN]", _iban_valid)
@@ -238,6 +263,8 @@ def _luhn_valid(digits: str) -> bool:
 
 def _scrub_credit_card(text: str) -> tuple[str, int]:
     out = text
+    for ch in _INVISIBLE:
+        out = out.replace(ch, "")
     count = 0
     for pattern in CREDIT_CARD_RES:
         out, n = _replace_matches(
@@ -359,12 +386,37 @@ IPV6_RE = re.compile(
 )
 
 
+def _normalize_ipv4_octets(value: str) -> str | None:
+    """Strip leading zeros from a dotted quad; None if not four 0–255 octets."""
+    parts = value.split(".")
+    if len(parts) != 4 or not all(p.isdigit() and 1 <= len(p) <= 3 for p in parts):
+        return None
+    nums = [int(p) for p in parts]
+    if any(n > 255 for n in nums):
+        return None
+    return ".".join(str(n) for n in nums)
+
+
 def _ip_valid(value: str) -> bool:
     try:
         ipaddress.ip_address(value)
     except ValueError:
+        pass
+    else:
+        return True
+    lower = value.lower()
+    if lower.startswith("::ffff:"):
+        v4 = _normalize_ipv4_octets(value[7:])
+        if v4 is None:
+            return False
+        try:
+            ipaddress.ip_address("::ffff:" + v4)
+        except ValueError:
+            return False
+        return True
+    if ":" in value:
         return False
-    return True
+    return _normalize_ipv4_octets(value) is not None
 
 
 def _scrub_ip(text: str) -> tuple[str, int]:
@@ -379,8 +431,14 @@ ip_detector = Detector(type="ip", scrub=_scrub_ip)
 
 # Decimal degree pairs; ≥3 fractional digits cuts version-like ``1.0, 2.0``.
 LOCATION_RE = re.compile(
-    r"(?<![\d.+-])[-+]?\d{1,3}\.\d{3,8}°?\s*,\s*[-+]?\d{1,3}\.\d{3,8}°?(?![\d.])"
+    r"(?<![\d.+-])[-+]?\d{1,3}\.\d{3,8}°?(?:\s*[NnSs])?\s*,\s*"
+    r"[-+]?\d{1,3}\.\d{3,8}°?(?:\s*[EeWw])?(?![A-Za-z\d.])"
 )
+
+
+def _coord_component(part: str) -> float:
+    cleaned = re.sub(r"[^\d.+-]", "", part)
+    return float(cleaned)
 
 
 def _location_valid(value: str) -> bool:
@@ -389,8 +447,8 @@ def _location_valid(value: str) -> bool:
     if len(parts) != 2:
         return False
     try:
-        lat = float(parts[0].rstrip("°"))
-        lon = float(parts[1].rstrip("°"))
+        lat = _coord_component(parts[0])
+        lon = _coord_component(parts[1])
     except ValueError:
         return False
     return -90.0 <= lat <= 90.0 and -180.0 <= lon <= 180.0
@@ -433,6 +491,7 @@ bsn_detector = Detector(type="bsn", scrub=_scrub_bsn)
 
 SSN_RES: tuple[re.Pattern[str], ...] = (
     re.compile(r"\b\d{3}-\d{2}-\d{4}\b"),
+    re.compile(r"\b\d{3}/\d{2}/\d{4}\b"),
     re.compile(r"\b\d{3}[ .]\d{2}[ .]\d{4}\b"),
     re.compile(r"\b\d{9}\b"),
 )
@@ -440,7 +499,7 @@ SSN_RES: tuple[re.Pattern[str], ...] = (
 
 def _ssn_valid(value: str) -> bool:
     """SSA rejects: area 000/666/9xx, group 00, serial 0000."""
-    digits = re.sub(r"[ .\-]", "", value)
+    digits = re.sub(r"[ .\-/]", "", value)
     if len(digits) != 9 or not digits.isdigit():
         return False
     area = int(digits[:3])

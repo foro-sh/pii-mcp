@@ -190,6 +190,12 @@ class TestEmailIbanGlue:
             "[EMAIL][BSN]"
         )
 
+    def test_email_then_ip_mac_location(self) -> None:
+        assert scrub_text("ada@example.com192.0.2.1")["text"] == "[EMAIL][IP]"
+        assert scrub_text("ada@example.com2001:db8::1")["text"] == "[EMAIL][IP]"
+        assert scrub_text("ada@example.comaa:bb:cc:dd:ee:ff")["text"] == "[EMAIL][MAC]"
+        assert scrub_text("ada@example.com52.3676,4.9041")["text"] == "[EMAIL][LOCATION]"
+
     def test_card_then_iban_glue(self) -> None:
         result = scrub_text("4111111111111111NL91ABNA0417164300")
         assert result["text"] == "[CREDIT_CARD][IBAN]"
@@ -202,6 +208,26 @@ class TestLocationDegree:
         result = scrub_text("pin 52.3676°, 4.9041° downtown")
         assert result["text"] == "pin [LOCATION] downtown"
         assert result["counts"]["location"] == 1
+
+    def test_hemisphere_letters(self) -> None:
+        assert scrub_text("52.3676 N, 4.9041 E")["text"] == "[LOCATION]"
+
+
+class TestSsnSlash:
+    def test_slash_separated(self) -> None:
+        assert scrub_text("078/05/1120", languages=["en"])["text"] == "[SSN]"
+
+
+class TestIpLeadingZeros:
+    def test_padded_octets(self) -> None:
+        assert scrub_text("host 192.168.001.001 ok")["text"] == "host [IP] ok"
+
+
+class TestInvisibleSeparators:
+    def test_zwsp_iban_and_card(self) -> None:
+        assert scrub_text("NL91\u200bABNA0417164300")["text"] == "[IBAN]"
+        assert scrub_text("4111\u200b1111\u200b1111\u200b1111")["text"] == "[CREDIT_CARD]"
+        assert scrub_text("4111\u30001111\u30001111\u30001111")["text"] == "[CREDIT_CARD]"
 
 
 class TestNanpNoSpaceAfterParen:

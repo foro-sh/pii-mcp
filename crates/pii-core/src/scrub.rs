@@ -347,6 +347,49 @@ mod tests {
     }
 
     #[test]
+    fn masks_email_ip_mac_location_slash_ssn_padded_ip() {
+        assert_eq!(
+            scrub_text("ada@example.com192.0.2.1", None, true)
+                .unwrap()
+                .text,
+            "[EMAIL][IP]"
+        );
+        assert_eq!(
+            scrub_text("ada@example.comaa:bb:cc:dd:ee:ff", None, true)
+                .unwrap()
+                .text,
+            "[EMAIL][MAC]"
+        );
+        assert_eq!(
+            scrub_text("ada@example.com52.3676,4.9041", None, true)
+                .unwrap()
+                .text,
+            "[EMAIL][LOCATION]"
+        );
+        let en = vec!["en".to_string()];
+        assert_eq!(
+            scrub_text("078/05/1120", Some(&en), true).unwrap().text,
+            "[SSN]"
+        );
+        assert_eq!(
+            scrub_text("192.168.001.001", None, true).unwrap().text,
+            "[IP]"
+        );
+        assert_eq!(
+            scrub_text("52.3676 N, 4.9041 E", None, true)
+                .unwrap()
+                .text,
+            "[LOCATION]"
+        );
+        assert_eq!(
+            scrub_text("NL91\u{200b}ABNA0417164300", None, true)
+                .unwrap()
+                .text,
+            "[IBAN]"
+        );
+    }
+
+    #[test]
     fn language_gate_bsn() {
         let langs = vec!["en".to_string()];
         let r = scrub_text("BSN 100000009 on file", Some(&langs), true).unwrap();

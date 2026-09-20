@@ -149,7 +149,7 @@ fn email_next_pii_re() -> &'static Regex {
     static RE: OnceLock<Regex> = OnceLock::new();
     RE.get_or_init(|| {
         Regex::new(
-            r"^(?:[A-Za-z]{2}\d{2}[A-Za-z0-9]|\d{13,19}|\d{3}[- .]?\d{2}[- .]?\d{4}|\d{3}[ .]\d{3}[ .]\d{3}|[A-Za-z0-9._%+-]{1,64}@|[+0]\d)",
+            r"^(?:[A-Za-z]{2}\d{2}[A-Za-z0-9]|\d{13,19}|\d{3}[- ./]?\d{2}[- ./]?\d{4}|\d{3}[ .]\d{3}[ .]\d{3}|(?:\d{1,3}\.){3}\d{1,3}|\d{1,3}\.\d{3,8}|[0-9A-Fa-f]{2}([-:/.])[0-9A-Fa-f]{2}|(?:[0-9A-Fa-f]{3,4}:|::)|[A-Za-z0-9._%+-]{1,64}@|[+0]\d)",
         )
         .unwrap()
     })
@@ -183,6 +183,28 @@ fn email_end_ok(text: &str, end: usize) -> bool {
     email_next_pii(text, end)
 }
 
+fn email_should_peel(text: &str, start: usize, end: usize) -> bool {
+    let pattern = email_re();
+    let mut try_end = end;
+    while try_end > start {
+        try_end -= 1;
+        while try_end > start && !text.is_char_boundary(try_end) {
+            try_end -= 1;
+        }
+        let ch = text[try_end..].chars().next().unwrap();
+        if !ch.is_ascii_alphabetic() {
+            break;
+        }
+        let cand = &text[start..try_end];
+        if let Some(mm) = pattern.find(cand) {
+            if mm.start() == 0 && mm.end() == cand.len() && email_next_pii(text, try_end) {
+                return true;
+            }
+        }
+    }
+    false
+}
+
 fn scrub_email(text: &str) -> (Option<String>, u32) {
     let pattern = email_re();
     let mut count = 0u32;
@@ -192,9 +214,12 @@ fn scrub_email(text: &str) -> (Option<String>, u32) {
     while let Some(m) = pattern.find_at(text, pos) {
         let start = m.start();
         let mut end = m.end();
-        if !email_end_ok(text, end) {
+        if !email_end_ok(text, end) || email_should_peel(text, start, end) {
             let mut shortened = None;
             for try_end in (start + 1..end).rev() {
+                if !text.is_char_boundary(try_end) {
+                    continue;
+                }
                 let cand = &text[start..try_end];
                 if let Some(mm) = pattern.find(cand) {
                     if mm.start() == 0 && mm.end() == cand.len() && email_end_ok(text, try_end)
@@ -232,7 +257,7 @@ fn iban_res() -> &'static [Regex] {
     static RES: OnceLock<Vec<Regex>> = OnceLock::new();
     RES.get_or_init(|| {
         // Unicode Zs separators commonly used in OCR / rich text.
-        let sep = r"[ \t\r\n\u{00a0}\u{2000}-\u{200a}\u{202f}]";
+        let sep = r"[ \t\r\n\u{00a0}\u{2000}-\u{200a}\u{202f}\u{3000}]";
         vec![
             // Compact: boundary emulated in ``iban_glue_boundary_ok``.
             Regex::new(r"[A-Za-z]{2}\d{2}[A-Za-z0-9]{11,30}").unwrap(),
@@ -294,8 +319,19 @@ fn iban_glue_accept(text: &str, pattern: &Regex, start: usize, end: usize) -> Op
     None
 }
 
+fn strip_invisible(text: &str) -> String {
+    text.chars()
+        .filter(|c| {
+            !matches!(
+                c,
+                '\u{00ad}' | '\u{200b}' | '\u{200c}' | '\u{200d}' | '\u{feff}'
+            )
+        })
+        .collect()
+}
+
 fn scrub_iban(text: &str) -> (Option<String>, u32) {
-    let cleaned = text.replace('\u{00ad}', "");
+    let cleaned = strip_invisible(text);
     let patterns = iban_res();
     let mut current: Option<String> = None;
     let mut count = 0u32;
@@ -355,7 +391,7 @@ fn credit_card_res() -> &'static [Regex] {
     static RES: OnceLock<Vec<Regex>> = OnceLock::new();
     RES.get_or_init(|| {
         // One or more whitespace / dash / punct separators between digit groups.
-        let sep_space = r"[ \t\r\n\u{00a0}\u{2000}-\u{200a}\u{202f}]";
+        let sep_space = r"[ \t\r\n\u{00a0}\u{2000}-\u{200a}\u{202f}\u{3000}]";
         let sep = format!(r"(?:{sep_space}|[./\-\u{{2010}}-\u{{2015}}])+");
         vec![
             Regex::new(&format!(
@@ -398,11 +434,12 @@ fn credit_card_valid(value: &str) -> bool {
 }
 
 fn scrub_credit_card(text: &str) -> (Option<String>, u32) {
+    let cleaned = strip_invisible(text);
     let mut current: Option<String> = None;
     let mut count = 0u32;
     for pattern in credit_card_res() {
         let (next, n) = {
-            let src = current.as_deref().unwrap_or(text);
+            let src = current.as_deref().unwrap_or(cleaned.as_str());
             replace_matches(
                 src,
                 pattern,
@@ -574,7 +611,10 @@ fn scrub_imei(text: &str) -> (Option<String>, u32) {
 fn location_re() -> &'static Regex {
     static RE: OnceLock<Regex> = OnceLock::new();
     RE.get_or_init(|| {
-        Regex::new(r"[-+]?\d{1,3}\.\d{3,8}°?\s*,\s*[-+]?\d{1,3}\.\d{3,8}°?").unwrap()
+        Regex::new(
+            r"[-+]?\d{1,3}\.\d{3,8}°?(?:\s*[NnSs])?\s*,\s*[-+]?\d{1,3}\.\d{3,8}°?(?:\s*[EeWw])?",
+        )
+        .unwrap()
     })
 }
 
@@ -587,11 +627,19 @@ fn location_boundary_ok(text: &str, start: usize, end: usize) -> bool {
     }
     if end < text.len() {
         let next = text[end..].chars().next().unwrap();
-        if next.is_ascii_digit() || next == '.' {
+        if next.is_ascii_digit() || next == '.' || next.is_ascii_alphabetic() {
             return false;
         }
     }
     true
+}
+
+fn coord_component(part: &str) -> Option<f64> {
+    let cleaned: String = part
+        .chars()
+        .filter(|c| c.is_ascii_digit() || *c == '.' || *c == '+' || *c == '-')
+        .collect();
+    cleaned.parse().ok()
 }
 
 fn location_valid(value: &str) -> bool {
@@ -606,12 +654,10 @@ fn location_valid(value: &str) -> bool {
     if parts.next().is_some() {
         return false;
     }
-    let lat_s = lat_s.trim().trim_end_matches('°');
-    let lon_s = lon_s.trim().trim_end_matches('°');
-    let Ok(lat) = lat_s.parse::<f64>() else {
+    let Some(lat) = coord_component(lat_s) else {
         return false;
     };
-    let Ok(lon) = lon_s.parse::<f64>() else {
+    let Some(lon) = coord_component(lon_s) else {
         return false;
     };
     (-90.0..=90.0).contains(&lat) && (-180.0..=180.0).contains(&lon)
@@ -659,8 +705,41 @@ fn ipv6_re() -> &'static Regex {
     })
 }
 
+fn normalize_ipv4_octets(value: &str) -> Option<String> {
+    let parts: Vec<&str> = value.split('.').collect();
+    if parts.len() != 4 {
+        return None;
+    }
+    let mut nums = [0u32; 4];
+    for (i, p) in parts.iter().enumerate() {
+        if p.is_empty() || p.len() > 3 || !p.bytes().all(|b| b.is_ascii_digit()) {
+            return None;
+        }
+        let n: u32 = p.parse().ok()?;
+        if n > 255 {
+            return None;
+        }
+        nums[i] = n;
+    }
+    Some(format!("{}.{}.{}.{}", nums[0], nums[1], nums[2], nums[3]))
+}
+
 fn ip_valid(value: &str) -> bool {
-    value.parse::<std::net::IpAddr>().is_ok()
+    if value.parse::<std::net::IpAddr>().is_ok() {
+        return true;
+    }
+    let lower = value.to_ascii_lowercase();
+    if let Some(rest) = lower.strip_prefix("::ffff:") {
+        let v4_part = &value[value.len() - rest.len()..];
+        if let Some(norm) = normalize_ipv4_octets(v4_part) {
+            return format!("::ffff:{norm}").parse::<std::net::IpAddr>().is_ok();
+        }
+        return false;
+    }
+    if value.contains(':') {
+        return false;
+    }
+    normalize_ipv4_octets(value).is_some()
 }
 
 fn ipv4_boundary_ok(text: &str, start: usize, end: usize) -> bool {
@@ -769,6 +848,7 @@ fn ssn_res() -> &'static [Regex] {
     RES.get_or_init(|| {
         vec![
             Regex::new(r"\b\d{3}-\d{2}-\d{4}\b").unwrap(),
+            Regex::new(r"\b\d{3}/\d{2}/\d{4}\b").unwrap(),
             Regex::new(r"\b\d{3}[ .]\d{2}[ .]\d{4}\b").unwrap(),
             Regex::new(r"\b\d{9}\b").unwrap(),
         ]

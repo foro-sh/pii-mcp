@@ -30,7 +30,16 @@ pub fn iban_valid(value: &str) -> bool {
     let mut compact = [0u8; 34];
     let mut len = 0usize;
     for c in value.chars() {
-        if c.is_whitespace() || c == '-' || c == '/' || c == '.' || c == '\u{00ad}' {
+        if c.is_whitespace()
+            || c == '-'
+            || c == '/'
+            || c == '.'
+            || c == '\u{00ad}'
+            || c == '\u{200b}'
+            || c == '\u{200c}'
+            || c == '\u{200d}'
+            || c == '\u{feff}'
+        {
             continue;
         }
         if !c.is_ascii() || len >= compact.len() {
@@ -155,7 +164,7 @@ pub fn ssn_valid(value: &str) -> bool {
     let mut digits = [0u8; 9];
     let mut len = 0usize;
     for b in value.bytes() {
-        if b == b'-' || b == b' ' || b == b'.' {
+        if b == b'-' || b == b' ' || b == b'.' || b == b'/' {
             continue;
         }
         if !b.is_ascii_digit() || len >= 9 {

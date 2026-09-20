@@ -108,6 +108,18 @@ describe("scrubText", () => {
     expect(scrubText("NL91  ABNA  0417  1643  00").text).toBe("[IBAN]");
   });
 
+  it("masks email|IP/MAC/location glue, slash SSN, padded IP, hemisphere location", () => {
+    expect(scrubText("ada@example.com192.0.2.1").text).toBe("[EMAIL][IP]");
+    expect(scrubText("ada@example.comaa:bb:cc:dd:ee:ff").text).toBe("[EMAIL][MAC]");
+    expect(scrubText("ada@example.com52.3676,4.9041").text).toBe(
+      "[EMAIL][LOCATION]",
+    );
+    expect(scrubText("078/05/1120", { languages: ["en"] }).text).toBe("[SSN]");
+    expect(scrubText("192.168.001.001").text).toBe("[IP]");
+    expect(scrubText("52.3676 N, 4.9041 E").text).toBe("[LOCATION]");
+    expect(scrubText("NL91\u200bABNA0417164300").text).toBe("[IBAN]");
+  });
+
   it("masks BSN with nl pack and prefers it over SSN", () => {
     const result = scrubText("id 111222333", { languages: ["en", "nl"] });
     expect(result.text).toBe("id [BSN]");
