@@ -1,3 +1,13 @@
+## [1.5.1](https://github.com/foro-sh/pii-mcp/compare/v1.5.0...v1.5.1) (2026-09-20)
+
+### Bug Fixes
+
+* close email-glue, slash-SSN, and padded-IP leaks ([009a5ce](https://github.com/foro-sh/pii-mcp/commit/009a5ce28c3dffc686332e032bf248f4fe676500))
+* close IBAN separator and glued-email scrub leaks ([6519099](https://github.com/foro-sh/pii-mcp/commit/6519099aafb7fb00bc680e0e82690ec1f4970740))
+* close more separator and email-glue scrub leaks ([8a30f9b](https://github.com/foro-sh/pii-mcp/commit/8a30f9bec71f93ea1787c102a30a8d9c4314c700))
+* close unicode-space, glue, and degree-location leaks ([47f5d1d](https://github.com/foro-sh/pii-mcp/commit/47f5d1d6487668cc672d849527168bad98d953ae))
+* widen scrub separators and close mapped-IP leak ([b4f0c6d](https://github.com/foro-sh/pii-mcp/commit/b4f0c6dc9e4ec1b97bf9b409acb56998dffd41bd))
+
 ## [1.5.0](https://github.com/foro-sh/pii-mcp/compare/v1.4.0...v1.5.0) (2026-09-19)
 
 ### Features
