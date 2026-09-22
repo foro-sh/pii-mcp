@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from pii_mcp import scrub_text
 
 
@@ -97,7 +99,98 @@ class TestIpMapped:
         assert "ffff" not in result["text"].lower()
 
 
-class TestFalsePositives:
+class TestCleanProseNoRedaction:
+    """Sentences without PII must stay untouched (false-positive guard)."""
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "The server exposes a search tool and a fetch tool.",
+            "Please review the quarterly report before Friday.",
+            "We shipped version 2.0 with 500 units in 2024.",
+            "Meeting at 10:30 tomorrow in conference room B.",
+            "Call me back after lunch if you have time.",
+            "Build number 41111111 is not a card.",
+            "ISO code AAAAXX2A is not a real BIC.",
+            "Temperature was 21.5 degrees Celsius today.",
+            "The ratio 1.0, 2.0 looks like short decimals.",
+            "Git commit a1b2c3d4e5f6 looks like hex but not MAC.",
+            "UUID 550e8400-e29b-41d4-a716-446655440000 is fine.",
+            "Port 8080 and process pid 12345 are fine.",
+            "Chapter 12 section 34 paragraph 56 is prose.",
+            "RGB color #aabbcc is not a MAC address.",
+            "File path /usr/local/bin/python3 is fine.",
+            "JSON key email_address has no value here.",
+            "The word nl91abna is incomplete IBAN-ish.",
+            "Score 12.34 out of 100 is not a location.",
+            "Hello world, how are you doing today?",
+            "The quick brown fox jumps over the lazy dog.",
+            "Status code 404 means not found.",
+            "HTTP 200 OK returned successfully.",
+            "Package version 1.5.1 released yesterday.",
+            "Thanks for your help with the deployment yesterday.",
+            "Can you summarize the meeting notes from this morning?",
+            "No personal data is present in this paragraph at all.",
+            "Phone the office if needed — no number given.",
+            "Email the team when ready — no address given.",
+            "IBAN field left blank on the form.",
+            "SSN section not applicable for EU residents.",
+            "Passport photo uploaded without the number.",
+            "License plate recognition failed on blurry image.",
+            "The checksum failed for ticket 123456789.",
+            "Ticket 111111111 is a repeated digit placeholder.",
+        ],
+    )
+    def test_clean_sentence_unchanged(self, text: str) -> None:
+        result = scrub_text(text)
+        assert result["text"] == text
+        assert result["found"] is False
+
+    def test_sha256_digest_not_phone(self) -> None:
+        text = (
+            "sha256:0123456789abcdef0123456789abcdef"
+            "0123456789abcdef0123456789abcdef"
+        )
+        result = scrub_text(text)
+        assert result["text"] == text
+        assert result["counts"]["phone"] == 0
+
+
+class TestDetectorPatternGaps:
+    def test_paren_nl_mobile(self) -> None:
+        result = scrub_text("bel (06)12345678 even", languages=["nl"])
+        assert result["text"] == "bel [PHONE] even"
+        assert result["counts"]["phone"] == 1
+
+    def test_paren_spaced_nl_mobile(self) -> None:
+        result = scrub_text("bel (06) 12345678 even", languages=["nl"])
+        assert result["text"] == "bel [PHONE] even"
+        assert result["counts"]["phone"] == 1
+
+    def test_hyphen_grouped_bsn(self) -> None:
+        result = scrub_text("id 111-222-333", languages=["nl"])
+        assert result["text"] == "id [BSN]"
+        assert result["counts"]["bsn"] == 1
+
+    def test_fake_sequential_ssn_ignored(self) -> None:
+        assert scrub_text("ticket 123456789", languages=["en"])["counts"]["ssn"] == 0
+        assert scrub_text("ticket 987654321", languages=["en"])["counts"]["ssn"] == 0
+        assert scrub_text("ticket 111111111", languages=["en"])["counts"]["ssn"] == 0
+
+    def test_real_ssn_still_masked(self) -> None:
+        result = scrub_text("ssn 078-05-1120 on file", languages=["en"])
+        assert result["text"] == "ssn [SSN] on file"
+        assert result["counts"]["ssn"] == 1
+
+    def test_nl_phone_before_asap_still_masked(self) -> None:
+        result = scrub_text("reach 0612345678 ASAP", languages=["nl"])
+        assert result["text"] == "reach [PHONE] ASAP"
+        assert result["counts"]["phone"] == 1
+
+
+class TestKnownFalsePositiveLimitations:
+    """Document remaining high-recall collisions (not regressions to 'fix')."""
+
     def test_semver_four_part_as_ip(self) -> None:
         """Dotted quads with small octets match IPv4 (e.g. release versions)."""
         result = scrub_text("release 1.2.3.4")
@@ -119,6 +212,7 @@ class TestFalsePositives:
         result = scrub_text("token AB12CD345 noted", languages=["nl"])
         assert result["text"] == "token [PASSPORT] noted"
         assert result["counts"]["passport"] == 1
+
 
 
 class TestPartialOrMissedEmail:

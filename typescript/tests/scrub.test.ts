@@ -147,6 +147,39 @@ describe("scrubText", () => {
     expect(result.counts.tax_id).toBe(1);
   });
 
+  it("leaves clean prose without redacting", () => {
+    const samples = [
+      "Please review the quarterly report before Friday.",
+      "Meeting at 10:30 tomorrow in conference room B.",
+      "No personal data is present in this paragraph at all.",
+      "The checksum failed for ticket 123456789.",
+      "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+    ];
+    for (const text of samples) {
+      const result = scrubText(text);
+      expect(result.text).toBe(text);
+      expect(result.found).toBe(false);
+    }
+  });
+
+  it("masks parenthesized NL mobile and hyphen BSN", () => {
+    expect(scrubText("bel (06)12345678 even", { languages: ["nl"] }).text).toBe(
+      "bel [PHONE] even",
+    );
+    expect(scrubText("id 111-222-333", { languages: ["nl"] }).text).toBe(
+      "id [BSN]",
+    );
+  });
+
+  it("rejects obviously fake compact SSNs", () => {
+    expect(scrubText("ticket 123456789", { languages: ["en"] }).counts.ssn).toBe(
+      0,
+    );
+    expect(scrubText("ticket 111111111", { languages: ["en"] }).counts.ssn).toBe(
+      0,
+    );
+  });
+
   it("masks phones and IP without treating IP as phone", () => {
     const result = scrubText("call +31 6 12345678 host 192.168.0.1");
     expect(result.text).toBe("call [PHONE] host [IP]");
