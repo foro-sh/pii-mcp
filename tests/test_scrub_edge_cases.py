@@ -187,6 +187,40 @@ class TestDetectorPatternGaps:
         assert result["text"] == "reach [PHONE] ASAP"
         assert result["counts"]["phone"] == 1
 
+    def test_trunk_zero_international_not_ssn(self) -> None:
+        result = scrub_text("bel +31(0)612345678", languages=["nl", "en"])
+        assert result["text"] == "bel [PHONE]"
+        assert result["counts"]["phone"] == 1
+        assert result["counts"]["ssn"] == 0
+
+    def test_dotted_ieee_mac_not_phone(self) -> None:
+        result = scrub_text("mac 01.23.45.67.89.ab online")
+        assert result["text"] == "mac [MAC] online"
+        assert result["counts"]["mac"] == 1
+        assert result["counts"]["phone"] == 0
+
+    def test_slash_grouped_imei(self) -> None:
+        result = scrub_text("imei 49/015420/323751/8 listed")
+        assert result["text"] == "imei [IMEI] listed"
+        assert result["counts"]["imei"] == 1
+        assert result["counts"]["phone"] == 0
+
+    def test_compressed_ipv6_with_mid_hextets(self) -> None:
+        result = scrub_text("peer 2001:db8:85a3::8a2e:370:7334 ok")
+        assert result["text"] == "peer [IP] ok"
+        assert result["counts"]["ip"] == 1
+
+    def test_double_spaced_postcode(self) -> None:
+        result = scrub_text("post 1012  AB Amsterdam", languages=["nl"])
+        assert result["text"] == "post [ADDRESS] Amsterdam"
+        assert result["counts"]["address"] == 1
+
+    def test_upc_not_de_phone(self) -> None:
+        text = "UPC 036000291452"
+        result = scrub_text(text, languages=["de"])
+        assert result["text"] == text
+        assert result["counts"]["phone"] == 0
+
 
 class TestKnownFalsePositiveLimitations:
     """Document remaining high-recall collisions (not regressions to 'fix')."""

@@ -180,7 +180,29 @@ describe("scrubText", () => {
     );
   });
 
-  it("masks phones and IP without treating IP as phone", () => {
+    it("masks trunk-zero NL international before SSN", () => {
+      const result = scrubText("bel +31(0)612345678", {
+        languages: ["nl", "en"],
+      });
+      expect(result.text).toBe("bel [PHONE]");
+      expect(result.counts.phone).toBe(1);
+      expect(result.counts.ssn).toBe(0);
+    });
+
+    it("masks dotted IEEE MAC and slash IMEI", () => {
+      expect(scrubText("mac 01.23.45.67.89.ab").text).toBe("mac [MAC]");
+      expect(
+        scrubText("imei 49/015420/323751/8 listed").text,
+      ).toBe("imei [IMEI] listed");
+    });
+
+    it("masks compressed IPv6 with mid hextets", () => {
+      expect(
+        scrubText("peer 2001:db8:85a3::8a2e:370:7334 ok").text,
+      ).toBe("peer [IP] ok");
+    });
+
+    it("masks phones and IP without treating IP as phone", () => {
     const result = scrubText("call +31 6 12345678 host 192.168.0.1");
     expect(result.text).toBe("call [PHONE] host [IP]");
     expect(result.counts.phone).toBe(1);
