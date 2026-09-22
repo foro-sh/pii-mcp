@@ -1,3 +1,11 @@
+## [1.5.2](https://github.com/foro-sh/pii-mcp/compare/v1.5.1...v1.5.2) (2026-09-22)
+
+### Bug Fixes
+
+* close IPv6, MAC, IMEI, and trunk-zero phone leaks ([2c43cfd](https://github.com/foro-sh/pii-mcp/commit/2c43cfd09cb068f1e4db6c11158c0687bb9a9460))
+* close phone hex-glue and obvious fake-SSN hits ([c14bd7b](https://github.com/foro-sh/pii-mcp/commit/c14bd7b5cbd590ec3d28f1a9b120b9c593ba2ad1))
+* merge detector false-positive fixes ([#23](https://github.com/foro-sh/pii-mcp/issues/23)) ([1210d62](https://github.com/foro-sh/pii-mcp/commit/1210d62557a2896227d5c45f2004a40e35e2dcdb))
+
 ## [1.5.1](https://github.com/foro-sh/pii-mcp/compare/v1.5.0...v1.5.1) (2026-09-20)
 
 ### Bug Fixes
