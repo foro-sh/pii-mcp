@@ -85,7 +85,7 @@ pub fn imei_valid(value: &str) -> bool {
     let mut digits = [0u8; 15];
     let mut len = 0usize;
     for b in value.bytes() {
-        if b == b' ' || b == b'-' || b == b'.' {
+        if b == b' ' || b == b'-' || b == b'.' || b == b'/' {
             continue;
         }
         if !b.is_ascii_digit() || len >= digits.len() {
@@ -293,6 +293,7 @@ mod tests {
     fn imei_grouped() {
         assert!(imei_valid("49-015420-323751-8"));
         assert!(imei_valid("49 015420 323751 8"));
+        assert!(imei_valid("49/015420/323751/8"));
         assert!(imei_valid("490154203237518"));
         assert!(!imei_valid("49-015420-323751-9"));
     }

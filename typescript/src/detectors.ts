@@ -331,6 +331,7 @@ export const bicDetector: Detector = { type: "bic", scrub: scrubBic };
 
 const MAC_RES = [
   /(?<![\w:])(?:[0-9A-Fa-f]{2}[:-]){5}[0-9A-Fa-f]{2}(?![\w:])/g,
+  /(?<![\w.])(?:[0-9A-Fa-f]{2}\.){5}[0-9A-Fa-f]{2}(?![\w.])/g,
   /(?<![\w.])(?:[0-9A-Fa-f]{4}\.){2}[0-9A-Fa-f]{4}(?![\w.])/g,
 ] as const;
 
@@ -349,13 +350,13 @@ export const macDetector: Detector = { type: "mac", scrub: scrubMac };
 
 // Grouped only — compact 15-digit Luhn values collide with Amex credit cards.
 const IMEI_RES = [
-  /(?<![\w.-])\d{2}[- .]\d{6}[- .]\d{6}[- .]\d(?![\w.-])/g,
-  /(?<![\w.-])\d{8}[- .]\d{6}[- .]\d(?![\w.-])/g,
-  /(?<![\w.-])\d{2}[- .]\d{6}[- .]\d{7}(?![\w.-])/g,
+  /(?<![\w.-])\d{2}[- ./]\d{6}[- ./]\d{6}[- ./]\d(?![\w.-])/g,
+  /(?<![\w.-])\d{8}[- ./]\d{6}[- ./]\d(?![\w.-])/g,
+  /(?<![\w.-])\d{2}[- ./]\d{6}[- ./]\d{7}(?![\w.-])/g,
 ] as const;
 
 function imeiValid(value: string): boolean {
-  const digits = value.replace(/[ .-]/g, "");
+  const digits = value.replace(/[ ./\-]/g, "");
   return digits.length === 15 && /^\d+$/.test(digits) && luhnValid(digits);
 }
 
@@ -634,11 +635,17 @@ const PHONE_DE_NATIONAL: readonly [RegExp, (value: string) => boolean] = [
   /(?<![\w+])\(?0\d\)?(?:[ .\-/()]?\d){8,10}(?!\d)(?![A-Fa-f]{2})/g,
   (m) => {
     const digits = digitCount(m);
-    return (
-      digits >= 10 &&
-      digits <= 12 &&
-      !(digits === 10 && m.replace(/\D/g, "").startsWith("06"))
-    );
+    if (digits < 10 || digits > 12) {
+      return false;
+    }
+    if (digits === 10 && m.replace(/\D/g, "").startsWith("06")) {
+      return false;
+    }
+    // Separator-free 12-digit runs collide with UPC-A barcodes.
+    if (digits === 12 && /^\d{12}$/.test(m)) {
+      return false;
+    }
+    return true;
   },
 ];
 
@@ -665,7 +672,7 @@ export const phoneNlDetector = makePhoneDetector([PHONE_NL_NATIONAL]);
 export const phoneEnDetector = makePhoneDetector([PHONE_EN_NANP]);
 export const phoneDeDetector = makePhoneDetector([PHONE_DE_NATIONAL]);
 
-const NL_POSTCODE_RE = /\b[1-9]\d{3}\s?[A-Z]{2}\b/g;
+const NL_POSTCODE_RE = /\b[1-9]\d{3}\s+[A-Z]{2}\b|\b[1-9]\d{3}[A-Z]{2}\b/g;
 const NL_POSTCODE_LETTER_REJECTS = new Set(["SA", "SD", "SS"]);
 
 function nlPostcodeValid(value: string): boolean {

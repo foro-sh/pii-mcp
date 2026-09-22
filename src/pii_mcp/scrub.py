@@ -10,10 +10,11 @@ receives NL postcode hits from the pattern pack.
 ``MAX_SCRUB_BYTES`` matches foro-proxy (32 MiB). Oversize raises
 ``PiiScrubError`` so callers withhold rather than forward unscrubbed text.
 
-Detector pack order (see ``_detectors_for``): universal → checksum/rule-backed
-national IDs (BSN before SSN when both packs are on; NL BTW and passport after
-BSN) → NL postcode / kenteken when ``nl`` → phones (international when any
-pack is active, then locale forms).
+Detector pack order (see ``_detectors_for``): universal → international phone
+(when any pack is active, before national IDs so ``+31(0)6…`` is not eaten by
+SSN) → checksum/rule-backed national IDs (BSN before SSN when both packs are
+on; NL BTW and passport after BSN) → NL postcode / kenteken when ``nl`` →
+locale phone forms.
 
 Optional Rust acceleration: when ``pii_mcp._native`` is importable (shipped in
 platform wheels, or built via maturin), ``scrub_text`` / ``scrub_payload``
@@ -179,6 +180,8 @@ def _detectors_for(languages: Sequence[str] | None) -> tuple[Detector, ...]:
     """Build ordered detector list for ``languages`` (see module docstring)."""
     langs = _normalize_languages(languages)
     pack: list[Detector] = list(UNIVERSAL_DETECTORS)
+    if langs:
+        pack.append(phone_international_detector)
     if "nl" in langs:
         pack.append(bsn_detector)
         pack.append(nl_vat_detector)
@@ -190,8 +193,6 @@ def _detectors_for(languages: Sequence[str] | None) -> tuple[Detector, ...]:
     if "nl" in langs:
         pack.append(nl_postcode_detector)
         pack.append(nl_license_plate_detector)
-    if langs:
-        pack.append(phone_international_detector)
     if "nl" in langs:
         pack.append(phone_nl_detector)
     if "en" in langs:

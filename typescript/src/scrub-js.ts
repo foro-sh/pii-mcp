@@ -11,10 +11,11 @@
  * ``MAX_SCRUB_BYTES`` matches foro-proxy (32 MiB). Oversize raises
  * ``PiiScrubError`` so callers withhold rather than forward unscrubbed text.
  *
- * Detector pack order (see ``detectorsFor``): universal → checksum/rule-backed
- * national IDs (BSN before SSN when both packs are on; NL BTW and passport after
- * BSN) → NL postcode / kenteken when ``nl`` → phones (international when any
- * pack is active, then locale forms).
+ * Detector pack order (see ``detectorsFor``): universal → international phone
+ * (when any pack is active, before national IDs so ``+31(0)6…`` is not eaten by
+ * SSN) → checksum/rule-backed national IDs (BSN before SSN when both packs are
+ * on; NL BTW and passport after BSN) → NL postcode / kenteken when ``nl`` →
+ * locale phone forms.
  */
 
 import {
@@ -94,6 +95,9 @@ function detectorsFor(
 ): readonly Detector[] {
   const langs = normalizeLanguages(languages);
   const pack: Detector[] = [...UNIVERSAL_DETECTORS];
+  if (langs.length > 0) {
+    pack.push(phoneInternationalDetector);
+  }
   if (langs.includes("nl")) {
     pack.push(bsnDetector, nlVatDetector, nlPassportDetector);
   }
@@ -104,13 +108,7 @@ function detectorsFor(
     pack.push(ssnDetector);
   }
   if (langs.includes("nl")) {
-    pack.push(nlPostcodeDetector, nlLicensePlateDetector);
-  }
-  if (langs.length > 0) {
-    pack.push(phoneInternationalDetector);
-  }
-  if (langs.includes("nl")) {
-    pack.push(phoneNlDetector);
+    pack.push(nlPostcodeDetector, nlLicensePlateDetector, phoneNlDetector);
   }
   if (langs.includes("en")) {
     pack.push(phoneEnDetector);

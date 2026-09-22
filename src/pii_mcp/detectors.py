@@ -21,11 +21,11 @@ Patterns:
 - IP: IPv4-mapped IPv6 (``::ffff:a.b.c.d``) is matched whole before bare IPv4;
   IPv4 rejects a preceding ``:`` so mapped forms are not partially eaten;
   leading zeros in octets are accepted (``192.168.001.001``).
-- BIC/SWIFT: 8 or 11 alnum with ISO 3166-1 country letters (AP: financial data).
-- MAC: colon/dash IEEE and Cisco dotted forms (AP: device MAC is personal data).
-- IMEI: hyphen/space-grouped 15-digit forms with Luhn (AP: gegevens over
-  elektronische communicatie / device identifiers). Compact 15-digit IMEIs
-  that are also Luhn-valid collide with Amex and stay under ``credit_card``.
+- MAC: colon/dash IEEE, dotted IEEE (``aa.bb.cc.dd.ee.ff``), and Cisco
+  dotted forms (AP: device MAC is personal data).
+- IMEI: hyphen/space/slash/dot-grouped 15-digit forms with Luhn (AP: gegevens
+  over elektronische communicatie / device identifiers). Compact 15-digit
+  IMEIs that are also Luhn-valid collide with Amex and stay under ``credit_card``.
 - IP: IPv4 octet-bounded regex; IPv6 candidate shapes validated via
   ``ipaddress`` (AP notes IP addresses can be personal data).
 - Location: decimal lat/lon pairs with ≥3 fractional digits, optional
@@ -39,13 +39,15 @@ Patterns:
 - NL passport / ID-card number (``passport``): 9-char RvIG document number
   (``[A-Za-z]{2}[0-9A-Za-z]{6}[0-9]``, letter O forbidden after uppercasing)
   — national identificatienummer alongside BSN; format only, no check digit.
-- NL postcode (``address``): ``1234 AB`` / ``1234AB`` with uppercase letters
-  only and SA/SD/SS rejects — structured fragment, not street-address NER.
+- NL postcode (``address``): ``1234 AB`` / ``1234AB`` (one or more spaces)
+  with uppercase letters only and SA/SD/SS rejects — structured fragment, not
+  street-address NER.
 - NL kenteken (``license_plate``): hyphenated RDW sidecodes 1–14 (case-
   insensitive), with SA/SD/SS letter-pair rejects.
-- Phone packs: international (any active pack), NL national (allows ``/`` and
-  parentheses; rejects hex-digest glue), NANP, DE national (DE excludes exact
-  Dutch ``06…`` 10-digit mobiles; same hex-glue guard).
+- Phone packs: international first (any active pack, before national IDs), NL
+  national (allows ``/`` and parentheses; rejects hex-digest glue), NANP, DE
+  national (DE excludes exact Dutch ``06…`` 10-digit mobiles and separator-free
+  12-digit UPC collisions; same hex-glue guard).
 - BSN spaced/dotted/hyphenated ``111-222-333`` groups.
 
 ``UNIVERSAL_DETECTORS`` (email, IBAN, credit card, BIC, MAC, IMEI, IP, location)
@@ -319,6 +321,10 @@ MAC_RES: tuple[re.Pattern[str], ...] = (
     re.compile(
         r"(?<![\w:])(?:[0-9A-Fa-f]{2}[:-]){5}[0-9A-Fa-f]{2}(?![\w:])"
     ),
+    # Dot-separated IEEE (distinct from Cisco xxxx.xxxx.xxxx).
+    re.compile(
+        r"(?<![\w.])(?:[0-9A-Fa-f]{2}\.){5}[0-9A-Fa-f]{2}(?![\w.])"
+    ),
     re.compile(
         r"(?<![\w.])(?:[0-9A-Fa-f]{4}\.){2}[0-9A-Fa-f]{4}(?![\w.])"
     ),
@@ -338,14 +344,14 @@ mac_detector = Detector(type="mac", scrub=_scrub_mac)
 
 # Grouped only — compact 15-digit Luhn values collide with Amex credit cards.
 IMEI_RES: tuple[re.Pattern[str], ...] = (
-    re.compile(r"(?<![\w.-])\d{2}[- .]\d{6}[- .]\d{6}[- .]\d(?![\w.-])"),
-    re.compile(r"(?<![\w.-])\d{8}[- .]\d{6}[- .]\d(?![\w.-])"),
-    re.compile(r"(?<![\w.-])\d{2}[- .]\d{6}[- .]\d{7}(?![\w.-])"),
+    re.compile(r"(?<![\w.-])\d{2}[- ./]\d{6}[- ./]\d{6}[- ./]\d(?![\w.-])"),
+    re.compile(r"(?<![\w.-])\d{8}[- ./]\d{6}[- ./]\d(?![\w.-])"),
+    re.compile(r"(?<![\w.-])\d{2}[- ./]\d{6}[- ./]\d{7}(?![\w.-])"),
 )
 
 
 def _imei_valid(value: str) -> bool:
-    digits = re.sub(r"[ .-]", "", value)
+    digits = re.sub(r"[ ./\-]", "", value)
     return len(digits) == 15 and digits.isdigit() and _luhn_valid(digits)
 
 
@@ -637,6 +643,10 @@ PHONE_DE_NATIONAL = (
             _digit_count(m) == 10
             and re.sub(r"\D", "", m).startswith("06")
         )
+        # Separator-free 12-digit runs collide with UPC-A barcodes.
+        and not (
+            _digit_count(m) == 12 and re.fullmatch(r"\d{12}", m) is not None
+        )
     ),
 )
 
@@ -660,7 +670,7 @@ phone_nl_detector = _make_phone_detector((PHONE_NL_NATIONAL,))
 phone_en_detector = _make_phone_detector((PHONE_EN_NANP,))
 phone_de_detector = _make_phone_detector((PHONE_DE_NATIONAL,))
 
-NL_POSTCODE_RE = re.compile(r"\b[1-9]\d{3}\s?[A-Z]{2}\b")
+NL_POSTCODE_RE = re.compile(r"\b[1-9]\d{3}\s+[A-Z]{2}\b|\b[1-9]\d{3}[A-Z]{2}\b")
 _NL_POSTCODE_LETTER_REJECTS = frozenset({"SA", "SD", "SS"})
 
 
