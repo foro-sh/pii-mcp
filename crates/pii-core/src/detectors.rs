@@ -498,6 +498,11 @@ fn mac_colon_re() -> &'static Regex {
     RE.get_or_init(|| Regex::new(r"(?:[0-9A-Fa-f]{2}[:-]){5}[0-9A-Fa-f]{2}").unwrap())
 }
 
+fn mac_dot_ieee_re() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| Regex::new(r"(?:[0-9A-Fa-f]{2}\.){5}[0-9A-Fa-f]{2}").unwrap())
+}
+
 fn mac_cisco_re() -> &'static Regex {
     static RE: OnceLock<Regex> = OnceLock::new();
     RE.get_or_init(|| Regex::new(r"(?:[0-9A-Fa-f]{4}\.){2}[0-9A-Fa-f]{4}").unwrap())
@@ -519,7 +524,7 @@ fn mac_colon_boundary_ok(text: &str, start: usize, end: usize) -> bool {
     true
 }
 
-fn mac_cisco_boundary_ok(text: &str, start: usize, end: usize) -> bool {
+fn mac_dot_boundary_ok(text: &str, start: usize, end: usize) -> bool {
     if start > 0 {
         let prev = text[..start].chars().next_back().unwrap();
         if is_word_char(prev) || prev == '.' {
@@ -547,14 +552,25 @@ fn scrub_mac(text: &str) -> (Option<String>, u32) {
         let src = first.as_deref().unwrap_or(text);
         replace_matches(
             src,
-            mac_cisco_re(),
+            mac_dot_ieee_re(),
             "[MAC]",
-            |_, s, e| mac_cisco_boundary_ok(src, s, e),
+            |_, s, e| mac_dot_boundary_ok(src, s, e),
             true,
         )
     };
     count += n;
-    (second.or(first), count)
+    let (third, n) = {
+        let src = second.as_deref().or(first.as_deref()).unwrap_or(text);
+        replace_matches(
+            src,
+            mac_cisco_re(),
+            "[MAC]",
+            |_, s, e| mac_dot_boundary_ok(src, s, e),
+            true,
+        )
+    };
+    count += n;
+    (third.or(second).or(first), count)
 }
 
 // Grouped only — compact 15-digit Luhn values collide with Amex credit cards.
@@ -562,9 +578,9 @@ fn imei_res() -> &'static [Regex] {
     static RES: OnceLock<Vec<Regex>> = OnceLock::new();
     RES.get_or_init(|| {
         vec![
-            Regex::new(r"\d{2}[- .]\d{6}[- .]\d{6}[- .]\d").unwrap(),
-            Regex::new(r"\d{8}[- .]\d{6}[- .]\d").unwrap(),
-            Regex::new(r"\d{2}[- .]\d{6}[- .]\d{7}").unwrap(),
+            Regex::new(r"\d{2}[- ./]\d{6}[- ./]\d{6}[- ./]\d").unwrap(),
+            Regex::new(r"\d{8}[- ./]\d{6}[- ./]\d").unwrap(),
+            Regex::new(r"\d{2}[- ./]\d{6}[- ./]\d{7}").unwrap(),
         ]
     })
 }
@@ -793,6 +809,66 @@ fn ipv6_boundary_ok(text: &str, start: usize, end: usize) -> bool {
     true
 }
 
+/// Linear regex prefers a short ``X:X:X::X`` prefix of a longer address; extend
+/// by trailing ``:hextet`` so ``2001:db8:85a3::8a2e:370:7334`` still matches.
+fn extend_ipv6_end(text: &str, mut end: usize) -> usize {
+    loop {
+        let Some(rest) = text.get(end..) else {
+            break;
+        };
+        if !rest.starts_with(':') || rest.starts_with("::") {
+            break;
+        }
+        let after = &rest[1..];
+        let hextet_len = after
+            .chars()
+            .take_while(|c| c.is_ascii_hexdigit())
+            .count();
+        if !(1..=4).contains(&hextet_len) {
+            break;
+        }
+        let new_end = end + 1 + hextet_len;
+        if new_end < text.len() {
+            let n = text[new_end..].chars().next().unwrap();
+            if n.is_ascii_hexdigit() {
+                break;
+            }
+        }
+        end = new_end;
+    }
+    end
+}
+
+fn scrub_ipv6(text: &str) -> (Option<String>, u32) {
+    let pattern = ipv6_re();
+    let mut count = 0u32;
+    let mut out: Option<String> = None;
+    let mut last = 0usize;
+    let mut pos = 0usize;
+    while let Some(m) = pattern.find_at(text, pos) {
+        let start = m.start();
+        let end = extend_ipv6_end(text, m.end());
+        let value = &text[start..end];
+        if !(ipv6_boundary_ok(text, start, end) && ip_valid(value)) {
+            pos = start + 1;
+            continue;
+        }
+        let buf = out.get_or_insert_with(|| String::with_capacity(text.len()));
+        buf.push_str(&text[last..start]);
+        buf.push_str("[IP]");
+        last = end;
+        pos = end;
+        count += 1;
+    }
+    match out {
+        None => (None, 0),
+        Some(mut buf) => {
+            buf.push_str(&text[last..]);
+            (Some(buf), count)
+        }
+    }
+}
+
 fn scrub_ip(text: &str) -> (Option<String>, u32) {
     let (mapped, mut count) = replace_matches(
         text,
@@ -817,13 +893,7 @@ fn scrub_ip(text: &str) -> (Option<String>, u32) {
             .as_deref()
             .or(mapped.as_deref())
             .unwrap_or(text);
-        replace_matches(
-            src,
-            ipv6_re(),
-            "[IP]",
-            |v, s, e| ipv6_boundary_ok(src, s, e) && ip_valid(v),
-            true,
-        )
+        scrub_ipv6(src)
     };
     count += n;
     (second.or(first).or(mapped), count)
@@ -834,7 +904,7 @@ fn bsn_res() -> &'static [Regex] {
     RES.get_or_init(|| {
         vec![
             Regex::new(r"\b\d{8,9}\b").unwrap(),
-            Regex::new(r"\b\d{3}[ .]\d{3}[ .]\d{3}\b").unwrap(),
+            Regex::new(r"\b\d{3}[ .\-]\d{3}[ .\-]\d{3}\b").unwrap(),
         ]
     })
 }
@@ -904,7 +974,7 @@ fn phone_international_valid(m: &str) -> bool {
 
 fn phone_nl_re() -> &'static Regex {
     static RE: OnceLock<Regex> = OnceLock::new();
-    RE.get_or_init(|| Regex::new(r"0\d(?:[ .\-/]?\d){8}").unwrap())
+    RE.get_or_init(|| Regex::new(r"\(?0\d\)?(?:[ .\-/()]?\d){8}").unwrap())
 }
 
 fn phone_nl_valid(m: &str) -> bool {
@@ -931,7 +1001,7 @@ fn phone_en_valid(m: &str) -> bool {
 
 fn phone_de_re() -> &'static Regex {
     static RE: OnceLock<Regex> = OnceLock::new();
-    RE.get_or_init(|| Regex::new(r"0\d(?:[ .\-/]?\d){8,10}").unwrap())
+    RE.get_or_init(|| Regex::new(r"\(?0\d\)?(?:[ .\-/()]?\d){8,10}").unwrap())
 }
 
 fn phone_de_valid(m: &str) -> bool {
@@ -939,7 +1009,14 @@ fn phone_de_valid(m: &str) -> bool {
     if !(10..=12).contains(&n) {
         return false;
     }
-    !(n == 10 && digits_only_starts_with_06(m))
+    if n == 10 && digits_only_starts_with_06(m) {
+        return false;
+    }
+    // Separator-free 12-digit runs collide with UPC-A barcodes.
+    if n == 12 && m.bytes().all(|b| b.is_ascii_digit()) {
+        return false;
+    }
+    true
 }
 
 fn no_trailing_digit(text: &str, end: usize) -> bool {
@@ -948,6 +1025,17 @@ fn no_trailing_digit(text: &str, end: usize) -> bool {
         return true;
     }
     !text.as_bytes()[end].is_ascii_digit()
+}
+
+fn no_trailing_hex_letters(text: &str, end: usize) -> bool {
+    // (?![A-Fa-f]{2}) — hex digest glue after a digit run (sha256:0123…abcd).
+    let bytes = text.as_bytes();
+    if end + 1 >= bytes.len() {
+        return true;
+    }
+    let a = bytes[end];
+    let b = bytes[end + 1];
+    !(a.is_ascii_hexdigit() && a.is_ascii_alphabetic() && b.is_ascii_hexdigit() && b.is_ascii_alphabetic())
 }
 
 fn scrub_phone_international(text: &str) -> (Option<String>, u32) {
@@ -965,7 +1053,12 @@ fn scrub_phone_nl(text: &str) -> (Option<String>, u32) {
         text,
         phone_nl_re(),
         "[PHONE]",
-        |v, s, e| phone_left_ok(text, s) && no_trailing_digit(text, e) && phone_nl_valid(v),
+        |v, s, e| {
+            phone_left_ok(text, s)
+                && no_trailing_digit(text, e)
+                && no_trailing_hex_letters(text, e)
+                && phone_nl_valid(v)
+        },
         true,
     )
 }
@@ -985,14 +1078,21 @@ fn scrub_phone_de(text: &str) -> (Option<String>, u32) {
         text,
         phone_de_re(),
         "[PHONE]",
-        |v, s, e| phone_left_ok(text, s) && no_trailing_digit(text, e) && phone_de_valid(v),
+        |v, s, e| {
+            phone_left_ok(text, s)
+                && no_trailing_digit(text, e)
+                && no_trailing_hex_letters(text, e)
+                && phone_de_valid(v)
+        },
         true,
     )
 }
 
 fn nl_postcode_re() -> &'static Regex {
     static RE: OnceLock<Regex> = OnceLock::new();
-    RE.get_or_init(|| Regex::new(r"\b[1-9]\d{3}\s?[A-Z]{2}\b").unwrap())
+    RE.get_or_init(|| {
+        Regex::new(r"\b[1-9]\d{3}\s+[A-Z]{2}\b|\b[1-9]\d{3}[A-Z]{2}\b").unwrap()
+    })
 }
 
 fn scrub_nl_postcode(text: &str) -> (Option<String>, u32) {
@@ -1141,6 +1241,12 @@ fn build_detectors(mask: u8) -> Vec<Detector> {
     let has_de = mask & 0b100 != 0;
     let mut pack = UNIVERSAL.to_vec();
 
+    if mask != 0 {
+        pack.push(Detector {
+            category: PiiCategory::Phone,
+            scrub: scrub_phone_international,
+        });
+    }
     if has_nl {
         pack.push(Detector {
             category: PiiCategory::Bsn,
@@ -1176,14 +1282,6 @@ fn build_detectors(mask: u8) -> Vec<Detector> {
             category: PiiCategory::LicensePlate,
             scrub: scrub_nl_license_plate,
         });
-    }
-    if mask != 0 {
-        pack.push(Detector {
-            category: PiiCategory::Phone,
-            scrub: scrub_phone_international,
-        });
-    }
-    if has_nl {
         pack.push(Detector {
             category: PiiCategory::Phone,
             scrub: scrub_phone_nl,

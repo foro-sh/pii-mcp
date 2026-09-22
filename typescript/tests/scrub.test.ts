@@ -147,7 +147,62 @@ describe("scrubText", () => {
     expect(result.counts.tax_id).toBe(1);
   });
 
-  it("masks phones and IP without treating IP as phone", () => {
+  it("leaves clean prose without redacting", () => {
+    const samples = [
+      "Please review the quarterly report before Friday.",
+      "Meeting at 10:30 tomorrow in conference room B.",
+      "No personal data is present in this paragraph at all.",
+      "The checksum failed for ticket 123456789.",
+      "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+    ];
+    for (const text of samples) {
+      const result = scrubText(text);
+      expect(result.text).toBe(text);
+      expect(result.found).toBe(false);
+    }
+  });
+
+  it("masks parenthesized NL mobile and hyphen BSN", () => {
+    expect(scrubText("bel (06)12345678 even", { languages: ["nl"] }).text).toBe(
+      "bel [PHONE] even",
+    );
+    expect(scrubText("id 111-222-333", { languages: ["nl"] }).text).toBe(
+      "id [BSN]",
+    );
+  });
+
+  it("rejects obviously fake compact SSNs", () => {
+    expect(scrubText("ticket 123456789", { languages: ["en"] }).counts.ssn).toBe(
+      0,
+    );
+    expect(scrubText("ticket 111111111", { languages: ["en"] }).counts.ssn).toBe(
+      0,
+    );
+  });
+
+    it("masks trunk-zero NL international before SSN", () => {
+      const result = scrubText("bel +31(0)612345678", {
+        languages: ["nl", "en"],
+      });
+      expect(result.text).toBe("bel [PHONE]");
+      expect(result.counts.phone).toBe(1);
+      expect(result.counts.ssn).toBe(0);
+    });
+
+    it("masks dotted IEEE MAC and slash IMEI", () => {
+      expect(scrubText("mac 01.23.45.67.89.ab").text).toBe("mac [MAC]");
+      expect(
+        scrubText("imei 49/015420/323751/8 listed").text,
+      ).toBe("imei [IMEI] listed");
+    });
+
+    it("masks compressed IPv6 with mid hextets", () => {
+      expect(
+        scrubText("peer 2001:db8:85a3::8a2e:370:7334 ok").text,
+      ).toBe("peer [IP] ok");
+    });
+
+    it("masks phones and IP without treating IP as phone", () => {
     const result = scrubText("call +31 6 12345678 host 192.168.0.1");
     expect(result.text).toBe("call [PHONE] host [IP]");
     expect(result.counts.phone).toBe(1);
