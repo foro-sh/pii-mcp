@@ -834,7 +834,7 @@ fn bsn_res() -> &'static [Regex] {
     RES.get_or_init(|| {
         vec![
             Regex::new(r"\b\d{8,9}\b").unwrap(),
-            Regex::new(r"\b\d{3}[ .]\d{3}[ .]\d{3}\b").unwrap(),
+            Regex::new(r"\b\d{3}[ .\-]\d{3}[ .\-]\d{3}\b").unwrap(),
         ]
     })
 }
@@ -904,7 +904,7 @@ fn phone_international_valid(m: &str) -> bool {
 
 fn phone_nl_re() -> &'static Regex {
     static RE: OnceLock<Regex> = OnceLock::new();
-    RE.get_or_init(|| Regex::new(r"0\d(?:[ .\-/]?\d){8}").unwrap())
+    RE.get_or_init(|| Regex::new(r"\(?0\d\)?(?:[ .\-/()]?\d){8}").unwrap())
 }
 
 fn phone_nl_valid(m: &str) -> bool {
@@ -931,7 +931,7 @@ fn phone_en_valid(m: &str) -> bool {
 
 fn phone_de_re() -> &'static Regex {
     static RE: OnceLock<Regex> = OnceLock::new();
-    RE.get_or_init(|| Regex::new(r"0\d(?:[ .\-/]?\d){8,10}").unwrap())
+    RE.get_or_init(|| Regex::new(r"\(?0\d\)?(?:[ .\-/()]?\d){8,10}").unwrap())
 }
 
 fn phone_de_valid(m: &str) -> bool {
@@ -950,6 +950,17 @@ fn no_trailing_digit(text: &str, end: usize) -> bool {
     !text.as_bytes()[end].is_ascii_digit()
 }
 
+fn no_trailing_hex_letters(text: &str, end: usize) -> bool {
+    // (?![A-Fa-f]{2}) — hex digest glue after a digit run (sha256:0123…abcd).
+    let bytes = text.as_bytes();
+    if end + 1 >= bytes.len() {
+        return true;
+    }
+    let a = bytes[end];
+    let b = bytes[end + 1];
+    !(a.is_ascii_hexdigit() && a.is_ascii_alphabetic() && b.is_ascii_hexdigit() && b.is_ascii_alphabetic())
+}
+
 fn scrub_phone_international(text: &str) -> (Option<String>, u32) {
     replace_matches(
         text,
@@ -965,7 +976,12 @@ fn scrub_phone_nl(text: &str) -> (Option<String>, u32) {
         text,
         phone_nl_re(),
         "[PHONE]",
-        |v, s, e| phone_left_ok(text, s) && no_trailing_digit(text, e) && phone_nl_valid(v),
+        |v, s, e| {
+            phone_left_ok(text, s)
+                && no_trailing_digit(text, e)
+                && no_trailing_hex_letters(text, e)
+                && phone_nl_valid(v)
+        },
         true,
     )
 }
@@ -985,7 +1001,12 @@ fn scrub_phone_de(text: &str) -> (Option<String>, u32) {
         text,
         phone_de_re(),
         "[PHONE]",
-        |v, s, e| phone_left_ok(text, s) && no_trailing_digit(text, e) && phone_de_valid(v),
+        |v, s, e| {
+            phone_left_ok(text, s)
+                && no_trailing_digit(text, e)
+                && no_trailing_hex_letters(text, e)
+                && phone_de_valid(v)
+        },
         true,
     )
 }

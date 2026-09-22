@@ -128,12 +128,12 @@ pub fn nl_passport_valid(value: &str) -> bool {
     true
 }
 
-/// Dutch BSN 11-check (8–9 digits, zero-padded to 9). Accepts spaced/dotted groups.
+/// Dutch BSN 11-check (8–9 digits, zero-padded to 9). Accepts spaced/dotted/hyphen groups.
 pub fn bsn_valid(value: &str) -> bool {
     let mut digits = [0u8; 9];
     let mut len = 0usize;
     for b in value.bytes() {
-        if b == b' ' || b == b'.' {
+        if b == b' ' || b == b'.' || b == b'-' {
             continue;
         }
         if !b.is_ascii_digit() || len >= 9 {
@@ -160,6 +160,7 @@ pub fn bsn_valid(value: &str) -> bool {
 }
 
 /// SSA rejects: area 000/666/9xx, group 00, serial 0000.
+/// Also drops obvious fakes (all-same digit, 123456789 / 987654321).
 pub fn ssn_valid(value: &str) -> bool {
     let mut digits = [0u8; 9];
     let mut len = 0usize;
@@ -174,6 +175,9 @@ pub fn ssn_valid(value: &str) -> bool {
         len += 1;
     }
     if len != 9 {
+        return false;
+    }
+    if ssn_obviously_fake(&digits) {
         return false;
     }
     let area = (digits[0] - b'0') as u32 * 100
@@ -191,6 +195,13 @@ pub fn ssn_valid(value: &str) -> bool {
         return false;
     }
     true
+}
+
+fn ssn_obviously_fake(digits: &[u8; 9]) -> bool {
+    if digits.iter().all(|&b| b == digits[0]) {
+        return true;
+    }
+    digits == b"123456789" || digits == b"987654321"
 }
 
 /// German Steuer-IdNr: structure + mod-11/10 check digit.
@@ -305,6 +316,15 @@ mod tests {
         assert!(ssn_valid("078-05-1120"));
         assert!(!ssn_valid("000-12-3456"));
         assert!(!ssn_valid("123-00-1234"));
+        assert!(!ssn_valid("123456789"));
+        assert!(!ssn_valid("111111111"));
+        assert!(!ssn_valid("987654321"));
+    }
+
+    #[test]
+    fn bsn_hyphen_grouped() {
+        assert!(bsn_valid("111-222-333"));
+        assert!(bsn_valid("111.222.333"));
     }
 
     #[test]

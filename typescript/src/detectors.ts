@@ -30,7 +30,7 @@
  *   ``N``/``S``/``E``/``W`` hemisphere letters, and range checks (AP lists
  *   locatiegegevens as privacy-sensitive).
  * - US SSN: hyphen/space/dot/slash or compact 9-digit with SSA area/group/serial
- *   rejects.
+ *   rejects, plus obvious fakes (all-same digit, 123456789 / 987654321).
  * - German Steuer-IdNr (tax_id): 11 digits with structure + mod-11/10 check.
  * - NL BTW-id (``vat_id``): ``NL`` + 9 digits + ``B`` + 2 digits with optional
  *   spaces/dots (format only — post-2020 sole-trader ids are not elfproef-gated).
@@ -41,8 +41,10 @@
  *   only and SA/SD/SS rejects — structured fragment, not street-address NER.
  * - NL kenteken (``license_plate``): hyphenated RDW sidecodes 1–14 (case-
  *   insensitive), with SA/SD/SS letter-pair rejects.
- * - Phone packs: international (any active pack), NL national (allows ``/``),
- *   NANP, DE national (DE excludes exact Dutch ``06…`` 10-digit mobiles).
+ * - Phone packs: international (any active pack), NL national (allows ``/`` and
+ *   parentheses; rejects hex-digest glue), NANP, DE national (DE excludes exact
+ *   Dutch ``06…`` 10-digit mobiles; same hex-glue guard).
+ * - BSN spaced/dotted/hyphenated ``111-222-333`` groups.
  *
  * ``UNIVERSAL_DETECTORS`` (email, IBAN, credit card, BIC, MAC, IMEI, IP, location)
  * always run; locale detectors are selected by ``languages=`` in the scrub layer.
@@ -450,10 +452,10 @@ export const locationDetector: Detector = {
   scrub: scrubLocation,
 };
 
-const BSN_RES = [/\b\d{8,9}\b/g, /\b\d{3}[ .]\d{3}[ .]\d{3}\b/g] as const;
+const BSN_RES = [/\b\d{8,9}\b/g, /\b\d{3}[ .\-]\d{3}[ .\-]\d{3}\b/g] as const;
 
 function bsnValid(value: string): boolean {
-  const digits = value.replace(/[ .]/g, "");
+  const digits = value.replace(/[ .\-]/g, "");
   if (digits.length < 8 || digits.length > 9 || !/^\d+$/.test(digits)) {
     return false;
   }
@@ -489,9 +491,19 @@ const SSN_RES = [
   /\b\d{9}\b/g,
 ] as const;
 
+function ssnObviouslyFake(digits: string): boolean {
+  if (new Set(digits).size === 1) {
+    return true;
+  }
+  return digits === "123456789" || digits === "987654321";
+}
+
 function ssnValid(value: string): boolean {
   const digits = value.replace(/[ .\-/]/g, "");
   if (digits.length !== 9 || !/^\d{9}$/.test(digits)) {
+    return false;
+  }
+  if (ssnObviouslyFake(digits)) {
     return false;
   }
   const area = Number(digits.slice(0, 3));
@@ -604,7 +616,7 @@ const PHONE_INTERNATIONAL: readonly [RegExp, (value: string) => boolean] = [
 ];
 
 const PHONE_NL_NATIONAL: readonly [RegExp, (value: string) => boolean] = [
-  /(?<![\w+])0\d(?:[ .\-/]?\d){8}(?!\d)/g,
+  /(?<![\w+])\(?0\d\)?(?:[ .\-/()]?\d){8}(?!\d)(?![A-Fa-f]{2})/g,
   (m) => digitCount(m) === 10,
 ];
 
@@ -619,7 +631,7 @@ const PHONE_EN_NANP: readonly [RegExp, (value: string) => boolean] = [
 ];
 
 const PHONE_DE_NATIONAL: readonly [RegExp, (value: string) => boolean] = [
-  /(?<![\w+])0\d(?:[ .\-/]?\d){8,10}(?!\d)/g,
+  /(?<![\w+])\(?0\d\)?(?:[ .\-/()]?\d){8,10}(?!\d)(?![A-Fa-f]{2})/g,
   (m) => {
     const digits = digitCount(m);
     return (
