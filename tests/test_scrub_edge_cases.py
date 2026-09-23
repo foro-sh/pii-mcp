@@ -401,3 +401,18 @@ class TestStillWorks:
         twice = scrub_text(once["text"])
         assert twice["text"] == once["text"]
         assert twice["found"] is False
+
+
+class TestIpEmbeddedAndLabelled:
+    def test_nat64_embedded_ipv4_masked_whole(self) -> None:
+        result = scrub_text("route 64:ff9b::192.0.2.33 ok")
+        assert result["text"] == "route [IP] ok"
+        assert result["counts"]["ip"] == 1
+
+    def test_compat_embedded_ipv4_masked_whole(self) -> None:
+        assert scrub_text("compat ::192.0.2.33")["text"] == "compat [IP]"
+
+    def test_ipv4_after_label_colon(self) -> None:
+        result = scrub_text("host:192.168.1.10 up, IP:10.20.30.40")
+        assert result["text"] == "host:[IP] up, IP:[IP]"
+        assert result["counts"]["ip"] == 2

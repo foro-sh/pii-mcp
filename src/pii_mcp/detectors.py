@@ -18,9 +18,10 @@ Patterns:
 - Credit cards include Amex 4-6-5 groupings as well as 4-4-4-x and compact;
   grouped forms also accept tab, nbsp, ideographic space, unicode dashes,
   ``.``, and ``/``; zero-width characters are stripped before matching.
-- IP: IPv4-mapped IPv6 (``::ffff:a.b.c.d``) is matched whole before bare IPv4;
-  IPv4 rejects a preceding ``:`` so mapped forms are not partially eaten;
-  leading zeros in octets are accepted (``192.168.001.001``).
+- IP: IPv6 with an embedded dotted quad (``::ffff:a.b.c.d``, NAT64
+  ``64:ff9b::a.b.c.d``) is matched whole before bare IPv4, so bare IPv4 may
+  follow a label colon (``host:10.0.0.1``); leading zeros in octets are
+  accepted (``192.168.001.001``).
 - MAC: colon/dash IEEE, dotted IEEE (``aa.bb.cc.dd.ee.ff``), and Cisco
   dotted forms (AP: device MAC is personal data).
 - IMEI: hyphen/space/slash/dot-grouped 15-digit forms with Luhn (AP: gegevens
@@ -367,13 +368,14 @@ def _scrub_imei(text: str) -> tuple[str, int]:
 imei_detector = Detector(type="imei", scrub=_scrub_imei)
 
 IPV4_RE = re.compile(
-    r"(?<![\w.:])(?:(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\.){3}"
+    r"(?<![\w.])(?:(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\.){3}"
     r"(?:25[0-5]|2[0-4]\d|[01]?\d\d?)(?![\w.])"
 )
 
-# IPv4-mapped IPv6 must win before bare IPv4 / truncated IPv6 candidates.
-IPV4_MAPPED_RE = re.compile(
-    r"(?<![\w:])::[Ff]{4}:(?:(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\.){3}"
+# IPv6 with a trailing dotted quad (``::ffff:a.b.c.d``, NAT64
+# ``64:ff9b::a.b.c.d``) must win before bare IPv4 / truncated IPv6 candidates.
+IPV6_V4_RE = re.compile(
+    r"(?<![\w:.])(?:[0-9A-Fa-f]{0,4}:){2,7}(?:(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\.){3}"
     r"(?:25[0-5]|2[0-4]\d|[01]?\d\d?)(?![\w.])"
 )
 
@@ -412,23 +414,23 @@ def _ip_valid(value: str) -> bool:
         pass
     else:
         return True
-    lower = value.lower()
-    if lower.startswith("::ffff:"):
-        v4 = _normalize_ipv4_octets(value[7:])
+    if ":" in value:
+        head, _, tail = value.rpartition(":")
+        v4 = _normalize_ipv4_octets(tail)
         if v4 is None:
             return False
         try:
-            ipaddress.ip_address("::ffff:" + v4)
+            ipaddress.ip_address(f"{head}:{v4}")
         except ValueError:
             return False
         return True
-    if ":" in value:
-        return False
     return _normalize_ipv4_octets(value) is not None
 
+# A preceding ``:`` is allowed (``host:10.0.0.1``): IPv6-embedded forms are
+# consumed by ``IPV6_V4_RE`` first.
 
 def _scrub_ip(text: str) -> tuple[str, int]:
-    out, count = _replace_matches(text, IPV4_MAPPED_RE, "[IP]", _ip_valid)
+    out, count = _replace_matches(text, IPV6_V4_RE, "[IP]", _ip_valid)
     out, n = _replace_matches(out, IPV4_RE, "[IP]", _ip_valid)
     count += n
     out, n = _replace_matches(out, IPV6_RE, "[IP]", _ip_valid)

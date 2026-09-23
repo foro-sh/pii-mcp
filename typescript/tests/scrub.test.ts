@@ -120,6 +120,14 @@ describe("scrubText", () => {
     expect(scrubText("NL91\u200bABNA0417164300").text).toBe("[IBAN]");
   });
 
+  it("masks embedded-IPv4 IPv6 whole and IPv4 after a label colon", () => {
+    expect(scrubText("route 64:ff9b::192.0.2.33 ok").text).toBe("route [IP] ok");
+    expect(scrubText("compat ::192.0.2.33").text).toBe("compat [IP]");
+    expect(scrubText("host:192.168.1.10 up, IP:10.20.30.40").text).toBe(
+      "host:[IP] up, IP:[IP]",
+    );
+  });
+
   it("masks BSN with nl pack and prefers it over SSN", () => {
     const result = scrubText("id 111222333", { languages: ["en", "nl"] });
     expect(result.text).toBe("id [BSN]");

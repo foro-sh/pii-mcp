@@ -697,11 +697,12 @@ fn ipv4_re() -> &'static Regex {
     })
 }
 
-fn ipv4_mapped_re() -> &'static Regex {
+/// IPv6 with a trailing dotted quad (``::ffff:a.b.c.d``, NAT64 ``64:ff9b::a.b.c.d``).
+fn ipv6_v4_re() -> &'static Regex {
     static RE: OnceLock<Regex> = OnceLock::new();
     RE.get_or_init(|| {
         Regex::new(
-            r"(?i)::ffff:(?:(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\.){3}(?:25[0-5]|2[0-4]\d|[01]?\d\d?)",
+            r"(?:[0-9A-Fa-f]{0,4}:){2,7}(?:(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\.){3}(?:25[0-5]|2[0-4]\d|[01]?\d\d?)",
         )
         .unwrap()
     })
@@ -744,25 +745,18 @@ fn ip_valid(value: &str) -> bool {
     if value.parse::<std::net::IpAddr>().is_ok() {
         return true;
     }
-    let lower = value.to_ascii_lowercase();
-    if let Some(rest) = lower.strip_prefix("::ffff:") {
-        let v4_part = &value[value.len() - rest.len()..];
-        if let Some(norm) = normalize_ipv4_octets(v4_part) {
-            return format!("::ffff:{norm}").parse::<std::net::IpAddr>().is_ok();
-        }
-        return false;
-    }
-    if value.contains(':') {
-        return false;
+    if let Some((head, tail)) = value.rsplit_once(':') {
+        return normalize_ipv4_octets(tail)
+            .is_some_and(|norm| format!("{head}:{norm}").parse::<std::net::IpAddr>().is_ok());
     }
     normalize_ipv4_octets(value).is_some()
 }
 
 fn ipv4_boundary_ok(text: &str, start: usize, end: usize) -> bool {
-    // (?<![\w.:]) ... (?![\w.]) — reject preceding ':' so ::ffff:a.b.c.d is not split.
+    // (?<![\w.]) ... (?![\w.]) — IPv6-embedded forms are consumed first.
     if start > 0 {
         let prev = text[..start].chars().next_back().unwrap();
-        if is_word_char(prev) || prev == '.' || prev == ':' {
+        if is_word_char(prev) || prev == '.' {
             return false;
         }
     }
@@ -775,8 +769,8 @@ fn ipv4_boundary_ok(text: &str, start: usize, end: usize) -> bool {
     true
 }
 
-fn ipv4_mapped_boundary_ok(text: &str, start: usize, end: usize) -> bool {
-    // (?<![\w:]) ... (?![\w.])
+fn ipv6_v4_boundary_ok(text: &str, start: usize, end: usize) -> bool {
+    // (?<![\w:.]) ... (?![\w.])
     if start > 0 {
         let prev = text[..start].chars().next_back().unwrap();
         if is_word_char(prev) || prev == ':' {
@@ -796,7 +790,7 @@ fn ipv6_boundary_ok(text: &str, start: usize, end: usize) -> bool {
     // (?<![\w:]) ... (?![\w:])
     if start > 0 {
         let prev = text[..start].chars().next_back().unwrap();
-        if is_word_char(prev) || prev == ':' {
+        if is_word_char(prev) || prev == ':' || prev == '.' {
             return false;
         }
     }
@@ -872,9 +866,9 @@ fn scrub_ipv6(text: &str) -> (Option<String>, u32) {
 fn scrub_ip(text: &str) -> (Option<String>, u32) {
     let (mapped, mut count) = replace_matches(
         text,
-        ipv4_mapped_re(),
+        ipv6_v4_re(),
         "[IP]",
-        |v, s, e| ipv4_mapped_boundary_ok(text, s, e) && ip_valid(v),
+        |v, s, e| ipv6_v4_boundary_ok(text, s, e) && ip_valid(v),
         true,
     );
     let (first, n) = {

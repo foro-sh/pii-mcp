@@ -23,9 +23,10 @@
  * - IMEI: hyphen/space-grouped 15-digit forms with Luhn (AP: gegevens over
  *   elektronische communicatie / device identifiers). Compact 15-digit IMEIs
  *   that are also Luhn-valid collide with Amex and stay under ``credit_card``.
- * - IP: IPv4-mapped IPv6 (``::ffff:a.b.c.d``) is matched whole before bare IPv4;
- *   IPv4 rejects a preceding ``:`` so mapped forms are not partially eaten;
- *   leading zeros in octets are accepted (``192.168.001.001``).
+ * - IP: IPv6 with an embedded dotted quad (``::ffff:a.b.c.d``, NAT64
+ *   ``64:ff9b::a.b.c.d``) is matched whole before bare IPv4, so bare IPv4 may
+ *   follow a label colon (``host:10.0.0.1``); leading zeros in octets are
+ *   accepted (``192.168.001.001``).
  * - Location: decimal lat/lon pairs with ≥3 fractional digits, optional
  *   ``N``/``S``/``E``/``W`` hemisphere letters, and range checks (AP lists
  *   locatiegegevens as privacy-sensitive).
@@ -374,10 +375,11 @@ function scrubImei(text: string): { text: string; count: number } {
 export const imeiDetector: Detector = { type: "imei", scrub: scrubImei };
 
 const IPV4_RE =
-  /(?<![\w.:])(?:(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\.){3}(?:25[0-5]|2[0-4]\d|[01]?\d\d?)(?![\w.])/g;
+  /(?<![\w.])(?:(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\.){3}(?:25[0-5]|2[0-4]\d|[01]?\d\d?)(?![\w.])/g;
 
-const IPV4_MAPPED_RE =
-  /(?<![\w:])::[Ff]{4}:(?:(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\.){3}(?:25[0-5]|2[0-4]\d|[01]?\d\d?)(?![\w.])/g;
+// IPv6 with a trailing dotted quad (``::ffff:a.b.c.d``, NAT64 ``64:ff9b::a.b.c.d``).
+const IPV6_V4_RE =
+  /(?<![\w:.])(?:[0-9A-Fa-f]{0,4}:){2,7}(?:(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\.){3}(?:25[0-5]|2[0-4]\d|[01]?\d\d?)(?![\w.])/g;
 
 const IPV6_RE =
   /(?<![\w:])(?:(?:[0-9a-fA-F]{1,4}:){7}[0-9a-fA-F]{1,4}|::(?:[0-9a-fA-F]{1,4}:){0,6}[0-9a-fA-F]{1,4}|(?:[0-9a-fA-F]{1,4}:){1,7}:|(?:[0-9a-fA-F]{1,4}:){1,6}:[0-9a-fA-F]{1,4}|(?:[0-9a-fA-F]{1,4}:){1,5}(?::[0-9a-fA-F]{1,4}){1,2}|(?:[0-9a-fA-F]{1,4}:){1,4}(?::[0-9a-fA-F]{1,4}){1,3}|(?:[0-9a-fA-F]{1,4}:){1,3}(?::[0-9a-fA-F]{1,4}){1,4}|(?:[0-9a-fA-F]{1,4}:){1,2}(?::[0-9a-fA-F]{1,4}){1,5}|[0-9a-fA-F]{1,4}:(?::[0-9a-fA-F]{1,4}){1,6}|::)(?![\w:])/g;
@@ -401,25 +403,24 @@ function ipValid(value: string): boolean {
   if (isIP(value) !== 0) {
     return true;
   }
-  const lower = value.toLowerCase();
-  if (lower.startsWith("::ffff:")) {
-    const v4 = normalizeIpv4Octets(value.slice(7));
-    return v4 !== null && isIP(`::ffff:${v4}`) !== 0;
-  }
-  if (value.includes(":")) {
-    return false;
+  const colon = value.lastIndexOf(":");
+  if (colon !== -1) {
+    const v4 = normalizeIpv4Octets(value.slice(colon + 1));
+    return v4 !== null && isIP(`${value.slice(0, colon)}:${v4}`) !== 0;
   }
   return normalizeIpv4Octets(value) !== null;
 }
 
 function scrubIp(text: string): { text: string; count: number } {
-  const mapped = replaceMatches(text, IPV4_MAPPED_RE, "[IP]", ipValid);
+  const mapped = replaceMatches(text, IPV6_V4_RE, "[IP]", ipValid);
   const v4 = replaceMatches(mapped.text, IPV4_RE, "[IP]", ipValid);
   const v6 = replaceMatches(v4.text, IPV6_RE, "[IP]", ipValid);
   return {
     text: v6.text,
     count: mapped.count + v4.count + v6.count,
   };
+// IPv6-embedded dotted quads are consumed by IPV6_V4_RE first, so a label
+// colon (``host:10.0.0.1``) may precede a bare IPv4.
 }
 
 export const ipDetector: Detector = { type: "ip", scrub: scrubIp };
