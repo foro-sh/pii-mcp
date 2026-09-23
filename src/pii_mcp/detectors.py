@@ -534,8 +534,9 @@ def _scrub_location(text: str) -> tuple[str, int]:
 
 location_detector = Detector(type="location", scrub=_scrub_location)
 
+# ``(?<!\d\.)``: the fractional part of a decimal (``0.12345678``) is not an id.
 BSN_RES: tuple[re.Pattern[str], ...] = (
-    re.compile(r"\b\d{8,9}\b"),
+    re.compile(r"(?<!\d\.)\b\d{8,9}\b"),
     re.compile(r"\b\d{3}[ .\-]\d{3}[ .\-]\d{3}\b"),
 )
 
@@ -567,7 +568,7 @@ SSN_RES: tuple[re.Pattern[str], ...] = (
     re.compile(r"\b\d{3}-\d{2}-\d{4}\b"),
     re.compile(r"\b\d{3}/\d{2}/\d{4}\b"),
     re.compile(r"\b\d{3}[ .]\d{2}[ .]\d{4}\b"),
-    re.compile(r"\b\d{9}\b"),
+    re.compile(r"(?<!\d\.)\b\d{9}\b"),
 )
 
 
