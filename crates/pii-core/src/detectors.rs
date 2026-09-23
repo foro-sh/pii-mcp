@@ -508,10 +508,26 @@ fn mac_cisco_re() -> &'static Regex {
     RE.get_or_init(|| Regex::new(r"(?:[0-9A-Fa-f]{4}\.){2}[0-9A-Fa-f]{4}").unwrap())
 }
 
+/// Allow ``label:<hit>``; reject when the ``:`` continues a colon-hex run
+/// (the token before it is empty or a 1–4 digit hex group).
+fn colon_label_ok(text: &str, start: usize) -> bool {
+    let Some(before) = text[..start].strip_suffix(':') else {
+        return true;
+    };
+    let token_start = before
+        .char_indices()
+        .rev()
+        .take_while(|(_, c)| is_word_char(*c))
+        .last()
+        .map_or(before.len(), |(i, _)| i);
+    let token = &before[token_start..];
+    !(token.len() <= 4 && token.bytes().all(|b| b.is_ascii_hexdigit()))
+}
+
 fn mac_colon_boundary_ok(text: &str, start: usize, end: usize) -> bool {
     if start > 0 {
         let prev = text[..start].chars().next_back().unwrap();
-        if is_word_char(prev) || prev == ':' {
+        if is_word_char(prev) || !colon_label_ok(text, start) {
             return false;
         }
     }
@@ -773,7 +789,7 @@ fn ipv6_v4_boundary_ok(text: &str, start: usize, end: usize) -> bool {
     // (?<![\w:.]) ... (?![\w.])
     if start > 0 {
         let prev = text[..start].chars().next_back().unwrap();
-        if is_word_char(prev) || prev == ':' {
+        if is_word_char(prev) || prev == ':' || prev == '.' {
             return false;
         }
     }
@@ -790,7 +806,7 @@ fn ipv6_boundary_ok(text: &str, start: usize, end: usize) -> bool {
     // (?<![\w:]) ... (?![\w:])
     if start > 0 {
         let prev = text[..start].chars().next_back().unwrap();
-        if is_word_char(prev) || prev == ':' || prev == '.' {
+        if is_word_char(prev) || prev == ':' {
             return false;
         }
     }

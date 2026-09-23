@@ -416,3 +416,14 @@ class TestIpEmbeddedAndLabelled:
         result = scrub_text("host:192.168.1.10 up, IP:10.20.30.40")
         assert result["text"] == "host:[IP] up, IP:[IP]"
         assert result["counts"]["ip"] == 2
+
+
+class TestMacLabelColon:
+    def test_mac_after_label_colon(self) -> None:
+        result = scrub_text("mac:aa:bb:cc:dd:ee:ff")
+        assert result["text"] == "mac:[MAC]"
+        assert result["counts"]["mac"] == 1
+
+    def test_seven_hex_groups_not_mac(self) -> None:
+        text = "ab:aa:bb:cc:dd:ee:ff"
+        assert scrub_text(text)["counts"]["mac"] == 0

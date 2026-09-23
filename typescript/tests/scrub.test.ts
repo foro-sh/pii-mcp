@@ -128,6 +128,11 @@ describe("scrubText", () => {
     );
   });
 
+  it("masks MAC after a label colon but not a slice of a longer hex run", () => {
+    expect(scrubText("mac:aa:bb:cc:dd:ee:ff").text).toBe("mac:[MAC]");
+    expect(scrubText("ab:aa:bb:cc:dd:ee:ff").counts.mac).toBe(0);
+  });
+
   it("masks BSN with nl pack and prefers it over SSN", () => {
     const result = scrubText("id 111222333", { languages: ["en", "nl"] });
     expect(result.text).toBe("id [BSN]");

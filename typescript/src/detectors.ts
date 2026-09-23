@@ -20,6 +20,7 @@
  *   ``.``, and ``/``; zero-width characters are stripped before matching.
  * - BIC/SWIFT: 8 or 11 alnum with ISO 3166-1 country letters (AP: financial data).
  * - MAC: colon/dash IEEE and Cisco dotted forms (AP: device MAC is personal data).
+ *   A label colon (``mac:aa:bb:…``) is allowed; a preceding hex group is not.
  * - IMEI: hyphen/space-grouped 15-digit forms with Luhn (AP: gegevens over
  *   elektronische communicatie / device identifiers). Compact 15-digit IMEIs
  *   that are also Luhn-valid collide with Amex and stay under ``credit_card``.
@@ -330,8 +331,10 @@ function scrubBic(text: string): { text: string; count: number } {
 
 export const bicDetector: Detector = { type: "bic", scrub: scrubBic };
 
+// A label colon (``mac:aa:bb:…``) is allowed; a preceding empty or 1–4 digit
+// hex group means the hit is a slice of a longer colon-hex run.
 const MAC_RES = [
-  /(?<![\w:])(?:[0-9A-Fa-f]{2}[:-]){5}[0-9A-Fa-f]{2}(?![\w:])/g,
+  /(?<!\w)(?<!(?<!\w)[0-9A-Fa-f]{0,4}:)(?:[0-9A-Fa-f]{2}[:-]){5}[0-9A-Fa-f]{2}(?![\w:])/g,
   /(?<![\w.])(?:[0-9A-Fa-f]{2}\.){5}[0-9A-Fa-f]{2}(?![\w.])/g,
   /(?<![\w.])(?:[0-9A-Fa-f]{4}\.){2}[0-9A-Fa-f]{4}(?![\w.])/g,
 ] as const;
@@ -374,6 +377,8 @@ function scrubImei(text: string): { text: string; count: number } {
 
 export const imeiDetector: Detector = { type: "imei", scrub: scrubImei };
 
+// IPv6-embedded dotted quads are consumed by IPV6_V4_RE first, so a label
+// colon (``host:10.0.0.1``) may precede a bare IPv4.
 const IPV4_RE =
   /(?<![\w.])(?:(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\.){3}(?:25[0-5]|2[0-4]\d|[01]?\d\d?)(?![\w.])/g;
 
@@ -419,8 +424,6 @@ function scrubIp(text: string): { text: string; count: number } {
     text: v6.text,
     count: mapped.count + v4.count + v6.count,
   };
-// IPv6-embedded dotted quads are consumed by IPV6_V4_RE first, so a label
-// colon (``host:10.0.0.1``) may precede a bare IPv4.
 }
 
 export const ipDetector: Detector = { type: "ip", scrub: scrubIp };
