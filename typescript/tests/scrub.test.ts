@@ -120,6 +120,41 @@ describe("scrubText", () => {
     expect(scrubText("NL91\u200bABNA0417164300").text).toBe("[IBAN]");
   });
 
+  it("masks embedded-IPv4 IPv6 whole and IPv4 after a label colon", () => {
+    expect(scrubText("route 64:ff9b::192.0.2.33 ok").text).toBe("route [IP] ok");
+    expect(scrubText("compat ::192.0.2.33").text).toBe("compat [IP]");
+    expect(scrubText("host:192.168.1.10 up, IP:10.20.30.40").text).toBe(
+      "host:[IP] up, IP:[IP]",
+    );
+  });
+
+  it("masks MAC after a label colon but not a slice of a longer hex run", () => {
+    expect(scrubText("mac:aa:bb:cc:dd:ee:ff").text).toBe("mac:[MAC]");
+    expect(scrubText("ab:aa:bb:cc:dd:ee:ff").counts.mac).toBe(0);
+  });
+
+  it("masks 19-digit and Diners card groupings and cards after a 4-digit group", () => {
+    expect(scrubText("unionpay 6212 3456 7890 1234 569 ok").text).toBe(
+      "unionpay [CREDIT_CARD] ok",
+    );
+    expect(scrubText("diners 3056 930902 5904 ok").text).toBe("diners [CREDIT_CARD] ok");
+    expect(scrubText("exp 2027 4111 1111 1111 1111 ok").text).toBe(
+      "exp 2027 [CREDIT_CARD] ok",
+    );
+  });
+
+  it("keeps Luhn-valid numbers without a card issuer prefix", () => {
+    expect(scrubText("ts 1695456789014").text).toBe("ts 1695456789014");
+    expect(scrubText("isbn 9780306406157").text).toBe("isbn 9780306406157");
+    expect(scrubText("uatp 122000000000003").text).toBe("uatp [CREDIT_CARD]");
+  });
+
+  it("keeps sub-unit decimal pairs and ends a location before a following word", () => {
+    const vec = "embedding [0.0123, -0.0456, 0.0789, 0.1011]";
+    expect(scrubText(vec).text).toBe(vec);
+    expect(scrubText("at 52.3676, 4.9041 exactly").text).toBe("at [LOCATION] exactly");
+  });
+
   it("masks BSN with nl pack and prefers it over SSN", () => {
     const result = scrubText("id 111222333", { languages: ["en", "nl"] });
     expect(result.text).toBe("id [BSN]");

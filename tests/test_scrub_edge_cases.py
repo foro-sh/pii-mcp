@@ -401,3 +401,77 @@ class TestStillWorks:
         twice = scrub_text(once["text"])
         assert twice["text"] == once["text"]
         assert twice["found"] is False
+
+
+class TestIpEmbeddedAndLabelled:
+    def test_nat64_embedded_ipv4_masked_whole(self) -> None:
+        result = scrub_text("route 64:ff9b::192.0.2.33 ok")
+        assert result["text"] == "route [IP] ok"
+        assert result["counts"]["ip"] == 1
+
+    def test_compat_embedded_ipv4_masked_whole(self) -> None:
+        assert scrub_text("compat ::192.0.2.33")["text"] == "compat [IP]"
+
+    def test_ipv4_after_label_colon(self) -> None:
+        result = scrub_text("host:192.168.1.10 up, IP:10.20.30.40")
+        assert result["text"] == "host:[IP] up, IP:[IP]"
+        assert result["counts"]["ip"] == 2
+
+
+class TestMacLabelColon:
+    def test_mac_after_label_colon(self) -> None:
+        result = scrub_text("mac:aa:bb:cc:dd:ee:ff")
+        assert result["text"] == "mac:[MAC]"
+        assert result["counts"]["mac"] == 1
+
+    def test_seven_hex_groups_not_mac(self) -> None:
+        text = "ab:aa:bb:cc:dd:ee:ff"
+        assert scrub_text(text)["counts"]["mac"] == 0
+
+
+class TestCreditCardGroupings:
+    def test_nineteen_digit_grouped(self) -> None:
+        result = scrub_text("unionpay 6212 3456 7890 1234 569 ok")
+        assert result["text"] == "unionpay [CREDIT_CARD] ok"
+        assert result["counts"]["credit_card"] == 1
+        assert result["counts"]["phone"] == 0
+
+    def test_diners_four_six_four(self) -> None:
+        result = scrub_text("diners 3056 930902 5904 ok")
+        assert result["text"] == "diners [CREDIT_CARD] ok"
+        assert result["counts"]["phone"] == 0
+
+    def test_leading_four_digit_group_does_not_hide_card(self) -> None:
+        """A Luhn-failing 4-4-4-4 window starting one group early must not
+        consume the real card."""
+        result = scrub_text("exp 2027 4111 1111 1111 1111 ok")
+        assert result["text"] == "exp 2027 [CREDIT_CARD] ok"
+        assert result["counts"]["credit_card"] == 1
+
+
+class TestCreditCardIssuerPrefix:
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "ts 1695456789014",  # Luhn-valid ms timestamp
+            "isbn 9780306406157",  # Luhn-valid ISBN-13
+        ],
+    )
+    def test_luhn_valid_non_card_prefix_kept(self, text: str) -> None:
+        assert scrub_text(text)["text"] == text
+
+    def test_fifteen_digit_any_prefix_still_masked(self) -> None:
+        """UATP (1…) and compact IMEIs stay covered."""
+        assert scrub_text("uatp 122000000000003")["text"] == "uatp [CREDIT_CARD]"
+
+
+class TestLocationSubUnitPairs:
+    def test_embedding_vector_kept(self) -> None:
+        text = "embedding [0.0123, -0.0456, 0.0789, 0.1011]"
+        assert scrub_text(text)["text"] == text
+
+    def test_real_coordinate_still_masked(self) -> None:
+        assert scrub_text("at 52.3676, 4.9041")["text"] == "at [LOCATION]"
+
+    def test_hemisphere_letter_not_glued_to_following_word(self) -> None:
+        assert scrub_text("at 52.3676, 4.9041 exactly")["text"] == "at [LOCATION] exactly"

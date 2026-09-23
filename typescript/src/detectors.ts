@@ -15,20 +15,25 @@
  *   mixed case and hyphen/tab/nbsp/slash separators, plus a single hyphen after
  *   check digits. Soft hyphens and zero-width characters are stripped before
  *   IBAN matching.
- * - Credit cards include Amex 4-6-5 groupings as well as 4-4-4-x and compact;
+ * - Credit cards include 4-4-4-4-x (17–19 digits), Amex 4-6-5, Diners 4-6-4
+ *   groupings as well as 4-4-4-x and compact; Luhn plus an issuer-prefix gate
+ *   (2–6, or 15 digits) keeps ms timestamps / ISBN-13s from matching;
  *   grouped forms also accept tab, nbsp, ideographic space, unicode dashes,
  *   ``.``, and ``/``; zero-width characters are stripped before matching.
  * - BIC/SWIFT: 8 or 11 alnum with ISO 3166-1 country letters (AP: financial data).
  * - MAC: colon/dash IEEE and Cisco dotted forms (AP: device MAC is personal data).
+ *   A label colon (``mac:aa:bb:…``) is allowed; a preceding hex group is not.
  * - IMEI: hyphen/space-grouped 15-digit forms with Luhn (AP: gegevens over
  *   elektronische communicatie / device identifiers). Compact 15-digit IMEIs
  *   that are also Luhn-valid collide with Amex and stay under ``credit_card``.
- * - IP: IPv4-mapped IPv6 (``::ffff:a.b.c.d``) is matched whole before bare IPv4;
- *   IPv4 rejects a preceding ``:`` so mapped forms are not partially eaten;
- *   leading zeros in octets are accepted (``192.168.001.001``).
+ * - IP: IPv6 with an embedded dotted quad (``::ffff:a.b.c.d``, NAT64
+ *   ``64:ff9b::a.b.c.d``) is matched whole before bare IPv4, so bare IPv4 may
+ *   follow a label colon (``host:10.0.0.1``); leading zeros in octets are
+ *   accepted (``192.168.001.001``).
  * - Location: decimal lat/lon pairs with ≥3 fractional digits, optional
  *   ``N``/``S``/``E``/``W`` hemisphere letters, and range checks (AP lists
- *   locatiegegevens as privacy-sensitive).
+ *   locatiegegevens as privacy-sensitive). Pairs with both |values| <= 1 are
+ *   rejected (open ocean; embedding / weight vectors).
  * - US SSN: hyphen/space/dot/slash or compact 9-digit with SSA area/group/serial
  *   rejects, plus obvious fakes (all-same digit, 123456789 / 987654321).
  * - German Steuer-IdNr (tax_id): 11 digits with structure + mod-11/10 check.
@@ -84,9 +89,26 @@ function replaceMatches(
   pattern: RegExp,
   placeholder: string,
   isValid?: (value: string) => boolean,
+  retry = false,
 ): { text: string; count: number } {
   let count = 0;
   const re = cloneRegExp(pattern);
+  if (retry && isValid !== undefined) {
+    // Resume a rejected match at start + 1 so an overlapping bogus candidate
+    // (``2024 4111 1111 1111`` failing Luhn) does not swallow the real hit.
+    let out = "";
+    let last = 0;
+    for (let m = re.exec(text); m !== null; m = re.exec(text)) {
+      if (!isValid(m[0])) {
+        re.lastIndex = m.index + 1;
+        continue;
+      }
+      out += text.slice(last, m.index) + placeholder;
+      last = re.lastIndex;
+      count += 1;
+    }
+    return { text: out + text.slice(last), count };
+  }
   const out = text.replace(re, (value) => {
     if (isValid !== undefined && !isValid(value)) {
       return value;
@@ -243,12 +265,22 @@ export const ibanDetector: Detector = { type: "iban", scrub: scrubIban };
 const CC_SEP = String.raw`(?:${SEP_SPACE}|[./\-\u2010-\u2015])+`;
 
 const CREDIT_CARD_RES = [
+  // 17–19 digit PANs (UnionPay, Maestro, Visa) group as 4-4-4-4-x.
+  new RegExp(
+    String.raw`(?<!\d)\d{4}${CC_SEP}\d{4}${CC_SEP}\d{4}${CC_SEP}\d{4}${CC_SEP}\d{1,3}(?!\d)`,
+    "g",
+  ),
   new RegExp(
     String.raw`(?<!\d)\d{4}${CC_SEP}\d{4}${CC_SEP}\d{4}${CC_SEP}\d{1,4}(?!\d)`,
     "g",
   ),
   new RegExp(
     String.raw`(?<!\d)\d{4}${CC_SEP}\d{6}${CC_SEP}\d{5}(?!\d)`,
+    "g",
+  ),
+  // Diners Club 14-digit 4-6-4.
+  new RegExp(
+    String.raw`(?<!\d)\d{4}${CC_SEP}\d{6}${CC_SEP}\d{4}(?!\d)`,
     "g",
   ),
   // Digit/letter glue: \b does not split 1N.
@@ -275,6 +307,19 @@ function luhnValid(digits: string): boolean {
   return total % 10 === 0;
 }
 
+/**
+ * Luhn plus issuer prefix: payment PANs start 2–6; RuPay 81/82 and Troy 9792
+ * are 16-digit exceptions; 15 digits stay open for UATP and compact IMEIs.
+ */
+function cardValid(value: string): boolean {
+  const digits = value.replace(/\D/g, "");
+  const prefixOk =
+    /^[2-6]/.test(digits) ||
+    digits.length === 15 ||
+    (digits.length === 16 && /^(?:81|82|9792)/.test(digits));
+  return prefixOk && luhnValid(digits);
+}
+
 function scrubCreditCard(text: string): { text: string; count: number } {
   let out = text.replace(INVISIBLE, "");
   let count = 0;
@@ -283,7 +328,8 @@ function scrubCreditCard(text: string): { text: string; count: number } {
       out,
       pattern,
       "[CREDIT_CARD]",
-      (m) => luhnValid(m.replace(/\D/g, "")),
+      cardValid,
+      true,
     );
     out = result.text;
     count += result.count;
@@ -329,8 +375,10 @@ function scrubBic(text: string): { text: string; count: number } {
 
 export const bicDetector: Detector = { type: "bic", scrub: scrubBic };
 
+// A label colon (``mac:aa:bb:…``) is allowed; a preceding empty or 1–4 digit
+// hex group means the hit is a slice of a longer colon-hex run.
 const MAC_RES = [
-  /(?<![\w:])(?:[0-9A-Fa-f]{2}[:-]){5}[0-9A-Fa-f]{2}(?![\w:])/g,
+  /(?<!\w)(?<!(?<!\w)[0-9A-Fa-f]{0,4}:)(?:[0-9A-Fa-f]{2}[:-]){5}[0-9A-Fa-f]{2}(?![\w:])/g,
   /(?<![\w.])(?:[0-9A-Fa-f]{2}\.){5}[0-9A-Fa-f]{2}(?![\w.])/g,
   /(?<![\w.])(?:[0-9A-Fa-f]{4}\.){2}[0-9A-Fa-f]{4}(?![\w.])/g,
 ] as const;
@@ -373,11 +421,14 @@ function scrubImei(text: string): { text: string; count: number } {
 
 export const imeiDetector: Detector = { type: "imei", scrub: scrubImei };
 
+// IPv6-embedded dotted quads are consumed by IPV6_V4_RE first, so a label
+// colon (``host:10.0.0.1``) may precede a bare IPv4.
 const IPV4_RE =
-  /(?<![\w.:])(?:(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\.){3}(?:25[0-5]|2[0-4]\d|[01]?\d\d?)(?![\w.])/g;
+  /(?<![\w.])(?:(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\.){3}(?:25[0-5]|2[0-4]\d|[01]?\d\d?)(?![\w.])/g;
 
-const IPV4_MAPPED_RE =
-  /(?<![\w:])::[Ff]{4}:(?:(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\.){3}(?:25[0-5]|2[0-4]\d|[01]?\d\d?)(?![\w.])/g;
+// IPv6 with a trailing dotted quad (``::ffff:a.b.c.d``, NAT64 ``64:ff9b::a.b.c.d``).
+const IPV6_V4_RE =
+  /(?<![\w:.])(?:[0-9A-Fa-f]{0,4}:){2,7}(?:(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\.){3}(?:25[0-5]|2[0-4]\d|[01]?\d\d?)(?![\w.])/g;
 
 const IPV6_RE =
   /(?<![\w:])(?:(?:[0-9a-fA-F]{1,4}:){7}[0-9a-fA-F]{1,4}|::(?:[0-9a-fA-F]{1,4}:){0,6}[0-9a-fA-F]{1,4}|(?:[0-9a-fA-F]{1,4}:){1,7}:|(?:[0-9a-fA-F]{1,4}:){1,6}:[0-9a-fA-F]{1,4}|(?:[0-9a-fA-F]{1,4}:){1,5}(?::[0-9a-fA-F]{1,4}){1,2}|(?:[0-9a-fA-F]{1,4}:){1,4}(?::[0-9a-fA-F]{1,4}){1,3}|(?:[0-9a-fA-F]{1,4}:){1,3}(?::[0-9a-fA-F]{1,4}){1,4}|(?:[0-9a-fA-F]{1,4}:){1,2}(?::[0-9a-fA-F]{1,4}){1,5}|[0-9a-fA-F]{1,4}:(?::[0-9a-fA-F]{1,4}){1,6}|::)(?![\w:])/g;
@@ -401,19 +452,16 @@ function ipValid(value: string): boolean {
   if (isIP(value) !== 0) {
     return true;
   }
-  const lower = value.toLowerCase();
-  if (lower.startsWith("::ffff:")) {
-    const v4 = normalizeIpv4Octets(value.slice(7));
-    return v4 !== null && isIP(`::ffff:${v4}`) !== 0;
-  }
-  if (value.includes(":")) {
-    return false;
+  const colon = value.lastIndexOf(":");
+  if (colon !== -1) {
+    const v4 = normalizeIpv4Octets(value.slice(colon + 1));
+    return v4 !== null && isIP(`${value.slice(0, colon)}:${v4}`) !== 0;
   }
   return normalizeIpv4Octets(value) !== null;
 }
 
 function scrubIp(text: string): { text: string; count: number } {
-  const mapped = replaceMatches(text, IPV4_MAPPED_RE, "[IP]", ipValid);
+  const mapped = replaceMatches(text, IPV6_V4_RE, "[IP]", ipValid);
   const v4 = replaceMatches(mapped.text, IPV4_RE, "[IP]", ipValid);
   const v6 = replaceMatches(v4.text, IPV6_RE, "[IP]", ipValid);
   return {
@@ -439,6 +487,10 @@ function locationValid(value: string): boolean {
   const lat = coordComponent(parts[0]!);
   const lon = coordComponent(parts[1]!);
   if (!Number.isFinite(lat) || !Number.isFinite(lon)) {
+    return false;
+  }
+  // |lat|,|lon| <= 1 is open ocean (Gulf of Guinea): embedding / weight vectors.
+  if (Math.abs(lat) <= 1 && Math.abs(lon) <= 1) {
     return false;
   }
   return lat >= -90.0 && lat <= 90.0 && lon >= -180.0 && lon <= 180.0;

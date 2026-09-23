@@ -15,14 +15,18 @@ Patterns:
   mixed case and hyphen/tab/nbsp/slash separators when groups are explicitly separated
   (trailing word boundary blocks trailing-word swallow). A fifth matches a single
   hyphen after the check digits (``NL91-ABNA0417164300``).   Soft hyphens and zero-width characters are stripped before IBAN matching.
-- Credit cards include Amex 4-6-5 groupings as well as 4-4-4-x and compact;
+- Credit cards include 4-4-4-4-x (17–19 digits), Amex 4-6-5, Diners 4-6-4
+  groupings as well as 4-4-4-x and compact; Luhn plus an issuer-prefix gate
+  (2–6, or 15 digits) keeps ms timestamps / ISBN-13s from matching;
   grouped forms also accept tab, nbsp, ideographic space, unicode dashes,
   ``.``, and ``/``; zero-width characters are stripped before matching.
-- IP: IPv4-mapped IPv6 (``::ffff:a.b.c.d``) is matched whole before bare IPv4;
-  IPv4 rejects a preceding ``:`` so mapped forms are not partially eaten;
-  leading zeros in octets are accepted (``192.168.001.001``).
+- IP: IPv6 with an embedded dotted quad (``::ffff:a.b.c.d``, NAT64
+  ``64:ff9b::a.b.c.d``) is matched whole before bare IPv4, so bare IPv4 may
+  follow a label colon (``host:10.0.0.1``); leading zeros in octets are
+  accepted (``192.168.001.001``).
 - MAC: colon/dash IEEE, dotted IEEE (``aa.bb.cc.dd.ee.ff``), and Cisco
-  dotted forms (AP: device MAC is personal data).
+  dotted forms (AP: device MAC is personal data). A label colon
+  (``mac:aa:bb:…``) is allowed; a preceding hex group is not.
 - IMEI: hyphen/space/slash/dot-grouped 15-digit forms with Luhn (AP: gegevens
   over elektronische communicatie / device identifiers). Compact 15-digit
   IMEIs that are also Luhn-valid collide with Amex and stay under ``credit_card``.
@@ -30,7 +34,8 @@ Patterns:
   ``ipaddress`` (AP notes IP addresses can be personal data).
 - Location: decimal lat/lon pairs with ≥3 fractional digits, optional
   ``N``/``S``/``E``/``W`` hemisphere letters, and range checks (AP lists
-  locatiegegevens as privacy-sensitive).
+  locatiegegevens as privacy-sensitive). Pairs with both |values| <= 1 are
+  rejected (open ocean; embedding / weight vectors).
 - US SSN: hyphen/space/dot/slash or compact 9-digit with SSA area/group/serial
   rejects, plus obvious fakes (all-same digit, 123456789 / 987654321).
 - German Steuer-IdNr (tax_id): 11 digits with structure + mod-11/10 check.
@@ -93,18 +98,33 @@ def _replace_matches(
     pattern: re.Pattern[str],
     placeholder: str,
     is_valid: Callable[[str], bool] | None = None,
+    context_ok: Callable[[str, int, int], bool] | None = None,
+    retry: bool = False,
 ) -> tuple[str, int]:
+    """Replace accepted matches.
+
+    ``retry`` resumes a rejected match at ``start + 1`` instead of its end, so
+    an overlapping bogus candidate (``2024 4111 1111 1111`` failing Luhn) does
+    not swallow the real hit that starts inside it.
+    """
     count = 0
-
-    def _sub(match: re.Match[str]) -> str:
-        nonlocal count
-        value = match.group(0)
-        if is_valid is not None and not is_valid(value):
-            return value
+    parts: list[str] = []
+    last = pos = 0
+    while (match := pattern.search(text, pos)) is not None:
+        start, end = match.span()
+        if (is_valid is not None and not is_valid(match.group(0))) or (
+            context_ok is not None and not context_ok(text, start, end)
+        ):
+            pos = start + 1 if retry else max(end, start + 1)
+            continue
+        parts.append(text[last:start])
+        parts.append(placeholder)
+        last = pos = end
         count += 1
-        return placeholder
-
-    return pattern.sub(_sub, text), count
+    if count == 0:
+        return text, 0
+    parts.append(text[last:])
+    return "".join(parts), count
 
 
 EMAIL_RE = re.compile(
@@ -242,8 +262,14 @@ iban_detector = Detector(type="iban", scrub=_scrub_iban)
 _CC_SEP = rf"(?:{_SEP_SPACE}|[./\-\u2010-\u2015])+"
 
 CREDIT_CARD_RES: tuple[re.Pattern[str], ...] = (
+    # 17–19 digit PANs (UnionPay, Maestro, Visa) group as 4-4-4-4-x.
+    re.compile(
+        rf"(?<!\d)\d{{4}}{_CC_SEP}\d{{4}}{_CC_SEP}\d{{4}}{_CC_SEP}\d{{4}}{_CC_SEP}\d{{1,3}}(?!\d)"
+    ),
     re.compile(rf"(?<!\d)\d{{4}}{_CC_SEP}\d{{4}}{_CC_SEP}\d{{4}}{_CC_SEP}\d{{1,4}}(?!\d)"),
     re.compile(rf"(?<!\d)\d{{4}}{_CC_SEP}\d{{6}}{_CC_SEP}\d{{5}}(?!\d)"),
+    # Diners Club 14-digit 4-6-4.
+    re.compile(rf"(?<!\d)\d{{4}}{_CC_SEP}\d{{6}}{_CC_SEP}\d{{4}}(?!\d)"),
     # Digit/letter glue: \b does not split 1N.
     re.compile(r"(?<!\d)\d{13,19}(?!\d)"),
 )
@@ -265,6 +291,22 @@ def _luhn_valid(digits: str) -> bool:
     return total % 10 == 0
 
 
+def _card_valid(value: str) -> bool:
+    """Luhn plus issuer prefix: payment PANs start 2–6 (Mir, Amex, Visa, MC,
+    Discover, UnionPay…); RuPay 81/82 and Troy 9792 are 16-digit exceptions.
+    15 digits stay open for UATP (1…) and compact IMEIs. Cuts ~10% Luhn
+    collisions on ms timestamps, ISBN/EAN-13, and snowflake ids."""
+    digits = re.sub(r"\D", "", value)
+    if not digits:
+        return False
+    prefix_ok = (
+        digits[0] in "23456"
+        or len(digits) == 15
+        or (len(digits) == 16 and digits.startswith(("81", "82", "9792")))
+    )
+    return prefix_ok and _luhn_valid(digits)
+
+
 def _scrub_credit_card(text: str) -> tuple[str, int]:
     out = text
     for ch in _INVISIBLE:
@@ -275,7 +317,8 @@ def _scrub_credit_card(text: str) -> tuple[str, int]:
             out,
             pattern,
             "[CREDIT_CARD]",
-            lambda m: _luhn_valid(re.sub(r"\D", "", m)),
+            _card_valid,
+            retry=True,
         )
         count += n
     return out, count
@@ -317,9 +360,10 @@ def _scrub_bic(text: str) -> tuple[str, int]:
 
 bic_detector = Detector(type="bic", scrub=_scrub_bic)
 
+# A preceding ``:`` is checked by ``_colon_label_ok`` (``mac:aa:bb:…``).
 MAC_RES: tuple[re.Pattern[str], ...] = (
     re.compile(
-        r"(?<![\w:])(?:[0-9A-Fa-f]{2}[:-]){5}[0-9A-Fa-f]{2}(?![\w:])"
+        r"(?<!\w)(?:[0-9A-Fa-f]{2}[:-]){5}[0-9A-Fa-f]{2}(?![\w:])"
     ),
     # Dot-separated IEEE (distinct from Cisco xxxx.xxxx.xxxx).
     re.compile(
@@ -331,10 +375,27 @@ MAC_RES: tuple[re.Pattern[str], ...] = (
 )
 
 
+def _is_ascii_word(ch: str) -> bool:
+    return ch.isascii() and (ch.isalnum() or ch == "_")
+
+
+def _colon_label_ok(text: str, start: int, _end: int) -> bool:
+    """Allow ``label:<hit>``; reject when the ``:`` continues a colon-hex run.
+
+    The token before the colon must not be empty or a 1–4 digit hex group
+    (``ab:aa:bb:…`` / ``::aa:bb:…`` are slices of a longer address).
+    """
+    if start == 0 or text[start - 1] != ":":
+        return True
+    j = start - 1
+    while j > 0 and _is_ascii_word(text[j - 1]):
+        j -= 1
+    return re.fullmatch(r"[0-9A-Fa-f]{0,4}", text[j : start - 1]) is None
+
+
 def _scrub_mac(text: str) -> tuple[str, int]:
-    out = text
-    count = 0
-    for pattern in MAC_RES:
+    out, count = _replace_matches(text, MAC_RES[0], "[MAC]", context_ok=_colon_label_ok)
+    for pattern in MAC_RES[1:]:
         out, n = _replace_matches(out, pattern, "[MAC]")
         count += n
     return out, count
@@ -366,14 +427,17 @@ def _scrub_imei(text: str) -> tuple[str, int]:
 
 imei_detector = Detector(type="imei", scrub=_scrub_imei)
 
+# A preceding ``:`` is allowed (``host:10.0.0.1``): IPv6-embedded forms are
+# consumed by ``IPV6_V4_RE`` first.
 IPV4_RE = re.compile(
-    r"(?<![\w.:])(?:(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\.){3}"
+    r"(?<![\w.])(?:(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\.){3}"
     r"(?:25[0-5]|2[0-4]\d|[01]?\d\d?)(?![\w.])"
 )
 
-# IPv4-mapped IPv6 must win before bare IPv4 / truncated IPv6 candidates.
-IPV4_MAPPED_RE = re.compile(
-    r"(?<![\w:])::[Ff]{4}:(?:(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\.){3}"
+# IPv6 with a trailing dotted quad (``::ffff:a.b.c.d``, NAT64
+# ``64:ff9b::a.b.c.d``) must win before bare IPv4 / truncated IPv6 candidates.
+IPV6_V4_RE = re.compile(
+    r"(?<![\w:.])(?:[0-9A-Fa-f]{0,4}:){2,7}(?:(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\.){3}"
     r"(?:25[0-5]|2[0-4]\d|[01]?\d\d?)(?![\w.])"
 )
 
@@ -412,23 +476,21 @@ def _ip_valid(value: str) -> bool:
         pass
     else:
         return True
-    lower = value.lower()
-    if lower.startswith("::ffff:"):
-        v4 = _normalize_ipv4_octets(value[7:])
+    if ":" in value:
+        head, _, tail = value.rpartition(":")
+        v4 = _normalize_ipv4_octets(tail)
         if v4 is None:
             return False
         try:
-            ipaddress.ip_address("::ffff:" + v4)
+            ipaddress.ip_address(f"{head}:{v4}")
         except ValueError:
             return False
         return True
-    if ":" in value:
-        return False
     return _normalize_ipv4_octets(value) is not None
 
 
 def _scrub_ip(text: str) -> tuple[str, int]:
-    out, count = _replace_matches(text, IPV4_MAPPED_RE, "[IP]", _ip_valid)
+    out, count = _replace_matches(text, IPV6_V4_RE, "[IP]", _ip_valid)
     out, n = _replace_matches(out, IPV4_RE, "[IP]", _ip_valid)
     count += n
     out, n = _replace_matches(out, IPV6_RE, "[IP]", _ip_valid)
@@ -458,6 +520,10 @@ def _location_valid(value: str) -> bool:
         lat = _coord_component(parts[0])
         lon = _coord_component(parts[1])
     except ValueError:
+        return False
+    # |lat|,|lon| <= 1 is open ocean (Gulf of Guinea): such pairs are
+    # embedding / weight vectors, not places.
+    if abs(lat) <= 1.0 and abs(lon) <= 1.0:
         return False
     return -90.0 <= lat <= 90.0 and -180.0 <= lon <= 180.0
 

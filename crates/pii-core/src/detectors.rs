@@ -394,11 +394,15 @@ fn credit_card_res() -> &'static [Regex] {
         let sep_space = r"[ \t\r\n\u{00a0}\u{2000}-\u{200a}\u{202f}\u{3000}]";
         let sep = format!(r"(?:{sep_space}|[./\-\u{{2010}}-\u{{2015}}])+");
         vec![
+            // 17–19 digit PANs (UnionPay, Maestro, Visa) group as 4-4-4-4-x.
             Regex::new(&format!(
-                r"\d{{4}}{sep}\d{{4}}{sep}\d{{4}}{sep}\d{{1,4}}"
+                r"\d{{4}}{sep}\d{{4}}{sep}\d{{4}}{sep}\d{{4}}{sep}\d{{1,3}}"
             ))
             .unwrap(),
+            Regex::new(&format!(r"\d{{4}}{sep}\d{{4}}{sep}\d{{4}}{sep}\d{{1,4}}")).unwrap(),
             Regex::new(&format!(r"\d{{4}}{sep}\d{{6}}{sep}\d{{5}}")).unwrap(),
+            // Diners Club 14-digit 4-6-4.
+            Regex::new(&format!(r"\d{{4}}{sep}\d{{6}}{sep}\d{{4}}")).unwrap(),
             // Digit/letter glue: \b does not split 1N.
             Regex::new(r"\d{13,19}").unwrap(),
         ]
@@ -430,7 +434,16 @@ fn credit_card_valid(value: &str) -> bool {
         len += 1;
     }
     // SAFETY: len <= 19; digits[..len] are ASCII digits.
-    luhn_valid(std::str::from_utf8(&digits[..len]).unwrap())
+    let digits = std::str::from_utf8(&digits[..len]).unwrap();
+    // Issuer prefix (see Python ``_card_valid``): 2–6, 15 digits, or 16-digit
+    // RuPay 81/82 / Troy 9792.
+    let prefix_ok = matches!(digits.as_bytes().first(), Some(b'2'..=b'6'))
+        || len == 15
+        || (len == 16
+            && (digits.starts_with("81")
+                || digits.starts_with("82")
+                || digits.starts_with("9792")));
+    prefix_ok && luhn_valid(digits)
 }
 
 fn scrub_credit_card(text: &str) -> (Option<String>, u32) {
@@ -508,10 +521,26 @@ fn mac_cisco_re() -> &'static Regex {
     RE.get_or_init(|| Regex::new(r"(?:[0-9A-Fa-f]{4}\.){2}[0-9A-Fa-f]{4}").unwrap())
 }
 
+/// Allow ``label:<hit>``; reject when the ``:`` continues a colon-hex run
+/// (the token before it is empty or a 1–4 digit hex group).
+fn colon_label_ok(text: &str, start: usize) -> bool {
+    let Some(before) = text[..start].strip_suffix(':') else {
+        return true;
+    };
+    let token_start = before
+        .char_indices()
+        .rev()
+        .take_while(|(_, c)| is_word_char(*c))
+        .last()
+        .map_or(before.len(), |(i, _)| i);
+    let token = &before[token_start..];
+    !(token.len() <= 4 && token.bytes().all(|b| b.is_ascii_hexdigit()))
+}
+
 fn mac_colon_boundary_ok(text: &str, start: usize, end: usize) -> bool {
     if start > 0 {
         let prev = text[..start].chars().next_back().unwrap();
-        if is_word_char(prev) || prev == ':' {
+        if is_word_char(prev) || !colon_label_ok(text, start) {
             return false;
         }
     }
@@ -676,17 +705,51 @@ fn location_valid(value: &str) -> bool {
     let Some(lon) = coord_component(lon_s) else {
         return false;
     };
+    // |lat|,|lon| <= 1 is open ocean (Gulf of Guinea): embedding / weight vectors.
+    if lat.abs() <= 1.0 && lon.abs() <= 1.0 {
+        return false;
+    }
     (-90.0..=90.0).contains(&lat) && (-180.0..=180.0).contains(&lon)
 }
 
 fn scrub_location(text: &str) -> (Option<String>, u32) {
-    replace_matches(
-        text,
-        location_re(),
-        "[LOCATION]",
-        |v, s, e| location_boundary_ok(text, s, e) && location_valid(v),
-        true,
-    )
+    let accept =
+        |s: usize, e: usize| location_boundary_ok(text, s, e) && location_valid(&text[s..e]);
+    let mut count = 0u32;
+    let mut out: Option<String> = None;
+    let mut last = 0usize;
+    let mut pos = 0usize;
+    while let Some(m) = location_re().find_at(text, pos) {
+        let start = m.start();
+        let mut end = m.end();
+        if !accept(start, end) {
+            // Python backtracks the optional E/W letter (``4.9041 exactly``);
+            // the linear regex keeps it, so retry without it.
+            let shorter = m
+                .as_str()
+                .strip_suffix(['E', 'e', 'W', 'w'])
+                .map(|v| start + v.trim_end().len())
+                .filter(|&e| accept(start, e));
+            let Some(e) = shorter else {
+                pos = start + 1;
+                continue;
+            };
+            end = e;
+        }
+        let buf = out.get_or_insert_with(|| String::with_capacity(text.len()));
+        buf.push_str(&text[last..start]);
+        buf.push_str("[LOCATION]");
+        last = end;
+        pos = end;
+        count += 1;
+    }
+    match out {
+        None => (None, 0),
+        Some(mut buf) => {
+            buf.push_str(&text[last..]);
+            (Some(buf), count)
+        }
+    }
 }
 
 fn ipv4_re() -> &'static Regex {
@@ -697,11 +760,12 @@ fn ipv4_re() -> &'static Regex {
     })
 }
 
-fn ipv4_mapped_re() -> &'static Regex {
+/// IPv6 with a trailing dotted quad (``::ffff:a.b.c.d``, NAT64 ``64:ff9b::a.b.c.d``).
+fn ipv6_v4_re() -> &'static Regex {
     static RE: OnceLock<Regex> = OnceLock::new();
     RE.get_or_init(|| {
         Regex::new(
-            r"(?i)::ffff:(?:(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\.){3}(?:25[0-5]|2[0-4]\d|[01]?\d\d?)",
+            r"(?:[0-9A-Fa-f]{0,4}:){2,7}(?:(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\.){3}(?:25[0-5]|2[0-4]\d|[01]?\d\d?)",
         )
         .unwrap()
     })
@@ -744,25 +808,18 @@ fn ip_valid(value: &str) -> bool {
     if value.parse::<std::net::IpAddr>().is_ok() {
         return true;
     }
-    let lower = value.to_ascii_lowercase();
-    if let Some(rest) = lower.strip_prefix("::ffff:") {
-        let v4_part = &value[value.len() - rest.len()..];
-        if let Some(norm) = normalize_ipv4_octets(v4_part) {
-            return format!("::ffff:{norm}").parse::<std::net::IpAddr>().is_ok();
-        }
-        return false;
-    }
-    if value.contains(':') {
-        return false;
+    if let Some((head, tail)) = value.rsplit_once(':') {
+        return normalize_ipv4_octets(tail)
+            .is_some_and(|norm| format!("{head}:{norm}").parse::<std::net::IpAddr>().is_ok());
     }
     normalize_ipv4_octets(value).is_some()
 }
 
 fn ipv4_boundary_ok(text: &str, start: usize, end: usize) -> bool {
-    // (?<![\w.:]) ... (?![\w.]) — reject preceding ':' so ::ffff:a.b.c.d is not split.
+    // (?<![\w.]) ... (?![\w.]) — IPv6-embedded forms are consumed first.
     if start > 0 {
         let prev = text[..start].chars().next_back().unwrap();
-        if is_word_char(prev) || prev == '.' || prev == ':' {
+        if is_word_char(prev) || prev == '.' {
             return false;
         }
     }
@@ -775,11 +832,11 @@ fn ipv4_boundary_ok(text: &str, start: usize, end: usize) -> bool {
     true
 }
 
-fn ipv4_mapped_boundary_ok(text: &str, start: usize, end: usize) -> bool {
-    // (?<![\w:]) ... (?![\w.])
+fn ipv6_v4_boundary_ok(text: &str, start: usize, end: usize) -> bool {
+    // (?<![\w:.]) ... (?![\w.])
     if start > 0 {
         let prev = text[..start].chars().next_back().unwrap();
-        if is_word_char(prev) || prev == ':' {
+        if is_word_char(prev) || prev == ':' || prev == '.' {
             return false;
         }
     }
@@ -872,9 +929,9 @@ fn scrub_ipv6(text: &str) -> (Option<String>, u32) {
 fn scrub_ip(text: &str) -> (Option<String>, u32) {
     let (mapped, mut count) = replace_matches(
         text,
-        ipv4_mapped_re(),
+        ipv6_v4_re(),
         "[IP]",
-        |v, s, e| ipv4_mapped_boundary_ok(text, s, e) && ip_valid(v),
+        |v, s, e| ipv6_v4_boundary_ok(text, s, e) && ip_valid(v),
         true,
     );
     let (first, n) = {
