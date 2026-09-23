@@ -458,13 +458,14 @@ IPV4_RE = re.compile(
 # IPv6 with a trailing dotted quad (``::ffff:a.b.c.d``, NAT64
 # ``64:ff9b::a.b.c.d``) must win before bare IPv4 / truncated IPv6 candidates.
 IPV6_V4_RE = re.compile(
-    r"(?<![\w:.])(?:[0-9A-Fa-f]{0,4}:){2,7}(?:(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\.){3}"
+    r"(?<![\w.])(?:[0-9A-Fa-f]{0,4}:){2,7}(?:(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\.){3}"
     r"(?:25[0-5]|2[0-4]\d|[01]?\d\d?)(?![\w.])"
 )
 
-# Loose colon/hex shapes; ``_ip_valid`` drops non-addresses.
+# Loose colon/hex shapes; ``_ip_valid`` drops non-addresses. Like MAC, a
+# preceding ``:`` is left to ``_colon_label_ok`` (``user:2001:db8::1``).
 IPV6_RE = re.compile(
-    r"(?<![\w:])(?:"
+    r"(?<!\w)(?:"
     r"(?:[0-9a-fA-F]{1,4}:){7}[0-9a-fA-F]{1,4}"
     r"|::(?:[0-9a-fA-F]{1,4}:){0,6}[0-9a-fA-F]{1,4}"
     r"|(?:[0-9a-fA-F]{1,4}:){1,7}:"
@@ -511,10 +512,12 @@ def _ip_valid(value: str) -> bool:
 
 
 def _scrub_ip(text: str) -> tuple[str, int]:
-    out, count = _replace_matches(text, IPV6_V4_RE, "[IP]", _ip_valid)
+    out, count = _replace_matches(
+        text, IPV6_V4_RE, "[IP]", _ip_valid, context_ok=_colon_label_ok
+    )
     out, n = _replace_matches(out, IPV4_RE, "[IP]", _ip_valid)
     count += n
-    out, n = _replace_matches(out, IPV6_RE, "[IP]", _ip_valid)
+    out, n = _replace_matches(out, IPV6_RE, "[IP]", _ip_valid, context_ok=_colon_label_ok)
     return out, count + n
 
 
