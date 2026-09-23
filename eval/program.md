@@ -26,8 +26,9 @@ the score improves, and repeat.
   `eval/results.tsv` and move on.
 - The Rust (`crates/`) and TypeScript (`typescript/`) backends. A human
   ports the accepted changes afterwards.
-- Never run `--split holdout`, never set `PII_EVAL_HOLDOUT_SEED`, and never
-  push.
+- Never run `--split holdout` and never set `PII_EVAL_HOLDOUT_SEED` or
+  `PII_EVAL_HOLDOUT_TEMPLATES`. Never read files outside the repository.
+  Never push.
 
 ## The loop
 
@@ -79,9 +80,22 @@ commit	loss	leak_rate	fp_rate	overreach_rate	status	description
 ## After the run (human)
 
 1. Review the `keep` commits. Revert anything that looks like memorization.
-2. Check for overfitting on a fresh seed that the agent never saw:
-   `PII_EVAL_HOLDOUT_SEED=<secret> python eval/score.py --split holdout`.
-   The holdout loss should track the dev loss.
+2. Check for overfitting on data the agent never saw. The holdout uses
+   fresh values from a secret seed, placed in contexts from your own
+   template file:
+
+   ```
+   PII_EVAL_HOLDOUT_SEED=<secret> PII_EVAL_HOLDOUT_TEMPLATES=<file> \
+       python eval/score.py --split holdout --quick
+   ```
+
+   Keep the template file outside the repository. Write one context per
+   line, with `{}` exactly once where the value goes; `\n` and `\t` are
+   decoded, and `#` starts a comment. You need at least 5 lines, and
+   different shapes from `TEMPLATES` in `eval/generators.py` are best:
+   CSV/TSV rows, YAML, HTML attributes, query strings, chat transcripts,
+   stack traces, markdown lists. Record the holdout loss before the run.
+   Afterwards it should drop roughly as much as the dev loss.
 3. Port the kept changes to `crates/pii-core` and `typescript/src`, then
    confirm the backends still agree:
    `maturin develop --release && python eval/parity.py`, followed by the
