@@ -13,9 +13,10 @@
  *
  * Detector pack order (see ``detectorsFor``): universal → international phone
  * (when any pack is active, before national IDs so ``+31(0)6…`` is not eaten by
- * SSN) → checksum/rule-backed national IDs (BSN before SSN when both packs are
- * on; NL BTW and passport after BSN) → NL postcode / kenteken when ``nl`` →
- * locale phone forms.
+ * SSN) → locale phone forms (before BSN takes the subscriber part of
+ * ``040 78703244``) → checksum/rule-backed national IDs (BSN before SSN when
+ * both packs are on; NL BTW before BSN, passport after) → NL postcode /
+ * kenteken when ``nl``.
  */
 
 import {
@@ -98,8 +99,20 @@ function detectorsFor(
   if (langs.length > 0) {
     pack.push(phoneInternationalDetector);
   }
+  // National phone forms (trunk ``0`` + area code) before bare-digit IDs, so
+  // BSN does not take the subscriber part of ``040 78703244``.
   if (langs.includes("nl")) {
-    pack.push(bsnDetector, nlVatDetector, nlPassportDetector);
+    pack.push(phoneNlDetector);
+  }
+  if (langs.includes("en")) {
+    pack.push(phoneEnDetector);
+  }
+  if (langs.includes("de")) {
+    pack.push(phoneDeDetector);
+  }
+  if (langs.includes("nl")) {
+    // BTW-id first: its 9-digit body can itself pass the BSN elfproef.
+    pack.push(nlVatDetector, bsnDetector, nlPassportDetector);
   }
   if (langs.includes("de")) {
     pack.push(taxIdDetector);
@@ -108,13 +121,7 @@ function detectorsFor(
     pack.push(ssnDetector);
   }
   if (langs.includes("nl")) {
-    pack.push(nlPostcodeDetector, nlLicensePlateDetector, phoneNlDetector);
-  }
-  if (langs.includes("en")) {
-    pack.push(phoneEnDetector);
-  }
-  if (langs.includes("de")) {
-    pack.push(phoneDeDetector);
+    pack.push(nlPostcodeDetector, nlLicensePlateDetector);
   }
   return pack;
 }
