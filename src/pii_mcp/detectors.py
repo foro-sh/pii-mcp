@@ -813,12 +813,13 @@ _NL_PLATE_LETTER_REJECTS = frozenset({"SA", "SD", "SS"})
 
 
 def _nl_license_plate_valid(value: str) -> bool:
-    """Reject RDW-forbidden SA/SD/SS letter pairs anywhere in the plate."""
-    letters = "".join(ch for ch in value.upper() if ch.isalpha())
-    for i in range(len(letters) - 1):
-        if letters[i : i + 2] in _NL_PLATE_LETTER_REJECTS:
-            return False
-    return True
+    """Reject RDW-forbidden SA/SD/SS letter pairs inside one letter group;
+    letters split by a hyphen (``KS-234-S``) are not a combination."""
+    return not any(
+        group[i : i + 2] in _NL_PLATE_LETTER_REJECTS
+        for group in value.upper().split("-")
+        for i in range(len(group) - 1)
+    )
 
 
 def _scrub_nl_license_plate(text: str) -> tuple[str, int]:
