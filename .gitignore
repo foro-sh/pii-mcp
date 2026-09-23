@@ -32,3 +32,7 @@ typescript/node_modules/
 typescript/dist/
 typescript/*.node
 typescript/native/
+
+# Detector eval (local only)
+eval/.baseline.json
+eval/results.tsv
