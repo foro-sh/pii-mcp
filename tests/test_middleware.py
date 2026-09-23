@@ -8,7 +8,7 @@ from unittest.mock import MagicMock
 import pytest
 from mcp.types import TextContent
 
-from fastmcp.tools.tool import ToolResult
+from fastmcp.tools import ToolResult
 
 from pii_mcp.fastmcp import WITHHELD_TEXT, PiiScrubMiddleware
 from pii_mcp.scrub import ScrubReport
@@ -111,3 +111,19 @@ async def test_masks_tool_result_meta(middleware: PiiScrubMiddleware) -> None:
 
     result = await middleware.on_call_tool(MagicMock(), call_next)
     assert result.meta == {"email": "[EMAIL]"}
+
+
+async def test_keeps_tool_error_flag(middleware: PiiScrubMiddleware) -> None:
+    """FastMCP 4 adds ``is_error``; scrubbing must not reset it."""
+    if "is_error" not in ToolResult.model_fields:
+        pytest.skip("ToolResult.is_error is FastMCP 4+")
+
+    async def call_next(_ctx: Any) -> ToolResult:
+        return ToolResult(
+            content=[TextContent(type="text", text="failed for ada@example.com")],
+            is_error=True,
+        )
+
+    result = await middleware.on_call_tool(MagicMock(), call_next)
+    assert result.content[0].text == "failed for [EMAIL]"
+    assert result.is_error is True

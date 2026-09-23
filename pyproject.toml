@@ -27,7 +27,8 @@ dependencies = []
 [project.optional-dependencies]
 fastmcp = [
   # Middleware API: Middleware, on_call_tool / on_read_resource / on_get_prompt,
-  # ToolResult with content + structured_content (FastMCP 3.0+).
+  # ToolResult with content + structured_content (FastMCP 3.0+; CI tests
+  # the 3.0.0 floor and the latest release).
   "fastmcp>=3.0.0",
 ]
 dev = [
