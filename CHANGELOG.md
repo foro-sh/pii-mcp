@@ -1,3 +1,12 @@
+## [1.5.3](https://github.com/foro-sh/pii-mcp/compare/v1.5.2...v1.5.3) (2026-09-23)
+
+### Bug Fixes
+
+* **credit-card:** add 19-digit and Diners groupings and issuer prefix gate ([7e7a411](https://github.com/foro-sh/pii-mcp/commit/7e7a4111ffc2b018f3d4ca886828787c791b28cc))
+* **ip:** mask embedded-IPv4 IPv6 whole and IPv4 after a label colon ([06e5d5f](https://github.com/foro-sh/pii-mcp/commit/06e5d5f8f105505eca7c92ec977768aa90a497e9))
+* **location:** skip sub-unit decimal pairs and trim trailing E/W in Rust ([37115aa](https://github.com/foro-sh/pii-mcp/commit/37115aa9c0158255a984611cf1e844f890aa1cef))
+* **mac:** mask MAC addresses after a label colon ([cf12f0f](https://github.com/foro-sh/pii-mcp/commit/cf12f0fb816fb13f7af6fa898f2be93d451b28dd))
+
 ## [1.5.2](https://github.com/foro-sh/pii-mcp/compare/v1.5.1...v1.5.2) (2026-09-22)
 
 ### Bug Fixes
