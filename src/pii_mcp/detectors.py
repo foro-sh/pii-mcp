@@ -316,9 +316,12 @@ def _card_valid(value: str) -> bool:
     """Luhn plus issuer prefix: payment PANs start 2–6 (Mir, Amex, Visa, MC,
     Discover, UnionPay…); RuPay 81/82 and Troy 9792 are 16-digit exceptions.
     15 digits stay open for UATP (1…) and compact IMEIs. Cuts ~10% Luhn
-    collisions on ms timestamps, ISBN/EAN-13, and snowflake ids."""
+    collisions on ms timestamps, ISBN/EAN-13, and snowflake ids. 13-digit
+    PANs were only ever issued by Visa (4), so other 13-digit runs are EANs."""
     digits = re.sub(r"\D", "", value)
     if not digits:
+        return False
+    if len(digits) == 13 and digits[0] != "4":
         return False
     prefix_ok = (
         digits[0] in "23456"
