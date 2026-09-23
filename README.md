@@ -25,7 +25,7 @@ scrub_text(
 ## Install
 
 ```bash
-pip install "pii-mcp[fastmcp]"   # FastMCP >= 3.0.0
+pip install "pii-mcp[fastmcp]"   # FastMCP 3.x
 # or
 pip install pii-mcp              # core; platform wheels include Rust acceleration
 # or

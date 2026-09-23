@@ -1,6 +1,6 @@
 """FastMCP middleware: scrub outbound tool/resource/prompt results.
 
-Requires ``pip install pii-mcp[fastmcp]`` (FastMCP >= 3.0.0).
+Requires ``pip install pii-mcp[fastmcp]`` (FastMCP 3.x).
 Results only — does not scrub tool arguments or list_tools schemas.
 
 Fail closed: any scrub/walk error withholds the result (never forwards
