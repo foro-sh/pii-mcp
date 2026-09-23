@@ -1,3 +1,9 @@
+## [1.5.4](https://github.com/foro-sh/pii-mcp/compare/v1.5.3...v1.5.4) (2026-09-23)
+
+### Bug Fixes
+
+* **python:** support fastmcp 4 in the middleware ([f6ab3ff](https://github.com/foro-sh/pii-mcp/commit/f6ab3ff2c1c0e9ac6ef4d89a92b79059abbedcf0))
+
 ## [1.5.3](https://github.com/foro-sh/pii-mcp/compare/v1.5.2...v1.5.3) (2026-09-23)
 
 ### Bug Fixes
