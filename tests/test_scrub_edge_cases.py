@@ -463,3 +463,15 @@ class TestCreditCardIssuerPrefix:
     def test_fifteen_digit_any_prefix_still_masked(self) -> None:
         """UATP (1…) and compact IMEIs stay covered."""
         assert scrub_text("uatp 122000000000003")["text"] == "uatp [CREDIT_CARD]"
+
+
+class TestLocationSubUnitPairs:
+    def test_embedding_vector_kept(self) -> None:
+        text = "embedding [0.0123, -0.0456, 0.0789, 0.1011]"
+        assert scrub_text(text)["text"] == text
+
+    def test_real_coordinate_still_masked(self) -> None:
+        assert scrub_text("at 52.3676, 4.9041")["text"] == "at [LOCATION]"
+
+    def test_hemisphere_letter_not_glued_to_following_word(self) -> None:
+        assert scrub_text("at 52.3676, 4.9041 exactly")["text"] == "at [LOCATION] exactly"

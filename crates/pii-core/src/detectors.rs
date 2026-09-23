@@ -705,17 +705,51 @@ fn location_valid(value: &str) -> bool {
     let Some(lon) = coord_component(lon_s) else {
         return false;
     };
+    // |lat|,|lon| <= 1 is open ocean (Gulf of Guinea): embedding / weight vectors.
+    if lat.abs() <= 1.0 && lon.abs() <= 1.0 {
+        return false;
+    }
     (-90.0..=90.0).contains(&lat) && (-180.0..=180.0).contains(&lon)
 }
 
 fn scrub_location(text: &str) -> (Option<String>, u32) {
-    replace_matches(
-        text,
-        location_re(),
-        "[LOCATION]",
-        |v, s, e| location_boundary_ok(text, s, e) && location_valid(v),
-        true,
-    )
+    let accept =
+        |s: usize, e: usize| location_boundary_ok(text, s, e) && location_valid(&text[s..e]);
+    let mut count = 0u32;
+    let mut out: Option<String> = None;
+    let mut last = 0usize;
+    let mut pos = 0usize;
+    while let Some(m) = location_re().find_at(text, pos) {
+        let start = m.start();
+        let mut end = m.end();
+        if !accept(start, end) {
+            // Python backtracks the optional E/W letter (``4.9041 exactly``);
+            // the linear regex keeps it, so retry without it.
+            let shorter = m
+                .as_str()
+                .strip_suffix(['E', 'e', 'W', 'w'])
+                .map(|v| start + v.trim_end().len())
+                .filter(|&e| accept(start, e));
+            let Some(e) = shorter else {
+                pos = start + 1;
+                continue;
+            };
+            end = e;
+        }
+        let buf = out.get_or_insert_with(|| String::with_capacity(text.len()));
+        buf.push_str(&text[last..start]);
+        buf.push_str("[LOCATION]");
+        last = end;
+        pos = end;
+        count += 1;
+    }
+    match out {
+        None => (None, 0),
+        Some(mut buf) => {
+            buf.push_str(&text[last..]);
+            (Some(buf), count)
+        }
+    }
 }
 
 fn ipv4_re() -> &'static Regex {

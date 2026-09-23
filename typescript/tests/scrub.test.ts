@@ -149,6 +149,12 @@ describe("scrubText", () => {
     expect(scrubText("uatp 122000000000003").text).toBe("uatp [CREDIT_CARD]");
   });
 
+  it("keeps sub-unit decimal pairs and ends a location before a following word", () => {
+    const vec = "embedding [0.0123, -0.0456, 0.0789, 0.1011]";
+    expect(scrubText(vec).text).toBe(vec);
+    expect(scrubText("at 52.3676, 4.9041 exactly").text).toBe("at [LOCATION] exactly");
+  });
+
   it("masks BSN with nl pack and prefers it over SSN", () => {
     const result = scrubText("id 111222333", { languages: ["en", "nl"] });
     expect(result.text).toBe("id [BSN]");

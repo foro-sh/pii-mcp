@@ -34,7 +34,8 @@ Patterns:
   ``ipaddress`` (AP notes IP addresses can be personal data).
 - Location: decimal lat/lon pairs with ≥3 fractional digits, optional
   ``N``/``S``/``E``/``W`` hemisphere letters, and range checks (AP lists
-  locatiegegevens as privacy-sensitive).
+  locatiegegevens as privacy-sensitive). Pairs with both |values| <= 1 are
+  rejected (open ocean; embedding / weight vectors).
 - US SSN: hyphen/space/dot/slash or compact 9-digit with SSA area/group/serial
   rejects, plus obvious fakes (all-same digit, 123456789 / 987654321).
 - German Steuer-IdNr (tax_id): 11 digits with structure + mod-11/10 check.
@@ -519,6 +520,10 @@ def _location_valid(value: str) -> bool:
         lat = _coord_component(parts[0])
         lon = _coord_component(parts[1])
     except ValueError:
+        return False
+    # |lat|,|lon| <= 1 is open ocean (Gulf of Guinea): such pairs are
+    # embedding / weight vectors, not places.
+    if abs(lat) <= 1.0 and abs(lon) <= 1.0:
         return False
     return -90.0 <= lat <= 90.0 and -180.0 <= lon <= 180.0
 

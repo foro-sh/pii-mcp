@@ -32,7 +32,8 @@
  *   accepted (``192.168.001.001``).
  * - Location: decimal lat/lon pairs with ≥3 fractional digits, optional
  *   ``N``/``S``/``E``/``W`` hemisphere letters, and range checks (AP lists
- *   locatiegegevens as privacy-sensitive).
+ *   locatiegegevens as privacy-sensitive). Pairs with both |values| <= 1 are
+ *   rejected (open ocean; embedding / weight vectors).
  * - US SSN: hyphen/space/dot/slash or compact 9-digit with SSA area/group/serial
  *   rejects, plus obvious fakes (all-same digit, 123456789 / 987654321).
  * - German Steuer-IdNr (tax_id): 11 digits with structure + mod-11/10 check.
@@ -486,6 +487,10 @@ function locationValid(value: string): boolean {
   const lat = coordComponent(parts[0]!);
   const lon = coordComponent(parts[1]!);
   if (!Number.isFinite(lat) || !Number.isFinite(lon)) {
+    return false;
+  }
+  // |lat|,|lon| <= 1 is open ocean (Gulf of Guinea): embedding / weight vectors.
+  if (Math.abs(lat) <= 1 && Math.abs(lon) <= 1) {
     return false;
   }
   return lat >= -90.0 && lat <= 90.0 && lon >= -180.0 && lon <= 180.0;
