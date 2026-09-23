@@ -361,12 +361,13 @@ AMBIGUOUS: list[tuple[str, Callable[[R], str]]] = [
 
 # --- Contexts --------------------------------------------------------------
 
-# ``{}`` is replaced by the value. None of these may contain PII themselves.
+# The single ``{}`` is replaced by the value (plain substitution, so other
+# braces are literal). None of these may contain PII themselves.
 TEMPLATES: list[str] = [
     "{}",
     "Contact: {}",
     "value={} status=ok",
-    '{{"field": "{}", "active": true}}',
+    '{"field": "{}", "active": true}',
     "id,{},2024-01-15,active",
     "| user | {} |",
     "See ({}) for details.",

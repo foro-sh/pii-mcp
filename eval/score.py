@@ -3,7 +3,8 @@
     python eval/score.py                  # dev split, all gates
     python eval/score.py --quick          # dev split, skip pytest/perf gates
     python eval/score.py --save-baseline  # record perf baseline for this machine
-    PII_EVAL_HOLDOUT_SEED=<secret> python eval/score.py --split holdout
+    PII_EVAL_HOLDOUT_SEED=<secret> PII_EVAL_HOLDOUT_TEMPLATES=<file> \
+        python eval/score.py --split holdout
 
 loss = 3 * leak_rate + fp_rate + 0.5 * overreach_rate   (lower is better)
 
@@ -48,24 +49,51 @@ PLACEHOLDER_RE = re.compile(
 DEFAULT_LANGS = ["en", "nl"]
 
 
-def build(seed: int) -> tuple[list[tuple], list[tuple], list[tuple]]:
+def fill(template: str, value: str) -> str:
+    return template.replace("{}", value)
+
+
+def load_private_templates(path: str) -> list[str]:
+    """Holdout contexts from a file outside the repo, one per line.
+
+    ``{}`` marks the value (exactly once); ``\\n`` / ``\\t`` are decoded;
+    blank lines and ``#`` comments are skipped. Errors cite line numbers only,
+    so the output never reveals the templates.
+    """
+    templates: list[tuple[int, str]] = []
+    for lineno, raw in enumerate(Path(path).read_text().splitlines(), 1):
+        if not raw.strip() or raw.lstrip().startswith("#"):
+            continue
+        templates.append((lineno, raw.replace("\\n", "\n").replace("\\t", "\t")))
+    bad = [n for n, t in templates if t.count("{}") != 1]
+    if bad:
+        sys.exit(f"holdout templates: lines {bad} need exactly one {{}}")
+    # A template the detectors alter on its own would score as overreach.
+    noisy = [n for n, t in templates if scrub_text(fill(t, ""), languages=["en", "nl", "de"])["text"] != fill(t, "")]
+    if noisy:
+        sys.exit(f"holdout templates: lines {noisy} are changed by the scrubber without a value")
+    if len(templates) < 5:
+        sys.exit("holdout templates: need at least 5")
+    return [t for _, t in templates]
+
+
+def build(seed: int, templates: list[str] = TEMPLATES) -> tuple[list[tuple], list[tuple], list[tuple]]:
     r = random.Random(seed)
     pii = [
-        (cat, gen.__name__, r.choice(TEMPLATES), gen(r), sorted(set(DEFAULT_LANGS) | set(langs)))
+        (cat, gen.__name__, r.choice(templates), gen(r), sorted(set(DEFAULT_LANGS) | set(langs)))
         for cat, gen, langs in PII
         for _ in range(PER_GENERATOR)
     ]
-    clean = [(name, r.choice(TEMPLATES).format(gen(r))) for name, gen in CLEAN for _ in range(PER_GENERATOR)]
-    ambiguous = [(name, r.choice(TEMPLATES).format(gen(r))) for name, gen in AMBIGUOUS for _ in range(PER_GENERATOR)]
+    clean = [(name, fill(r.choice(templates), gen(r))) for name, gen in CLEAN for _ in range(PER_GENERATOR)]
+    ambiguous = [(name, fill(r.choice(templates), gen(r))) for name, gen in AMBIGUOUS for _ in range(PER_GENERATOR)]
     return pii, clean, ambiguous
 
 
 def judge_pii(template: str, value: str, langs: list[str]) -> tuple[bool, bool, str]:
     """(leaked, overreach, output)."""
-    out = scrub_text(template.format(value), languages=langs)["text"]
+    out = scrub_text(fill(template, value), languages=langs)["text"]
     marked = PLACEHOLDER_RE.sub("\x00", out)
     pre, suf = template.split("{}")
-    pre, suf = pre.replace("{{", "{").replace("}}", "}"), suf.replace("{{", "{").replace("}}", "}")
     if marked.startswith(pre) and marked.endswith(suf) and len(marked) >= len(pre) + len(suf):
         mid = marked[len(pre) : len(marked) - len(suf)]
         return any(ch.isalnum() for ch in mid), False, out
@@ -74,8 +102,8 @@ def judge_pii(template: str, value: str, langs: list[str]) -> tuple[bool, bool, 
     return any(c in marked for c in chunks), True, out
 
 
-def score(seed: int, show: int) -> dict:
-    pii, clean, ambiguous = build(seed)
+def score(seed: int, show: int, templates: list[str] = TEMPLATES) -> dict:
+    pii, clean, ambiguous = build(seed, templates)
     leaks: Counter[str] = Counter()
     overreach: Counter[str] = Counter()
     totals: Counter[str] = Counter()
@@ -87,7 +115,7 @@ def score(seed: int, show: int) -> dict:
         leaks[key] += leaked
         overreach[key] += damaged
         if (leaked or damaged) and len(examples) < show:
-            examples.append(f"{'LEAK' if leaked else 'OVER'} {key}: {template.format(value)!r} -> {out!r}")
+            examples.append(f"{'LEAK' if leaked else 'OVER'} {key}: {fill(template, value)!r} -> {out!r}")
     fps: Counter[str] = Counter()
     for name, text in clean:
         out = scrub_text(text, languages=DEFAULT_LANGS)["text"]
@@ -153,7 +181,7 @@ def gate_redos() -> str | None:
 
 def perf_seconds() -> float:
     pii, clean, _ = build(1234)
-    texts = [t.format(v) for _, _, t, v, _ in pii[::5]] + [t for _, t in clean[::5]]
+    texts = [fill(t, v) for _, _, t, v, _ in pii[::5]] + [t for _, t in clean[::5]]
     blob = "\n".join(texts) * 3
     best = float("inf")
     for _ in range(5):
@@ -204,10 +232,14 @@ def main() -> None:
         if not secret:
             sys.exit("holdout needs PII_EVAL_HOLDOUT_SEED")
         seed = int.from_bytes(secret.encode(), "big") % (2**31)
+        path = os.environ.get("PII_EVAL_HOLDOUT_TEMPLATES")
+        if not path:
+            sys.exit("holdout needs PII_EVAL_HOLDOUT_TEMPLATES (a template file outside the repo)")
+        templates = load_private_templates(path)
     else:
-        seed = DEV_SEED
+        seed, templates = DEV_SEED, TEMPLATES
 
-    result = score(seed, 0 if args.split == "holdout" else args.show)
+    result = score(seed, 0 if args.split == "holdout" else args.show, templates)
     gates = {"redos": gate_redos()}
     if not args.quick:
         gates["pytest"] = gate_pytest()
