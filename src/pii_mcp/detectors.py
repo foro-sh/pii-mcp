@@ -100,22 +100,29 @@ def _replace_matches(
     is_valid: Callable[[str], bool] | None = None,
     context_ok: Callable[[str, int, int], bool] | None = None,
     retry: bool = False,
+    accept_len: Callable[[str], int] | None = None,
 ) -> tuple[str, int]:
     """Replace accepted matches.
 
     ``retry`` resumes a rejected match at ``start + 1`` instead of its end, so
     an overlapping bogus candidate (``2024 4111 1111 1111`` failing Luhn) does
     not swallow the real hit that starts inside it.
+
+    ``accept_len`` returns how much of a match to replace (0 rejects), so a
+    grouped hit that swallowed a trailing word can be cut back to the prefix
+    that validates.
     """
     count = 0
     parts: list[str] = []
     last = pos = 0
     while (match := pattern.search(text, pos)) is not None:
         start, end = match.span()
-        if (is_valid is not None and not is_valid(match.group(0))) or (
+        if accept_len is not None:
+            end = start + accept_len(match.group(0))
+        if end == start or (is_valid is not None and not is_valid(match.group(0))) or (
             context_ok is not None and not context_ok(text, start, end)
         ):
-            pos = start + 1 if retry else max(end, start + 1)
+            pos = start + 1 if retry else max(match.end(), start + 1)
             continue
         parts.append(text[last:start])
         parts.append(placeholder)
@@ -245,13 +252,27 @@ def _iban_valid(value: str) -> bool:
     return remainder == 1
 
 
+_IBAN_GROUP_SEP_RE = re.compile(rf"(?:{_SEP_SPACE}|[\-/.])+")
+
+
+def _iban_accept_len(value: str) -> int:
+    """Length of the longest prefix, cut at a group separator, that passes
+    mod-97 (``GB82-BIWD-…-25 role`` / ``…6894\nend`` swallowed a word)."""
+    if _iban_valid(value):
+        return len(value)
+    for sep in reversed(list(_IBAN_GROUP_SEP_RE.finditer(value))):
+        if _iban_valid(value[: sep.start()]):
+            return sep.start()
+    return 0
+
+
 def _scrub_iban(text: str) -> tuple[str, int]:
     out = text
     for ch in _INVISIBLE:
         out = out.replace(ch, "")
     count = 0
     for pattern in IBAN_RES:
-        out, n = _replace_matches(out, pattern, "[IBAN]", _iban_valid)
+        out, n = _replace_matches(out, pattern, "[IBAN]", accept_len=_iban_accept_len)
         count += n
     return out, count
 
