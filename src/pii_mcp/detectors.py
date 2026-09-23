@@ -752,7 +752,15 @@ def _make_phone_detector(
         out = text
         count = 0
         for pattern, valid in patterns:
-            out, n = _replace_matches(out, pattern, "[PHONE]", valid)
+            # An opening ``(`` belongs to the number only when it wraps the
+            # area code (``(06)…``); ``(06-1234…)`` resumes at the ``0``.
+            out, n = _replace_matches(
+                out,
+                pattern,
+                "[PHONE]",
+                lambda m, valid=valid: valid(m) and (m[0] != "(" or ")" in m),
+                retry=True,
+            )
             count += n
         return out, count
 
