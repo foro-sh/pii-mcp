@@ -323,6 +323,12 @@ def _card_valid(value: str) -> bool:
         return False
     if len(digits) == 13 and digits[0] != "4":
         return False
+    # 17–19 digits: only Visa, Maestro, Discover/UnionPay (6), JCB 35 and
+    # Mir 2200–2204 issue long PANs; 2/3-led snowflake ids are not cards.
+    if len(digits) >= 17 and not digits.startswith(
+        ("4", "5", "6", "35", "2200", "2201", "2202", "2203", "2204")
+    ):
+        return False
     prefix_ok = (
         digits[0] in "23456"
         or len(digits) == 15
