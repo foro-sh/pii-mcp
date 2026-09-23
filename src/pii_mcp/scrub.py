@@ -13,7 +13,7 @@ receives NL postcode hits from the pattern pack.
 Detector pack order (see ``_detectors_for``): universal → international phone
 (when any pack is active, before national IDs so ``+31(0)6…`` is not eaten by
 SSN) → checksum/rule-backed national IDs (BSN before SSN when both packs are
-on; NL BTW and passport after BSN) → NL postcode / kenteken when ``nl`` →
+on; NL BTW before BSN, passport after) → NL postcode / kenteken when ``nl`` →
 locale phone forms.
 
 Optional Rust acceleration: when ``pii_mcp._native`` is importable (shipped in
@@ -183,8 +183,9 @@ def _detectors_for(languages: Sequence[str] | None) -> tuple[Detector, ...]:
     if langs:
         pack.append(phone_international_detector)
     if "nl" in langs:
-        pack.append(bsn_detector)
+        # BTW-id first: its 9-digit body can itself pass the BSN elfproef.
         pack.append(nl_vat_detector)
+        pack.append(bsn_detector)
         pack.append(nl_passport_detector)
     if "de" in langs:
         pack.append(tax_id_detector)
