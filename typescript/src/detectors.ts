@@ -15,7 +15,9 @@
  *   mixed case and hyphen/tab/nbsp/slash separators, plus a single hyphen after
  *   check digits. Soft hyphens and zero-width characters are stripped before
  *   IBAN matching.
- * - Credit cards include Amex 4-6-5 groupings as well as 4-4-4-x and compact;
+ * - Credit cards include 4-4-4-4-x (17–19 digits), Amex 4-6-5, Diners 4-6-4
+ *   groupings as well as 4-4-4-x and compact; Luhn plus an issuer-prefix gate
+ *   (2–6, or 15 digits) keeps ms timestamps / ISBN-13s from matching;
  *   grouped forms also accept tab, nbsp, ideographic space, unicode dashes,
  *   ``.``, and ``/``; zero-width characters are stripped before matching.
  * - BIC/SWIFT: 8 or 11 alnum with ISO 3166-1 country letters (AP: financial data).
@@ -86,9 +88,26 @@ function replaceMatches(
   pattern: RegExp,
   placeholder: string,
   isValid?: (value: string) => boolean,
+  retry = false,
 ): { text: string; count: number } {
   let count = 0;
   const re = cloneRegExp(pattern);
+  if (retry && isValid !== undefined) {
+    // Resume a rejected match at start + 1 so an overlapping bogus candidate
+    // (``2024 4111 1111 1111`` failing Luhn) does not swallow the real hit.
+    let out = "";
+    let last = 0;
+    for (let m = re.exec(text); m !== null; m = re.exec(text)) {
+      if (!isValid(m[0])) {
+        re.lastIndex = m.index + 1;
+        continue;
+      }
+      out += text.slice(last, m.index) + placeholder;
+      last = re.lastIndex;
+      count += 1;
+    }
+    return { text: out + text.slice(last), count };
+  }
   const out = text.replace(re, (value) => {
     if (isValid !== undefined && !isValid(value)) {
       return value;
@@ -245,12 +264,22 @@ export const ibanDetector: Detector = { type: "iban", scrub: scrubIban };
 const CC_SEP = String.raw`(?:${SEP_SPACE}|[./\-\u2010-\u2015])+`;
 
 const CREDIT_CARD_RES = [
+  // 17–19 digit PANs (UnionPay, Maestro, Visa) group as 4-4-4-4-x.
+  new RegExp(
+    String.raw`(?<!\d)\d{4}${CC_SEP}\d{4}${CC_SEP}\d{4}${CC_SEP}\d{4}${CC_SEP}\d{1,3}(?!\d)`,
+    "g",
+  ),
   new RegExp(
     String.raw`(?<!\d)\d{4}${CC_SEP}\d{4}${CC_SEP}\d{4}${CC_SEP}\d{1,4}(?!\d)`,
     "g",
   ),
   new RegExp(
     String.raw`(?<!\d)\d{4}${CC_SEP}\d{6}${CC_SEP}\d{5}(?!\d)`,
+    "g",
+  ),
+  // Diners Club 14-digit 4-6-4.
+  new RegExp(
+    String.raw`(?<!\d)\d{4}${CC_SEP}\d{6}${CC_SEP}\d{4}(?!\d)`,
     "g",
   ),
   // Digit/letter glue: \b does not split 1N.
@@ -277,6 +306,19 @@ function luhnValid(digits: string): boolean {
   return total % 10 === 0;
 }
 
+/**
+ * Luhn plus issuer prefix: payment PANs start 2–6; RuPay 81/82 and Troy 9792
+ * are 16-digit exceptions; 15 digits stay open for UATP and compact IMEIs.
+ */
+function cardValid(value: string): boolean {
+  const digits = value.replace(/\D/g, "");
+  const prefixOk =
+    /^[2-6]/.test(digits) ||
+    digits.length === 15 ||
+    (digits.length === 16 && /^(?:81|82|9792)/.test(digits));
+  return prefixOk && luhnValid(digits);
+}
+
 function scrubCreditCard(text: string): { text: string; count: number } {
   let out = text.replace(INVISIBLE, "");
   let count = 0;
@@ -285,7 +327,8 @@ function scrubCreditCard(text: string): { text: string; count: number } {
       out,
       pattern,
       "[CREDIT_CARD]",
-      (m) => luhnValid(m.replace(/\D/g, "")),
+      cardValid,
+      true,
     );
     out = result.text;
     count += result.count;

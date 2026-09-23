@@ -394,11 +394,15 @@ fn credit_card_res() -> &'static [Regex] {
         let sep_space = r"[ \t\r\n\u{00a0}\u{2000}-\u{200a}\u{202f}\u{3000}]";
         let sep = format!(r"(?:{sep_space}|[./\-\u{{2010}}-\u{{2015}}])+");
         vec![
+            // 17–19 digit PANs (UnionPay, Maestro, Visa) group as 4-4-4-4-x.
             Regex::new(&format!(
-                r"\d{{4}}{sep}\d{{4}}{sep}\d{{4}}{sep}\d{{1,4}}"
+                r"\d{{4}}{sep}\d{{4}}{sep}\d{{4}}{sep}\d{{4}}{sep}\d{{1,3}}"
             ))
             .unwrap(),
+            Regex::new(&format!(r"\d{{4}}{sep}\d{{4}}{sep}\d{{4}}{sep}\d{{1,4}}")).unwrap(),
             Regex::new(&format!(r"\d{{4}}{sep}\d{{6}}{sep}\d{{5}}")).unwrap(),
+            // Diners Club 14-digit 4-6-4.
+            Regex::new(&format!(r"\d{{4}}{sep}\d{{6}}{sep}\d{{4}}")).unwrap(),
             // Digit/letter glue: \b does not split 1N.
             Regex::new(r"\d{13,19}").unwrap(),
         ]
@@ -430,7 +434,16 @@ fn credit_card_valid(value: &str) -> bool {
         len += 1;
     }
     // SAFETY: len <= 19; digits[..len] are ASCII digits.
-    luhn_valid(std::str::from_utf8(&digits[..len]).unwrap())
+    let digits = std::str::from_utf8(&digits[..len]).unwrap();
+    // Issuer prefix (see Python ``_card_valid``): 2–6, 15 digits, or 16-digit
+    // RuPay 81/82 / Troy 9792.
+    let prefix_ok = matches!(digits.as_bytes().first(), Some(b'2'..=b'6'))
+        || len == 15
+        || (len == 16
+            && (digits.starts_with("81")
+                || digits.starts_with("82")
+                || digits.starts_with("9792")));
+    prefix_ok && luhn_valid(digits)
 }
 
 fn scrub_credit_card(text: &str) -> (Option<String>, u32) {

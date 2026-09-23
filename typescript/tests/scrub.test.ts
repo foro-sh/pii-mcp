@@ -133,6 +133,22 @@ describe("scrubText", () => {
     expect(scrubText("ab:aa:bb:cc:dd:ee:ff").counts.mac).toBe(0);
   });
 
+  it("masks 19-digit and Diners card groupings and cards after a 4-digit group", () => {
+    expect(scrubText("unionpay 6212 3456 7890 1234 569 ok").text).toBe(
+      "unionpay [CREDIT_CARD] ok",
+    );
+    expect(scrubText("diners 3056 930902 5904 ok").text).toBe("diners [CREDIT_CARD] ok");
+    expect(scrubText("exp 2027 4111 1111 1111 1111 ok").text).toBe(
+      "exp 2027 [CREDIT_CARD] ok",
+    );
+  });
+
+  it("keeps Luhn-valid numbers without a card issuer prefix", () => {
+    expect(scrubText("ts 1695456789014").text).toBe("ts 1695456789014");
+    expect(scrubText("isbn 9780306406157").text).toBe("isbn 9780306406157");
+    expect(scrubText("uatp 122000000000003").text).toBe("uatp [CREDIT_CARD]");
+  });
+
   it("masks BSN with nl pack and prefers it over SSN", () => {
     const result = scrubText("id 111222333", { languages: ["en", "nl"] });
     expect(result.text).toBe("id [BSN]");

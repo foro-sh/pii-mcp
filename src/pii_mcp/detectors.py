@@ -15,7 +15,9 @@ Patterns:
   mixed case and hyphen/tab/nbsp/slash separators when groups are explicitly separated
   (trailing word boundary blocks trailing-word swallow). A fifth matches a single
   hyphen after the check digits (``NL91-ABNA0417164300``).   Soft hyphens and zero-width characters are stripped before IBAN matching.
-- Credit cards include Amex 4-6-5 groupings as well as 4-4-4-x and compact;
+- Credit cards include 4-4-4-4-x (17–19 digits), Amex 4-6-5, Diners 4-6-4
+  groupings as well as 4-4-4-x and compact; Luhn plus an issuer-prefix gate
+  (2–6, or 15 digits) keeps ms timestamps / ISBN-13s from matching;
   grouped forms also accept tab, nbsp, ideographic space, unicode dashes,
   ``.``, and ``/``; zero-width characters are stripped before matching.
 - IP: IPv6 with an embedded dotted quad (``::ffff:a.b.c.d``, NAT64
@@ -259,8 +261,14 @@ iban_detector = Detector(type="iban", scrub=_scrub_iban)
 _CC_SEP = rf"(?:{_SEP_SPACE}|[./\-\u2010-\u2015])+"
 
 CREDIT_CARD_RES: tuple[re.Pattern[str], ...] = (
+    # 17–19 digit PANs (UnionPay, Maestro, Visa) group as 4-4-4-4-x.
+    re.compile(
+        rf"(?<!\d)\d{{4}}{_CC_SEP}\d{{4}}{_CC_SEP}\d{{4}}{_CC_SEP}\d{{4}}{_CC_SEP}\d{{1,3}}(?!\d)"
+    ),
     re.compile(rf"(?<!\d)\d{{4}}{_CC_SEP}\d{{4}}{_CC_SEP}\d{{4}}{_CC_SEP}\d{{1,4}}(?!\d)"),
     re.compile(rf"(?<!\d)\d{{4}}{_CC_SEP}\d{{6}}{_CC_SEP}\d{{5}}(?!\d)"),
+    # Diners Club 14-digit 4-6-4.
+    re.compile(rf"(?<!\d)\d{{4}}{_CC_SEP}\d{{6}}{_CC_SEP}\d{{4}}(?!\d)"),
     # Digit/letter glue: \b does not split 1N.
     re.compile(r"(?<!\d)\d{13,19}(?!\d)"),
 )
@@ -282,6 +290,22 @@ def _luhn_valid(digits: str) -> bool:
     return total % 10 == 0
 
 
+def _card_valid(value: str) -> bool:
+    """Luhn plus issuer prefix: payment PANs start 2–6 (Mir, Amex, Visa, MC,
+    Discover, UnionPay…); RuPay 81/82 and Troy 9792 are 16-digit exceptions.
+    15 digits stay open for UATP (1…) and compact IMEIs. Cuts ~10% Luhn
+    collisions on ms timestamps, ISBN/EAN-13, and snowflake ids."""
+    digits = re.sub(r"\D", "", value)
+    if not digits:
+        return False
+    prefix_ok = (
+        digits[0] in "23456"
+        or len(digits) == 15
+        or (len(digits) == 16 and digits.startswith(("81", "82", "9792")))
+    )
+    return prefix_ok and _luhn_valid(digits)
+
+
 def _scrub_credit_card(text: str) -> tuple[str, int]:
     out = text
     for ch in _INVISIBLE:
@@ -292,7 +316,8 @@ def _scrub_credit_card(text: str) -> tuple[str, int]:
             out,
             pattern,
             "[CREDIT_CARD]",
-            lambda m: _luhn_valid(re.sub(r"\D", "", m)),
+            _card_valid,
+            retry=True,
         )
         count += n
     return out, count

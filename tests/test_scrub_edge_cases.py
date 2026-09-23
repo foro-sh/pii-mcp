@@ -427,3 +427,39 @@ class TestMacLabelColon:
     def test_seven_hex_groups_not_mac(self) -> None:
         text = "ab:aa:bb:cc:dd:ee:ff"
         assert scrub_text(text)["counts"]["mac"] == 0
+
+
+class TestCreditCardGroupings:
+    def test_nineteen_digit_grouped(self) -> None:
+        result = scrub_text("unionpay 6212 3456 7890 1234 569 ok")
+        assert result["text"] == "unionpay [CREDIT_CARD] ok"
+        assert result["counts"]["credit_card"] == 1
+        assert result["counts"]["phone"] == 0
+
+    def test_diners_four_six_four(self) -> None:
+        result = scrub_text("diners 3056 930902 5904 ok")
+        assert result["text"] == "diners [CREDIT_CARD] ok"
+        assert result["counts"]["phone"] == 0
+
+    def test_leading_four_digit_group_does_not_hide_card(self) -> None:
+        """A Luhn-failing 4-4-4-4 window starting one group early must not
+        consume the real card."""
+        result = scrub_text("exp 2027 4111 1111 1111 1111 ok")
+        assert result["text"] == "exp 2027 [CREDIT_CARD] ok"
+        assert result["counts"]["credit_card"] == 1
+
+
+class TestCreditCardIssuerPrefix:
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "ts 1695456789014",  # Luhn-valid ms timestamp
+            "isbn 9780306406157",  # Luhn-valid ISBN-13
+        ],
+    )
+    def test_luhn_valid_non_card_prefix_kept(self, text: str) -> None:
+        assert scrub_text(text)["text"] == text
+
+    def test_fifteen_digit_any_prefix_still_masked(self) -> None:
+        """UATP (1…) and compact IMEIs stay covered."""
+        assert scrub_text("uatp 122000000000003")["text"] == "uatp [CREDIT_CARD]"
