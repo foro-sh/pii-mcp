@@ -1,3 +1,20 @@
+## [1.5.5](https://github.com/foro-sh/pii-mcp/compare/v1.5.4...v1.5.5) (2026-09-23)
+
+### Bug Fixes
+
+* **detectors:** accept 13-digit cards only with a visa prefix ([c616095](https://github.com/foro-sh/pii-mcp/commit/c6160958bdb2a65c3a1e5a1584ef016bf934ac4a))
+* **detectors:** allow a label colon before ipv6 ([174a6c1](https://github.com/foro-sh/pii-mcp/commit/174a6c170c8a8eb0d4b091f127f5fe8a3687c10e))
+* **detectors:** check kenteken letter rejects per group ([8ee7ce2](https://github.com/foro-sh/pii-mcp/commit/8ee7ce21afd11fad7ca6b8d1ca38753e80c7c8cb))
+* **detectors:** cut grouped ibans back to the valid prefix ([9f4ccb2](https://github.com/foro-sh/pii-mcp/commit/9f4ccb292ee4842b3d03747715fc8b37e3e715bb))
+* **detectors:** gate 17-19 digit cards on long-pan issuers ([2cb29ce](https://github.com/foro-sh/pii-mcp/commit/2cb29cecf833493facf65c3d13660f4f7a07172a))
+* **detectors:** leave an unmatched opening paren outside phones ([4fc2895](https://github.com/foro-sh/pii-mcp/commit/4fc2895914bc7bc5791edaa6d6959a53a3afdcc4))
+* **detectors:** require the registry length for each iban country ([2193da6](https://github.com/foro-sh/pii-mcp/commit/2193da63b4d8cbfc09719e36f0909b1eb6c46211))
+* **detectors:** run national phone forms before bare-digit ids ([d937fde](https://github.com/foro-sh/pii-mcp/commit/d937fde461a7f7a0d786ade75c88070bd71a7d40))
+* **detectors:** run nl btw-id before bsn ([12548cd](https://github.com/foro-sh/pii-mcp/commit/12548cd4bb8c8d011b37f385b62a76f4b7c160e3))
+* **detectors:** skip decimal fractions in bsn and ssn ([f046256](https://github.com/foro-sh/pii-mcp/commit/f04625661aa266f5c918a461ca0158035ff8abae))
+* **rust:** port detector fixes from python ([106966b](https://github.com/foro-sh/pii-mcp/commit/106966b9eb437b4c21ba411eaa55a1571fe06ec6))
+* **typescript:** port detector fixes from python ([859da56](https://github.com/foro-sh/pii-mcp/commit/859da56e1f84dfc1387e8bfab354455a981d64fb))
+
 ## [1.5.4](https://github.com/foro-sh/pii-mcp/compare/v1.5.3...v1.5.4) (2026-09-23)
 
 ### Bug Fixes
