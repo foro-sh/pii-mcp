@@ -100,22 +100,29 @@ def _replace_matches(
     is_valid: Callable[[str], bool] | None = None,
     context_ok: Callable[[str, int, int], bool] | None = None,
     retry: bool = False,
+    accept_len: Callable[[str], int] | None = None,
 ) -> tuple[str, int]:
     """Replace accepted matches.
 
     ``retry`` resumes a rejected match at ``start + 1`` instead of its end, so
     an overlapping bogus candidate (``2024 4111 1111 1111`` failing Luhn) does
     not swallow the real hit that starts inside it.
+
+    ``accept_len`` returns how much of a match to replace (0 rejects), so a
+    grouped hit that swallowed a trailing word can be cut back to the prefix
+    that validates.
     """
     count = 0
     parts: list[str] = []
     last = pos = 0
     while (match := pattern.search(text, pos)) is not None:
         start, end = match.span()
-        if (is_valid is not None and not is_valid(match.group(0))) or (
+        if accept_len is not None:
+            end = start + accept_len(match.group(0))
+        if end == start or (is_valid is not None and not is_valid(match.group(0))) or (
             context_ok is not None and not context_ok(text, start, end)
         ):
-            pos = start + 1 if retry else max(end, start + 1)
+            pos = start + 1 if retry else max(match.end(), start + 1)
             continue
         parts.append(text[last:start])
         parts.append(placeholder)
@@ -231,9 +238,32 @@ IBAN_RES: tuple[re.Pattern[str], ...] = (
 )
 
 
+# SWIFT IBAN registry: country code -> fixed IBAN length.
+_IBAN_LENGTHS: dict[str, int] = {
+    cc: int(n)
+    for cc, n in (
+        item.split(":")
+        for item in """
+        AD:24 AE:23 AL:28 AT:20 AZ:28 BA:20 BE:16 BG:22 BH:22 BI:27 BR:29 BY:28
+        CH:21 CR:22 CY:28 CZ:24 DE:22 DJ:27 DK:18 DO:28 EE:20 EG:29 ES:24 FI:18
+        FK:18 FO:18 FR:27 GB:22 GE:22 GI:23 GL:18 GR:27 GT:28 HN:28 HR:21 HU:28
+        IE:22 IL:23 IQ:23 IS:26 IT:27 JO:30 KW:30 KZ:20 LB:28 LC:32 LI:21 LT:20
+        LU:20 LV:21 LY:25 MC:27 MD:24 ME:22 MK:19 MN:20 MR:27 MT:31 MU:30 NI:28
+        NL:18 NO:15 OM:23 PK:24 PL:28 PS:29 PT:25 QA:29 RO:24 RS:22 RU:33 SA:24
+        SC:31 SD:18 SE:24 SI:19 SK:24 SM:27 SO:23 ST:25 SV:28 TL:23 TN:24 TR:26
+        UA:29 VA:22 VG:24 XK:20 YE:30
+        """.split()
+    )
+}
+
+
 def _iban_valid(value: str) -> bool:
+    """Mod-97 plus the registry length for the country, so a hex digest slice
+    (``ab531c3778d535f0a16019``) is not an IBAN one time in 97."""
     compact = re.sub(r"[\s\-\u00ad\u200b\u200c\u200d\ufeff/.]+", "", value).upper()
     if not re.fullmatch(r"[A-Z]{2}\d{2}[A-Z0-9]{11,30}", compact):
+        return False
+    if _IBAN_LENGTHS.get(compact[:2]) != len(compact):
         return False
     rearranged = compact[4:] + compact[:4]
     remainder = 0
@@ -245,13 +275,27 @@ def _iban_valid(value: str) -> bool:
     return remainder == 1
 
 
+_IBAN_GROUP_SEP_RE = re.compile(rf"(?:{_SEP_SPACE}|[\-/.])+")
+
+
+def _iban_accept_len(value: str) -> int:
+    """Length of the longest prefix, cut at a group separator, that passes
+    mod-97 (``GB82-BIWD-…-25 role`` / ``…6894\nend`` swallowed a word)."""
+    if _iban_valid(value):
+        return len(value)
+    for sep in reversed(list(_IBAN_GROUP_SEP_RE.finditer(value))):
+        if _iban_valid(value[: sep.start()]):
+            return sep.start()
+    return 0
+
+
 def _scrub_iban(text: str) -> tuple[str, int]:
     out = text
     for ch in _INVISIBLE:
         out = out.replace(ch, "")
     count = 0
     for pattern in IBAN_RES:
-        out, n = _replace_matches(out, pattern, "[IBAN]", _iban_valid)
+        out, n = _replace_matches(out, pattern, "[IBAN]", accept_len=_iban_accept_len)
         count += n
     return out, count
 
@@ -295,9 +339,18 @@ def _card_valid(value: str) -> bool:
     """Luhn plus issuer prefix: payment PANs start 2–6 (Mir, Amex, Visa, MC,
     Discover, UnionPay…); RuPay 81/82 and Troy 9792 are 16-digit exceptions.
     15 digits stay open for UATP (1…) and compact IMEIs. Cuts ~10% Luhn
-    collisions on ms timestamps, ISBN/EAN-13, and snowflake ids."""
+    collisions on ms timestamps, ISBN/EAN-13, and snowflake ids. 13-digit
+    PANs were only ever issued by Visa (4), so other 13-digit runs are EANs."""
     digits = re.sub(r"\D", "", value)
     if not digits:
+        return False
+    if len(digits) == 13 and digits[0] != "4":
+        return False
+    # 17–19 digits: only Visa, Maestro, Discover/UnionPay (6), JCB 35 and
+    # Mir 2200–2204 issue long PANs; 2/3-led snowflake ids are not cards.
+    if len(digits) >= 17 and not digits.startswith(
+        ("4", "5", "6", "35", "2200", "2201", "2202", "2203", "2204")
+    ):
         return False
     prefix_ok = (
         digits[0] in "23456"
@@ -437,13 +490,14 @@ IPV4_RE = re.compile(
 # IPv6 with a trailing dotted quad (``::ffff:a.b.c.d``, NAT64
 # ``64:ff9b::a.b.c.d``) must win before bare IPv4 / truncated IPv6 candidates.
 IPV6_V4_RE = re.compile(
-    r"(?<![\w:.])(?:[0-9A-Fa-f]{0,4}:){2,7}(?:(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\.){3}"
+    r"(?<![\w.])(?:[0-9A-Fa-f]{0,4}:){2,7}(?:(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\.){3}"
     r"(?:25[0-5]|2[0-4]\d|[01]?\d\d?)(?![\w.])"
 )
 
-# Loose colon/hex shapes; ``_ip_valid`` drops non-addresses.
+# Loose colon/hex shapes; ``_ip_valid`` drops non-addresses. Like MAC, a
+# preceding ``:`` is left to ``_colon_label_ok`` (``user:2001:db8::1``).
 IPV6_RE = re.compile(
-    r"(?<![\w:])(?:"
+    r"(?<!\w)(?:"
     r"(?:[0-9a-fA-F]{1,4}:){7}[0-9a-fA-F]{1,4}"
     r"|::(?:[0-9a-fA-F]{1,4}:){0,6}[0-9a-fA-F]{1,4}"
     r"|(?:[0-9a-fA-F]{1,4}:){1,7}:"
@@ -490,10 +544,12 @@ def _ip_valid(value: str) -> bool:
 
 
 def _scrub_ip(text: str) -> tuple[str, int]:
-    out, count = _replace_matches(text, IPV6_V4_RE, "[IP]", _ip_valid)
+    out, count = _replace_matches(
+        text, IPV6_V4_RE, "[IP]", _ip_valid, context_ok=_colon_label_ok
+    )
     out, n = _replace_matches(out, IPV4_RE, "[IP]", _ip_valid)
     count += n
-    out, n = _replace_matches(out, IPV6_RE, "[IP]", _ip_valid)
+    out, n = _replace_matches(out, IPV6_RE, "[IP]", _ip_valid, context_ok=_colon_label_ok)
     return out, count + n
 
 
@@ -534,8 +590,9 @@ def _scrub_location(text: str) -> tuple[str, int]:
 
 location_detector = Detector(type="location", scrub=_scrub_location)
 
+# ``(?<!\d\.)``: the fractional part of a decimal (``0.12345678``) is not an id.
 BSN_RES: tuple[re.Pattern[str], ...] = (
-    re.compile(r"\b\d{8,9}\b"),
+    re.compile(r"(?<!\d\.)\b\d{8,9}\b"),
     re.compile(r"\b\d{3}[ .\-]\d{3}[ .\-]\d{3}\b"),
 )
 
@@ -567,7 +624,7 @@ SSN_RES: tuple[re.Pattern[str], ...] = (
     re.compile(r"\b\d{3}-\d{2}-\d{4}\b"),
     re.compile(r"\b\d{3}/\d{2}/\d{4}\b"),
     re.compile(r"\b\d{3}[ .]\d{2}[ .]\d{4}\b"),
-    re.compile(r"\b\d{9}\b"),
+    re.compile(r"(?<!\d\.)\b\d{9}\b"),
 )
 
 
@@ -724,7 +781,15 @@ def _make_phone_detector(
         out = text
         count = 0
         for pattern, valid in patterns:
-            out, n = _replace_matches(out, pattern, "[PHONE]", valid)
+            # An opening ``(`` belongs to the number only when it wraps the
+            # area code (``(06)…``); ``(06-1234…)`` resumes at the ``0``.
+            out, n = _replace_matches(
+                out,
+                pattern,
+                "[PHONE]",
+                lambda m, valid=valid: valid(m) and (m[0] != "(" or ")" in m),
+                retry=True,
+            )
             count += n
         return out, count
 
@@ -777,12 +842,13 @@ _NL_PLATE_LETTER_REJECTS = frozenset({"SA", "SD", "SS"})
 
 
 def _nl_license_plate_valid(value: str) -> bool:
-    """Reject RDW-forbidden SA/SD/SS letter pairs anywhere in the plate."""
-    letters = "".join(ch for ch in value.upper() if ch.isalpha())
-    for i in range(len(letters) - 1):
-        if letters[i : i + 2] in _NL_PLATE_LETTER_REJECTS:
-            return False
-    return True
+    """Reject RDW-forbidden SA/SD/SS letter pairs inside one letter group;
+    letters split by a hyphen (``KS-234-S``) are not a combination."""
+    return not any(
+        group[i : i + 2] in _NL_PLATE_LETTER_REJECTS
+        for group in value.upper().split("-")
+        for i in range(len(group) - 1)
+    )
 
 
 def _scrub_nl_license_plate(text: str) -> tuple[str, int]:

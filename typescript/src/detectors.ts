@@ -90,9 +90,30 @@ function replaceMatches(
   placeholder: string,
   isValid?: (value: string) => boolean,
   retry = false,
+  acceptLen?: (value: string) => number,
 ): { text: string; count: number } {
   let count = 0;
   const re = cloneRegExp(pattern);
+  if (acceptLen !== undefined) {
+    // Replace only the accepted prefix (0 rejects), so a grouped hit that
+    // swallowed a trailing word is cut back to the part that validates.
+    let out = "";
+    let last = 0;
+    for (let m = re.exec(text); m !== null; m = re.exec(text)) {
+      const len = acceptLen(m[0]);
+      if (len === 0) {
+        if (m[0].length === 0) {
+          re.lastIndex = m.index + 1;
+        }
+        continue;
+      }
+      out += text.slice(last, m.index) + placeholder;
+      last = m.index + len;
+      re.lastIndex = last;
+      count += 1;
+    }
+    return { text: out + text.slice(last), count };
+  }
   if (retry && isValid !== undefined) {
     // Resume a rejected match at start + 1 so an overlapping bogus candidate
     // (``2024 4111 1111 1111`` failing Luhn) does not swallow the real hit.
@@ -229,11 +250,38 @@ const IBAN_RES = [
   /(?<![A-Za-z])[A-Za-z]{2}\d{2}-[A-Za-z0-9]{11,30}(?![A-Za-z0-9])/g,
 ] as const;
 
+// SWIFT IBAN registry: country code -> fixed IBAN length.
+const IBAN_LENGTHS = new Map(
+  `
+    AD:24 AE:23 AL:28 AT:20 AZ:28 BA:20 BE:16 BG:22 BH:22 BI:27 BR:29 BY:28
+    CH:21 CR:22 CY:28 CZ:24 DE:22 DJ:27 DK:18 DO:28 EE:20 EG:29 ES:24 FI:18
+    FK:18 FO:18 FR:27 GB:22 GE:22 GI:23 GL:18 GR:27 GT:28 HN:28 HR:21 HU:28
+    IE:22 IL:23 IQ:23 IS:26 IT:27 JO:30 KW:30 KZ:20 LB:28 LC:32 LI:21 LT:20
+    LU:20 LV:21 LY:25 MC:27 MD:24 ME:22 MK:19 MN:20 MR:27 MT:31 MU:30 NI:28
+    NL:18 NO:15 OM:23 PK:24 PL:28 PS:29 PT:25 QA:29 RO:24 RS:22 RU:33 SA:24
+    SC:31 SD:18 SE:24 SI:19 SK:24 SM:27 SO:23 ST:25 SV:28 TL:23 TN:24 TR:26
+    UA:29 VA:22 VG:24 XK:20 YE:30
+  `
+    .trim()
+    .split(/\s+/)
+    .map((item) => {
+      const [cc, n] = item.split(":");
+      return [cc!, Number(n)] as const;
+    }),
+);
+
+/**
+ * Mod-97 plus the registry length for the country, so a hex digest slice
+ * (``ab531c3778d535f0a16019``) is not an IBAN one time in 97.
+ */
 function ibanValid(value: string): boolean {
   const compact = value
     .replace(/[\s\-\u00ad\u200b\u200c\u200d\ufeff/.]+/g, "")
     .toUpperCase();
   if (!/^[A-Z]{2}\d{2}[A-Z0-9]{11,30}$/.test(compact)) {
+    return false;
+  }
+  if (IBAN_LENGTHS.get(compact.slice(0, 2)) !== compact.length) {
     return false;
   }
   const rearranged = compact.slice(4) + compact.slice(0, 4);
@@ -248,11 +296,37 @@ function ibanValid(value: string): boolean {
   return remainder === 1;
 }
 
+const IBAN_GROUP_SEP_RE = new RegExp(String.raw`(?:${SEP_SPACE}|[\-/.])+`, "g");
+
+/**
+ * Length of the longest prefix, cut at a group separator, that passes mod-97
+ * (``GB82-BIWD-…-25 role`` / ``…6894\nend`` swallowed a word).
+ */
+function ibanAcceptLen(value: string): number {
+  if (ibanValid(value)) {
+    return value.length;
+  }
+  const cuts = [...value.matchAll(IBAN_GROUP_SEP_RE)].map((m) => m.index);
+  for (let i = cuts.length - 1; i >= 0; i -= 1) {
+    if (ibanValid(value.slice(0, cuts[i]))) {
+      return cuts[i]!;
+    }
+  }
+  return 0;
+}
+
 function scrubIban(text: string): { text: string; count: number } {
   let out = text.replace(INVISIBLE, "");
   let count = 0;
   for (const pattern of IBAN_RES) {
-    const result = replaceMatches(out, pattern, "[IBAN]", ibanValid);
+    const result = replaceMatches(
+      out,
+      pattern,
+      "[IBAN]",
+      undefined,
+      false,
+      ibanAcceptLen,
+    );
     out = result.text;
     count += result.count;
   }
@@ -310,9 +384,19 @@ function luhnValid(digits: string): boolean {
 /**
  * Luhn plus issuer prefix: payment PANs start 2–6; RuPay 81/82 and Troy 9792
  * are 16-digit exceptions; 15 digits stay open for UATP and compact IMEIs.
+ * 13-digit PANs were only ever issued by Visa (4), so other 13-digit runs are
+ * EANs; 17–19 digits need an issuer of long PANs.
  */
 function cardValid(value: string): boolean {
   const digits = value.replace(/\D/g, "");
+  if (digits.length === 13 && !digits.startsWith("4")) {
+    return false;
+  }
+  // Visa, Maestro, Discover/UnionPay (6), JCB 35 and Mir 2200–2204 issue
+  // long PANs; 2/3-led snowflake ids are not cards.
+  if (digits.length >= 17 && !/^(?:[456]|35|220[0-4])/.test(digits)) {
+    return false;
+  }
   const prefixOk =
     /^[2-6]/.test(digits) ||
     digits.length === 15 ||
@@ -427,11 +511,14 @@ const IPV4_RE =
   /(?<![\w.])(?:(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\.){3}(?:25[0-5]|2[0-4]\d|[01]?\d\d?)(?![\w.])/g;
 
 // IPv6 with a trailing dotted quad (``::ffff:a.b.c.d``, NAT64 ``64:ff9b::a.b.c.d``).
+// A label colon (``user:64:ff9b::…``) is allowed; a preceding empty or 1–4
+// digit hex group means the hit is a slice of a longer colon-hex run.
 const IPV6_V4_RE =
-  /(?<![\w:.])(?:[0-9A-Fa-f]{0,4}:){2,7}(?:(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\.){3}(?:25[0-5]|2[0-4]\d|[01]?\d\d?)(?![\w.])/g;
+  /(?<![\w.])(?<!(?<!\w)[0-9A-Fa-f]{0,4}:)(?:[0-9A-Fa-f]{0,4}:){2,7}(?:(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\.){3}(?:25[0-5]|2[0-4]\d|[01]?\d\d?)(?![\w.])/g;
 
+// Same label-colon rule as MAC (``user:2001:db8::1``).
 const IPV6_RE =
-  /(?<![\w:])(?:(?:[0-9a-fA-F]{1,4}:){7}[0-9a-fA-F]{1,4}|::(?:[0-9a-fA-F]{1,4}:){0,6}[0-9a-fA-F]{1,4}|(?:[0-9a-fA-F]{1,4}:){1,7}:|(?:[0-9a-fA-F]{1,4}:){1,6}:[0-9a-fA-F]{1,4}|(?:[0-9a-fA-F]{1,4}:){1,5}(?::[0-9a-fA-F]{1,4}){1,2}|(?:[0-9a-fA-F]{1,4}:){1,4}(?::[0-9a-fA-F]{1,4}){1,3}|(?:[0-9a-fA-F]{1,4}:){1,3}(?::[0-9a-fA-F]{1,4}){1,4}|(?:[0-9a-fA-F]{1,4}:){1,2}(?::[0-9a-fA-F]{1,4}){1,5}|[0-9a-fA-F]{1,4}:(?::[0-9a-fA-F]{1,4}){1,6}|::)(?![\w:])/g;
+  /(?<!\w)(?<!(?<!\w)[0-9A-Fa-f]{0,4}:)(?:(?:[0-9a-fA-F]{1,4}:){7}[0-9a-fA-F]{1,4}|::(?:[0-9a-fA-F]{1,4}:){0,6}[0-9a-fA-F]{1,4}|(?:[0-9a-fA-F]{1,4}:){1,7}:|(?:[0-9a-fA-F]{1,4}:){1,6}:[0-9a-fA-F]{1,4}|(?:[0-9a-fA-F]{1,4}:){1,5}(?::[0-9a-fA-F]{1,4}){1,2}|(?:[0-9a-fA-F]{1,4}:){1,4}(?::[0-9a-fA-F]{1,4}){1,3}|(?:[0-9a-fA-F]{1,4}:){1,3}(?::[0-9a-fA-F]{1,4}){1,4}|(?:[0-9a-fA-F]{1,4}:){1,2}(?::[0-9a-fA-F]{1,4}){1,5}|[0-9a-fA-F]{1,4}:(?::[0-9a-fA-F]{1,4}){1,6}|::)(?![\w:])/g;
 
 function normalizeIpv4Octets(value: string): string | null {
   const parts = value.split(".");
@@ -505,7 +592,11 @@ export const locationDetector: Detector = {
   scrub: scrubLocation,
 };
 
-const BSN_RES = [/\b\d{8,9}\b/g, /\b\d{3}[ .\-]\d{3}[ .\-]\d{3}\b/g] as const;
+// ``(?<!\d\.)``: the fractional part of a decimal (``0.12345678``) is not an id.
+const BSN_RES = [
+  /(?<!\d\.)\b\d{8,9}\b/g,
+  /\b\d{3}[ .\-]\d{3}[ .\-]\d{3}\b/g,
+] as const;
 
 function bsnValid(value: string): boolean {
   const digits = value.replace(/[ .\-]/g, "");
@@ -541,7 +632,7 @@ const SSN_RES = [
   /\b\d{3}-\d{2}-\d{4}\b/g,
   /\b\d{3}\/\d{2}\/\d{4}\b/g,
   /\b\d{3}[ .]\d{2}[ .]\d{4}\b/g,
-  /\b\d{9}\b/g,
+  /(?<!\d\.)\b\d{9}\b/g,
 ] as const;
 
 function ssnObviouslyFake(digits: string): boolean {
@@ -710,7 +801,15 @@ function makePhoneDetector(
       let out = text;
       let count = 0;
       for (const [pattern, valid] of patterns) {
-        const result = replaceMatches(out, pattern, "[PHONE]", valid);
+        // An opening ``(`` belongs to the number only when it wraps the area
+        // code (``(06)…``); ``(06-1234…)`` resumes at the ``0``.
+        const result = replaceMatches(
+          out,
+          pattern,
+          "[PHONE]",
+          (m) => valid(m) && (!m.startsWith("(") || m.includes(")")),
+          true,
+        );
         out = result.text;
         count += result.count;
       }
@@ -749,14 +848,15 @@ const NL_LICENSE_PLATE_RE =
 
 const NL_PLATE_LETTER_REJECTS = new Set(["SA", "SD", "SS"]);
 
+/**
+ * Reject RDW-forbidden SA/SD/SS pairs inside one letter group; letters split
+ * by a hyphen (``KS-234-S``) are not a combination.
+ */
 function nlLicensePlateValid(value: string): boolean {
-  const letters = [...value.toUpperCase()].filter((ch) => ch >= "A" && ch <= "Z").join("");
-  for (let i = 0; i < letters.length - 1; i += 1) {
-    if (NL_PLATE_LETTER_REJECTS.has(letters.slice(i, i + 2))) {
-      return false;
-    }
-  }
-  return true;
+  return !value
+    .toUpperCase()
+    .split("-")
+    .some((group) => [...NL_PLATE_LETTER_REJECTS].some((pair) => group.includes(pair)));
 }
 
 function scrubNlLicensePlate(text: string): { text: string; count: number } {

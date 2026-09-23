@@ -345,7 +345,7 @@ fn scrub_iban(text: &str) -> (Option<String>, u32) {
                 current = Some(s);
             }
         } else {
-            let (next, n) = replace_matches(src, pattern, "[IBAN]", |v, _, _| iban_valid(v), false);
+            let (next, n) = replace_iban_cut(src, pattern);
             count += n;
             if let Some(s) = next {
                 current = Some(s);
@@ -356,6 +356,65 @@ fn scrub_iban(text: &str) -> (Option<String>, u32) {
         Some(s) => (Some(s), count),
         None if cleaned.as_str() != text => (Some(cleaned), count),
         None => (None, count),
+    }
+}
+
+fn is_iban_sep(c: char) -> bool {
+    matches!(
+        c,
+        ' ' | '\t' | '\r' | '\n' | '\u{00a0}' | '\u{2000}'
+            ..='\u{200a}' | '\u{202f}' | '\u{3000}' | '-' | '/' | '.'
+    )
+}
+
+/// Length of the longest prefix, cut at a group separator, that passes the
+/// IBAN check (``GB82 BIWD … 25 role`` swallowed a word); 0 rejects.
+fn iban_accept_len(value: &str) -> usize {
+    if iban_valid(value) {
+        return value.len();
+    }
+    let mut prev_sep = false;
+    let mut cuts = Vec::new();
+    for (i, c) in value.char_indices() {
+        let sep = is_iban_sep(c);
+        if sep && !prev_sep {
+            cuts.push(i);
+        }
+        prev_sep = sep;
+    }
+    cuts.into_iter()
+        .rev()
+        .find(|&i| iban_valid(&value[..i]))
+        .unwrap_or(0)
+}
+
+/// ``\b``-bounded patterns: replace the valid prefix; a reject resumes at the
+/// match end like Python ``re``.
+fn replace_iban_cut(text: &str, pattern: &Regex) -> (Option<String>, u32) {
+    let mut count = 0u32;
+    let mut out: Option<String> = None;
+    let mut last = 0usize;
+    let mut pos = 0usize;
+    while let Some(m) = pattern.find_at(text, pos) {
+        let len = iban_accept_len(m.as_str());
+        if len == 0 {
+            pos = m.end().max(m.start() + 1);
+            continue;
+        }
+        let end = m.start() + len;
+        let buf = out.get_or_insert_with(|| String::with_capacity(text.len()));
+        buf.push_str(&text[last..m.start()]);
+        buf.push_str("[IBAN]");
+        last = end;
+        pos = end;
+        count += 1;
+    }
+    match out {
+        None => (None, 0),
+        Some(mut buf) => {
+            buf.push_str(&text[last..]);
+            (Some(buf), count)
+        }
     }
 }
 
@@ -435,6 +494,19 @@ fn credit_card_valid(value: &str) -> bool {
     }
     // SAFETY: len <= 19; digits[..len] are ASCII digits.
     let digits = std::str::from_utf8(&digits[..len]).unwrap();
+    // 13-digit PANs were only ever issued by Visa (4); other runs are EANs.
+    if len == 13 && !digits.starts_with('4') {
+        return false;
+    }
+    // 17–19 digits: only Visa, Maestro, Discover/UnionPay (6), JCB 35 and Mir
+    // 2200–2204 issue long PANs; 2/3-led snowflake ids are not cards.
+    if len >= 17
+        && !["4", "5", "6", "35", "2200", "2201", "2202", "2203", "2204"]
+            .iter()
+            .any(|p| digits.starts_with(p))
+    {
+        return false;
+    }
     // Issuer prefix (see Python ``_card_valid``): 2–6, 15 digits, or 16-digit
     // RuPay 81/82 / Troy 9792.
     let prefix_ok = matches!(digits.as_bytes().first(), Some(b'2'..=b'6'))
@@ -833,10 +905,10 @@ fn ipv4_boundary_ok(text: &str, start: usize, end: usize) -> bool {
 }
 
 fn ipv6_v4_boundary_ok(text: &str, start: usize, end: usize) -> bool {
-    // (?<![\w:.]) ... (?![\w.])
+    // (?<![\w.]) ... (?![\w.]); a label colon is left to ``colon_label_ok``.
     if start > 0 {
         let prev = text[..start].chars().next_back().unwrap();
-        if is_word_char(prev) || prev == ':' || prev == '.' {
+        if is_word_char(prev) || prev == '.' || !colon_label_ok(text, start) {
             return false;
         }
     }
@@ -850,10 +922,11 @@ fn ipv6_v4_boundary_ok(text: &str, start: usize, end: usize) -> bool {
 }
 
 fn ipv6_boundary_ok(text: &str, start: usize, end: usize) -> bool {
-    // (?<![\w:]) ... (?![\w:])
+    // (?<!\w) ... (?![\w:]); a label colon (``user:2001:db8::1``) is left to
+    // ``colon_label_ok``.
     if start > 0 {
         let prev = text[..start].chars().next_back().unwrap();
-        if is_word_char(prev) || prev == ':' {
+        if is_word_char(prev) || !colon_label_ok(text, start) {
             return false;
         }
     }
@@ -966,8 +1039,25 @@ fn bsn_res() -> &'static [Regex] {
     })
 }
 
+/// ``(?<!\d\.)``: the fractional part of a decimal (``0.12345678``) is not an id.
+fn not_decimal_fraction(text: &str, start: usize) -> bool {
+    let b = text.as_bytes();
+    !(start >= 2 && b[start - 1] == b'.' && b[start - 2].is_ascii_digit())
+}
+
 fn scrub_bsn(text: &str) -> (Option<String>, u32) {
-    scrub_patterns(text, bsn_res(), "[BSN]", |v, _, _| bsn_valid(v), false)
+    let res = bsn_res();
+    let (first, mut count) = replace_matches(
+        text,
+        &res[0],
+        "[BSN]",
+        |v, s, _| not_decimal_fraction(text, s) && bsn_valid(v),
+        false,
+    );
+    let src = first.as_deref().unwrap_or(text);
+    let (second, n) = replace_matches(src, &res[1], "[BSN]", |v, _, _| bsn_valid(v), false);
+    count += n;
+    (second.or(first), count)
 }
 
 fn ssn_res() -> &'static [Regex] {
@@ -983,7 +1073,19 @@ fn ssn_res() -> &'static [Regex] {
 }
 
 fn scrub_ssn(text: &str) -> (Option<String>, u32) {
-    scrub_patterns(text, ssn_res(), "[SSN]", |v, _, _| ssn_valid(v), false)
+    let res = ssn_res();
+    let (grouped, mut count) =
+        scrub_patterns(text, &res[..3], "[SSN]", |v, _, _| ssn_valid(v), false);
+    let src = grouped.as_deref().unwrap_or(text);
+    let (compact, n) = replace_matches(
+        src,
+        &res[3],
+        "[SSN]",
+        |v, s, _| not_decimal_fraction(src, s) && ssn_valid(v),
+        false,
+    );
+    count += n;
+    (compact.or(grouped), count)
 }
 
 fn tax_id_re() -> &'static Regex {
@@ -1008,6 +1110,12 @@ fn digit_count(text: &str) -> usize {
 fn digits_only_starts_with_06(text: &str) -> bool {
     let mut digits = text.bytes().filter(|b| b.is_ascii_digit());
     matches!((digits.next(), digits.next()), (Some(b'0'), Some(b'6')))
+}
+
+/// An opening ``(`` belongs to the number only when it wraps the area code
+/// (``(06)…``); ``(06-1234…)`` is retried from the ``0``.
+fn phone_paren_ok(m: &str) -> bool {
+    !m.starts_with('(') || m.contains(')')
 }
 
 fn phone_left_ok(text: &str, start: usize) -> bool {
@@ -1105,44 +1213,73 @@ fn scrub_phone_international(text: &str) -> (Option<String>, u32) {
     )
 }
 
+/// National phone forms: emulate Python backtracking on the trailing
+/// ``(?!\d)`` / ``(?![A-Fa-f]{2})`` lookaheads. The greedy ``{8,10}`` run may
+/// take one digit group too many (``030/86872539 26``); walk the end left to
+/// the longest prefix that is a full pattern match with a clean right edge,
+/// then validate it. A reject resumes at ``start + 1``.
+fn replace_national_phone(
+    text: &str,
+    pattern: &Regex,
+    hex_guard: bool,
+    valid: fn(&str) -> bool,
+) -> (Option<String>, u32) {
+    let right_ok = |e: usize| no_trailing_digit(text, e) && (!hex_guard || no_trailing_hex_letters(text, e));
+    let mut count = 0u32;
+    let mut out: Option<String> = None;
+    let mut last = 0usize;
+    let mut pos = 0usize;
+    while let Some(m) = pattern.find_at(text, pos) {
+        let start = m.start();
+        let mut end = m.end();
+        let mut found = None;
+        while phone_left_ok(text, start) && end > start {
+            let cand = &text[start..end];
+            let full = pattern
+                .find(cand)
+                .is_some_and(|mm| mm.start() == 0 && mm.end() == cand.len());
+            if full && right_ok(end) {
+                found = Some(end);
+                break;
+            }
+            end -= 1;
+            while end > start && !text.is_char_boundary(end) {
+                end -= 1;
+            }
+        }
+        let Some(end) = found.filter(|&e| {
+            let v = &text[start..e];
+            phone_paren_ok(v) && valid(v)
+        }) else {
+            pos = start + 1;
+            continue;
+        };
+        let buf = out.get_or_insert_with(|| String::with_capacity(text.len()));
+        buf.push_str(&text[last..start]);
+        buf.push_str("[PHONE]");
+        last = end;
+        pos = end;
+        count += 1;
+    }
+    match out {
+        None => (None, 0),
+        Some(mut buf) => {
+            buf.push_str(&text[last..]);
+            (Some(buf), count)
+        }
+    }
+}
+
 fn scrub_phone_nl(text: &str) -> (Option<String>, u32) {
-    replace_matches(
-        text,
-        phone_nl_re(),
-        "[PHONE]",
-        |v, s, e| {
-            phone_left_ok(text, s)
-                && no_trailing_digit(text, e)
-                && no_trailing_hex_letters(text, e)
-                && phone_nl_valid(v)
-        },
-        true,
-    )
+    replace_national_phone(text, phone_nl_re(), true, phone_nl_valid)
 }
 
 fn scrub_phone_en(text: &str) -> (Option<String>, u32) {
-    replace_matches(
-        text,
-        phone_en_re(),
-        "[PHONE]",
-        |v, s, e| phone_left_ok(text, s) && no_trailing_digit(text, e) && phone_en_valid(v),
-        true,
-    )
+    replace_national_phone(text, phone_en_re(), false, phone_en_valid)
 }
 
 fn scrub_phone_de(text: &str) -> (Option<String>, u32) {
-    replace_matches(
-        text,
-        phone_de_re(),
-        "[PHONE]",
-        |v, s, e| {
-            phone_left_ok(text, s)
-                && no_trailing_digit(text, e)
-                && no_trailing_hex_letters(text, e)
-                && phone_de_valid(v)
-        },
-        true,
-    )
+    replace_national_phone(text, phone_de_re(), true, phone_de_valid)
 }
 
 fn nl_postcode_re() -> &'static Regex {
@@ -1214,25 +1351,15 @@ fn nl_plate_boundary_ok(text: &str, start: usize, end: usize) -> bool {
     true
 }
 
+/// Reject RDW-forbidden SA/SD/SS pairs inside one letter group; letters split
+/// by a hyphen (``KS-234-S``) are not a combination.
 fn nl_license_plate_valid(value: &str) -> bool {
-    let mut letters = [0u8; 16];
-    let mut len = 0usize;
-    for b in value.bytes() {
-        if b.is_ascii_alphabetic() {
-            if len >= letters.len() {
-                break;
-            }
-            letters[len] = b.to_ascii_uppercase();
-            len += 1;
-        }
-    }
-    for i in 0..len.saturating_sub(1) {
-        let pair = std::str::from_utf8(&letters[i..i + 2]).unwrap();
-        if NL_PLATE_LETTER_REJECTS.contains(&pair) {
-            return false;
-        }
-    }
-    true
+    !value.split('-').any(|group| {
+        let upper = group.to_ascii_uppercase();
+        NL_PLATE_LETTER_REJECTS
+            .iter()
+            .any(|pair| upper.contains(pair))
+    })
 }
 
 fn scrub_nl_license_plate(text: &str) -> (Option<String>, u32) {
@@ -1304,14 +1431,35 @@ fn build_detectors(mask: u8) -> Vec<Detector> {
             scrub: scrub_phone_international,
         });
     }
+    // National phone forms (trunk ``0`` + area code) before bare-digit IDs, so
+    // BSN does not take the subscriber part of ``040 78703244``.
     if has_nl {
         pack.push(Detector {
-            category: PiiCategory::Bsn,
-            scrub: scrub_bsn,
+            category: PiiCategory::Phone,
+            scrub: scrub_phone_nl,
         });
+    }
+    if has_en {
+        pack.push(Detector {
+            category: PiiCategory::Phone,
+            scrub: scrub_phone_en,
+        });
+    }
+    if has_de {
+        pack.push(Detector {
+            category: PiiCategory::Phone,
+            scrub: scrub_phone_de,
+        });
+    }
+    if has_nl {
+        // BTW-id first: its 9-digit body can itself pass the BSN elfproef.
         pack.push(Detector {
             category: PiiCategory::VatId,
             scrub: scrub_nl_vat,
+        });
+        pack.push(Detector {
+            category: PiiCategory::Bsn,
+            scrub: scrub_bsn,
         });
         pack.push(Detector {
             category: PiiCategory::Passport,
@@ -1338,22 +1486,6 @@ fn build_detectors(mask: u8) -> Vec<Detector> {
         pack.push(Detector {
             category: PiiCategory::LicensePlate,
             scrub: scrub_nl_license_plate,
-        });
-        pack.push(Detector {
-            category: PiiCategory::Phone,
-            scrub: scrub_phone_nl,
-        });
-    }
-    if has_en {
-        pack.push(Detector {
-            category: PiiCategory::Phone,
-            scrub: scrub_phone_en,
-        });
-    }
-    if has_de {
-        pack.push(Detector {
-            category: PiiCategory::Phone,
-            scrub: scrub_phone_de,
         });
     }
     pack
