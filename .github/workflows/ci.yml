@@ -71,6 +71,30 @@ jobs:
       - name: Run tests
         run: pytest -q
 
+  test-latest:
+    name: Python (3.12 + FastMCP latest)
+    if: ${{ !github.event.pull_request.draft }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install package + newest FastMCP
+        run: |
+          python -m pip install --upgrade pip
+          # The floor job alone missed FastMCP 4 moving its submodules.
+          pip install -e ".[dev]" --upgrade "fastmcp"
+
+      - name: Run tests
+        run: pytest -q
+
   test-native:
     name: Python (native wheel)
     if: ${{ !github.event.pull_request.draft }}

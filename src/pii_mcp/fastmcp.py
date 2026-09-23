@@ -1,6 +1,6 @@
 """FastMCP middleware: scrub outbound tool/resource/prompt results.
 
-Requires ``pip install pii-mcp[fastmcp]`` (FastMCP >= 3.0.0).
+Requires ``pip install pii-mcp[fastmcp]`` (FastMCP 3.x or 4.x).
 Results only — does not scrub tool arguments or list_tools schemas.
 
 Fail closed: any scrub/walk error withholds the result (never forwards
@@ -16,10 +16,11 @@ from typing import Any
 
 from mcp.types import TextContent
 
-from fastmcp.prompts.prompt import PromptResult
-from fastmcp.resources.resource import ResourceContent, ResourceResult
+# Package-level exports: FastMCP 4 moved the submodules (tools.tool → tools.base).
+from fastmcp.prompts import PromptResult
+from fastmcp.resources import ResourceContent, ResourceResult
 from fastmcp.server.middleware import Middleware, MiddlewareContext
-from fastmcp.tools.tool import ToolResult
+from fastmcp.tools import ToolResult
 
 from pii_mcp.scrub import (
     DEFAULT_LANGUAGES,
@@ -134,10 +135,13 @@ class PiiScrubMiddleware(Middleware):
 
         merged = merge_counts(parts)
         self._emit(merged)
-        return ToolResult(
-            content=new_content,
-            structured_content=new_structured,
-            meta=new_meta,
+        # model_copy keeps fields this middleware does not scrub (4.x is_error).
+        return result.model_copy(
+            update={
+                "content": new_content,
+                "structured_content": new_structured,
+                "meta": new_meta,
+            }
         )
 
     def _scrub_resource_result(self, result: ResourceResult) -> ResourceResult:
