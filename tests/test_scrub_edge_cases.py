@@ -638,6 +638,10 @@ class TestDashGroupedMac:
         assert result["text"] == "mac [MAC] up"
         assert result["counts"]["mac"] == 1
 
+    def test_non_ascii_letter_before_is_a_boundary(self) -> None:
+        # Same ASCII word boundary as the Rust / JS backends.
+        assert scrub_text("mac:ж00e0-fc12-3456")["text"] == "mac:ж[MAC]"
+
     @pytest.mark.parametrize(
         "text",
         [

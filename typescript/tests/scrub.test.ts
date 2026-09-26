@@ -377,6 +377,7 @@ describe("scrubText", () => {
       expect(result.text).toBe("mac [MAC] up");
       expect(result.counts.mac).toBe(1);
     }
+    expect(scrubText("mac:ж00e0-fc12-3456").text).toBe("mac:ж[MAC]");
     for (const text of [
       "part 1234-5678-9012 shipped",
       "id 4d95a28a-0833-4533-82c1-de09362e46d1",
