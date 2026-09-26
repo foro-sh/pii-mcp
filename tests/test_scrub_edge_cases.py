@@ -512,3 +512,26 @@ class TestNationalIdUnicodeSeparators:
     def test_mixed_dash_and_space_is_not_an_ssn(self) -> None:
         # A mixed dash / space shape is not one of the SSN groupings.
         assert scrub_text("pages 219–09 9999", languages=["en"])["counts"]["ssn"] == 0
+
+
+class TestGroupedGermanTaxId:
+    """Steuerbescheide and payslips print the IdNr as ``12 345 678 901``."""
+
+    @pytest.mark.parametrize(
+        "text",
+        ["IdNr 86 095 742 719", "IdNr 86 095 742 719", "IdNr 86095742719"],
+    )
+    def test_grouped_tax_id(self, text: str) -> None:
+        result = scrub_text(text, languages=["de"])
+        assert result["text"] == "IdNr [TAX_ID]"
+        assert result["counts"]["tax_id"] == 1
+
+    def test_grouped_tax_id_wins_over_bsn_tail(self) -> None:
+        # ``482 956 513`` alone passes the BSN elfproef.
+        result = scrub_text("IdNr 57 482 956 513", languages=["nl", "de"])
+        assert result["text"] == "IdNr [TAX_ID]"
+        assert result["counts"]["bsn"] == 0
+
+    def test_grouped_checksum_failure_kept(self) -> None:
+        text = "IdNr 86 095 742 718"
+        assert scrub_text(text, languages=["de"])["text"] == text

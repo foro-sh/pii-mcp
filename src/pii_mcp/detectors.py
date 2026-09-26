@@ -39,7 +39,8 @@ Patterns:
 - US SSN: hyphen/space/dot/slash or compact 9-digit with SSA area/group/serial
   rejects, plus obvious fakes (all-same digit, 123456789 / 987654321). Grouped
   SSN / BSN forms also accept nbsp, thin / narrow nbsp, and unicode dashes.
-- German Steuer-IdNr (tax_id): 11 digits with structure + mod-11/10 check.
+- German Steuer-IdNr (tax_id): 11 digits, compact or grouped ``12 345 678 901``,
+  with structure + mod-11/10 check.
 - NL BTW-id (``vat_id``): ``NL`` + 9 digits + ``B`` + 2 digits with optional
   spaces/dots (format only — post-2020 sole-trader ids are not elfproef-gated).
 - NL passport / ID-card number (``passport``): 9-char RvIG document number
@@ -680,11 +681,17 @@ def _scrub_ssn(text: str) -> tuple[str, int]:
 
 ssn_detector = Detector(type="ssn", scrub=_scrub_ssn)
 
-TAX_ID_RE = re.compile(r"\b\d{11}\b")
+# Compact, or the ``12 345 678 901`` grouping printed on Steuerbescheide and
+# payslips (single space / nbsp between groups).
+TAX_ID_RES: tuple[re.Pattern[str], ...] = (
+    re.compile(r"\b\d{11}\b"),
+    re.compile(rf"\b\d{{2}}{_ID_SPACE}\d{{3}}{_ID_SPACE}\d{{3}}{_ID_SPACE}\d{{3}}\b"),
+)
 
 
-def _tax_id_valid(digits: str) -> bool:
+def _tax_id_valid(value: str) -> bool:
     """German IdNr: no leading zero; one digit repeats 2–3× in body; check digit."""
+    digits = _strip_id_seps(value)
     if len(digits) != 11 or not digits.isdigit():
         return False
     if digits[0] == "0":
@@ -709,7 +716,12 @@ def _tax_id_valid(digits: str) -> bool:
 
 
 def _scrub_tax_id(text: str) -> tuple[str, int]:
-    return _replace_matches(text, TAX_ID_RE, "[TAX_ID]", _tax_id_valid)
+    out = text
+    count = 0
+    for pattern in TAX_ID_RES:
+        out, n = _replace_matches(out, pattern, "[TAX_ID]", _tax_id_valid)
+        count += n
+    return out, count
 
 
 tax_id_detector = Detector(type="tax_id", scrub=_scrub_tax_id)

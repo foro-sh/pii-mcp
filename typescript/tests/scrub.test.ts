@@ -290,6 +290,19 @@ describe("scrubText", () => {
     ).toBe(0);
   });
 
+  it("masks grouped German tax ids ahead of a BSN-shaped tail", () => {
+    for (const text of ["86 095 742 719", "86 095 742 719"]) {
+      const result = scrubText(`IdNr ${text}`, { languages: ["de"] });
+      expect(result.text).toBe("IdNr [TAX_ID]");
+    }
+    const both = scrubText("IdNr 57 482 956 513", { languages: ["nl", "de"] });
+    expect(both.text).toBe("IdNr [TAX_ID]");
+    expect(both.counts.bsn).toBe(0);
+    expect(scrubText("IdNr 86 095 742 718", { languages: ["de"] }).text).toBe(
+      "IdNr 86 095 742 718",
+    );
+  });
+
   it("rejects unknown language", () => {
     expect(() => scrubText("hi", { languages: ["fr"] })).toThrow(
       /unknown language/,

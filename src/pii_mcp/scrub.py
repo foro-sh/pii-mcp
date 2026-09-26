@@ -13,9 +13,9 @@ receives NL postcode hits from the pattern pack.
 Detector pack order (see ``_detectors_for``): universal → international phone
 (when any pack is active, before national IDs so ``+31(0)6…`` is not eaten by
 SSN) → locale phone forms (before BSN takes the subscriber part of
-``040 78703244``) → checksum/rule-backed national IDs (BSN before SSN when
-both packs are on; NL BTW before BSN, passport after) → NL postcode /
-kenteken when ``nl``.
+``040 78703244``) → checksum/rule-backed national IDs (DE IdNr before BSN,
+BSN before SSN when both packs are on; NL BTW before BSN, passport after) →
+NL postcode / kenteken when ``nl``.
 
 Optional Rust acceleration: when ``pii_mcp._native`` is importable (shipped in
 platform wheels, or built via maturin), ``scrub_text`` / ``scrub_payload``
@@ -191,13 +191,15 @@ def _detectors_for(languages: Sequence[str] | None) -> tuple[Detector, ...]:
         pack.append(phone_en_detector)
     if "de" in langs:
         pack.append(phone_de_detector)
+    if "de" in langs:
+        # Before BSN: the last three groups of ``12 345 678 901`` are a
+        # spaced 9-digit BSN candidate.
+        pack.append(tax_id_detector)
     if "nl" in langs:
         # BTW-id first: its 9-digit body can itself pass the BSN elfproef.
         pack.append(nl_vat_detector)
         pack.append(bsn_detector)
         pack.append(nl_passport_detector)
-    if "de" in langs:
-        pack.append(tax_id_detector)
     if "en" in langs:
         pack.append(ssn_detector)
     if "nl" in langs:

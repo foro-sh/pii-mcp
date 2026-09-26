@@ -247,8 +247,10 @@ fn ssn_obviously_fake(digits: &[u8; 9]) -> bool {
     digits == b"123456789" || digits == b"987654321"
 }
 
-/// German Steuer-IdNr: structure + mod-11/10 check digit.
-pub fn tax_id_valid(digits: &str) -> bool {
+/// German Steuer-IdNr: structure + mod-11/10 check digit. Accepts grouped forms.
+pub fn tax_id_valid(value: &str) -> bool {
+    let compact: String = value.chars().filter(|&c| !is_id_sep(c)).collect();
+    let digits = compact.as_str();
     if digits.len() != 11 || !digits.bytes().all(|b| b.is_ascii_digit()) {
         return false;
     }

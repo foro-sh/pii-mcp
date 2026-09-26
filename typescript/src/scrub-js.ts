@@ -14,9 +14,9 @@
  * Detector pack order (see ``detectorsFor``): universal → international phone
  * (when any pack is active, before national IDs so ``+31(0)6…`` is not eaten by
  * SSN) → locale phone forms (before BSN takes the subscriber part of
- * ``040 78703244``) → checksum/rule-backed national IDs (BSN before SSN when
- * both packs are on; NL BTW before BSN, passport after) → NL postcode /
- * kenteken when ``nl``.
+ * ``040 78703244``) → checksum/rule-backed national IDs (DE IdNr before BSN,
+ * BSN before SSN when both packs are on; NL BTW before BSN, passport after) →
+ * NL postcode / kenteken when ``nl``.
  */
 
 import {
@@ -110,12 +110,14 @@ function detectorsFor(
   if (langs.includes("de")) {
     pack.push(phoneDeDetector);
   }
+  if (langs.includes("de")) {
+    // Before BSN: the last three groups of ``12 345 678 901`` are a spaced
+    // 9-digit BSN candidate.
+    pack.push(taxIdDetector);
+  }
   if (langs.includes("nl")) {
     // BTW-id first: its 9-digit body can itself pass the BSN elfproef.
     pack.push(nlVatDetector, bsnDetector, nlPassportDetector);
-  }
-  if (langs.includes("de")) {
-    pack.push(taxIdDetector);
   }
   if (langs.includes("en")) {
     pack.push(ssnDetector);

@@ -1097,15 +1097,25 @@ fn scrub_ssn(text: &str) -> (Option<String>, u32) {
     (compact.or(grouped), count)
 }
 
-fn tax_id_re() -> &'static Regex {
-    static RE: OnceLock<Regex> = OnceLock::new();
-    RE.get_or_init(|| Regex::new(r"\b\d{11}\b").unwrap())
+/// Compact, or the ``12 345 678 901`` grouping printed on Steuerbescheide and
+/// payslips (single space / nbsp between groups).
+fn tax_id_res() -> &'static [Regex] {
+    static RES: OnceLock<Vec<Regex>> = OnceLock::new();
+    RES.get_or_init(|| {
+        vec![
+            Regex::new(r"\b\d{11}\b").unwrap(),
+            Regex::new(&format!(
+                r"\b\d{{2}}{ID_SPACE}\d{{3}}{ID_SPACE}\d{{3}}{ID_SPACE}\d{{3}}\b"
+            ))
+            .unwrap(),
+        ]
+    })
 }
 
 fn scrub_tax_id(text: &str) -> (Option<String>, u32) {
-    replace_matches(
+    scrub_patterns(
         text,
-        tax_id_re(),
+        tax_id_res(),
         "[TAX_ID]",
         |v, _, _| tax_id_valid(v),
         false,
@@ -1459,6 +1469,14 @@ fn build_detectors(mask: u8) -> Vec<Detector> {
             scrub: scrub_phone_de,
         });
     }
+    if has_de {
+        // Before BSN: the last three groups of ``12 345 678 901`` are a
+        // spaced 9-digit BSN candidate.
+        pack.push(Detector {
+            category: PiiCategory::TaxId,
+            scrub: scrub_tax_id,
+        });
+    }
     if has_nl {
         // BTW-id first: its 9-digit body can itself pass the BSN elfproef.
         pack.push(Detector {
@@ -1472,12 +1490,6 @@ fn build_detectors(mask: u8) -> Vec<Detector> {
         pack.push(Detector {
             category: PiiCategory::Passport,
             scrub: scrub_nl_passport,
-        });
-    }
-    if has_de {
-        pack.push(Detector {
-            category: PiiCategory::TaxId,
-            scrub: scrub_tax_id,
         });
     }
     if has_en {

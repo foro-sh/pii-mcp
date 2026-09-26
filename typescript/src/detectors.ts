@@ -37,7 +37,8 @@
  * - US SSN: hyphen/space/dot/slash or compact 9-digit with SSA area/group/serial
  *   rejects, plus obvious fakes (all-same digit, 123456789 / 987654321). Grouped
  *   SSN / BSN forms also accept nbsp, thin / narrow nbsp, and unicode dashes.
- * - German Steuer-IdNr (tax_id): 11 digits with structure + mod-11/10 check.
+ * - German Steuer-IdNr (tax_id): 11 digits, compact or grouped ``12 345 678 901``,
+ *   with structure + mod-11/10 check.
  * - NL BTW-id (``vat_id``): ``NL`` + 9 digits + ``B`` + 2 digits with optional
  *   spaces/dots (format only — post-2020 sole-trader ids are not elfproef-gated).
  * - NL passport / ID-card number (``passport``): 9-char RvIG document number
@@ -688,9 +689,18 @@ function scrubSsn(text: string): { text: string; count: number } {
 
 export const ssnDetector: Detector = { type: "ssn", scrub: scrubSsn };
 
-const TAX_ID_RE = /\b\d{11}\b/g;
+// Compact, or the ``12 345 678 901`` grouping printed on Steuerbescheide and
+// payslips (single space / nbsp between groups).
+const TAX_ID_RES = [
+  /\b\d{11}\b/g,
+  new RegExp(
+    String.raw`\b\d{2}${ID_SPACE}\d{3}${ID_SPACE}\d{3}${ID_SPACE}\d{3}\b`,
+    "g",
+  ),
+] as const;
 
-function taxIdValid(digits: string): boolean {
+function taxIdValid(value: string): boolean {
+  const digits = value.replace(ID_SEPS, "");
   if (digits.length !== 11 || !/^\d{11}$/.test(digits)) {
     return false;
   }
@@ -722,7 +732,14 @@ function taxIdValid(digits: string): boolean {
 }
 
 function scrubTaxId(text: string): { text: string; count: number } {
-  return replaceMatches(text, TAX_ID_RE, "[TAX_ID]", taxIdValid);
+  let out = text;
+  let count = 0;
+  for (const pattern of TAX_ID_RES) {
+    const result = replaceMatches(out, pattern, "[TAX_ID]", taxIdValid);
+    out = result.text;
+    count += result.count;
+  }
+  return { text: out, count };
 }
 
 export const taxIdDetector: Detector = { type: "tax_id", scrub: scrubTaxId };
