@@ -171,7 +171,9 @@ fn is_id_sep(c: char) -> bool {
     )
 }
 
-/// Dutch BSN 11-check (8–9 digits, zero-padded to 9). Accepts grouped forms.
+/// Dutch BSN 11-check (8–9 digits, zero-padded to 9). Group separators (see
+/// ``is_id_sep``) are skipped wherever they appear; the scrub patterns fix the
+/// grouping.
 pub fn bsn_valid(value: &str) -> bool {
     let mut digits = [0u8; 9];
     let mut len = 0usize;
@@ -247,17 +249,29 @@ fn ssn_obviously_fake(digits: &[u8; 9]) -> bool {
     digits == b"123456789" || digits == b"987654321"
 }
 
-/// German Steuer-IdNr: structure + mod-11/10 check digit. Accepts grouped forms.
+/// German Steuer-IdNr: structure + mod-11/10 check digit. Group separators
+/// (space, dot, hyphen, slash, nbsp, thin / narrow nbsp, unicode dashes) are
+/// skipped wherever they appear; the scrub patterns fix the grouping.
 pub fn tax_id_valid(value: &str) -> bool {
-    let compact: String = value.chars().filter(|&c| !is_id_sep(c)).collect();
-    let digits = compact.as_str();
-    if digits.len() != 11 || !digits.bytes().all(|b| b.is_ascii_digit()) {
+    let mut buf = [0u8; 11];
+    let mut len = 0usize;
+    for c in value.chars() {
+        if is_id_sep(c) {
+            continue;
+        }
+        if !c.is_ascii_digit() || len >= 11 {
+            return false;
+        }
+        buf[len] = c as u8;
+        len += 1;
+    }
+    if len != 11 {
         return false;
     }
-    if digits.as_bytes()[0] == b'0' {
+    if buf[0] == b'0' {
         return false;
     }
-    let body = &digits.as_bytes()[..10];
+    let body = &buf[..10];
     let mut counts = [0u8; 10];
     for &b in body {
         counts[(b - b'0') as usize] += 1;
@@ -285,7 +299,7 @@ pub fn tax_id_valid(value: &str) -> bool {
     if check == 10 {
         check = 0;
     }
-    check == (digits.as_bytes()[10] - b'0') as u32
+    check == (buf[10] - b'0') as u32
 }
 
 const NL_POSTCODE_REJECTS: &[&str] = &["SA", "SD", "SS"];
