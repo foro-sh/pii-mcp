@@ -1146,19 +1146,46 @@ fn phone_left_ok(text: &str, start: usize) -> bool {
     !(is_word_char(prev) || prev == '+')
 }
 
+/// Rich text / PDFs put nbsp, thin / narrow nbsp, or a unicode dash between
+/// phone groups; every phone pattern accepts them alongside the ASCII seps.
+const PHONE_SEP_EXTRA: &str = r"\u{00a0}\u{2009}\u{202f}\u{2010}-\u{2015}";
+
+/// The span allows more than 15 digits so a ``(0)`` trunk between spaced
+/// groups (``+44 (0) 20 7946 0958``) fits; ``phone_international_len`` cuts it
+/// back.
 fn phone_international_re() -> &'static Regex {
     static RE: OnceLock<Regex> = OnceLock::new();
-    RE.get_or_init(|| Regex::new(r"(?:\+|00)\d[\d .()\-]{6,16}\d").unwrap())
+    RE.get_or_init(|| {
+        Regex::new(&format!(
+            r"(?:\+|00)\d[\d .()\-{PHONE_SEP_EXTRA}]{{6,20}}\d"
+        ))
+        .unwrap()
+    })
 }
 
-fn phone_international_valid(m: &str) -> bool {
-    let n = digit_count(m);
-    (8..=15).contains(&n)
+/// Length of the longest prefix ending on a whole digit group with 8–15
+/// digits (E.164), so a run into the next number stops at the group
+/// boundary; 0 rejects.
+fn phone_international_len(value: &str) -> usize {
+    let chars: Vec<(usize, char)> = value.char_indices().collect();
+    for i in (0..chars.len()).rev() {
+        let (at, c) = chars[i];
+        if !c.is_ascii_digit() || chars.get(i + 1).is_some_and(|(_, n)| n.is_ascii_digit()) {
+            continue;
+        }
+        let end = at + c.len_utf8();
+        if (8..=15).contains(&digit_count(&value[..end])) {
+            return end;
+        }
+    }
+    0
 }
 
 fn phone_nl_re() -> &'static Regex {
     static RE: OnceLock<Regex> = OnceLock::new();
-    RE.get_or_init(|| Regex::new(r"\(?0\d\)?(?:[ .\-/()]?\d){8}").unwrap())
+    RE.get_or_init(|| {
+        Regex::new(&format!(r"\(?0\d\)?(?:[ .\-/(){PHONE_SEP_EXTRA}]?\d){{8}}")).unwrap()
+    })
 }
 
 fn phone_nl_valid(m: &str) -> bool {
@@ -1168,7 +1195,11 @@ fn phone_nl_valid(m: &str) -> bool {
 fn phone_en_re() -> &'static Regex {
     static RE: OnceLock<Regex> = OnceLock::new();
     RE.get_or_init(|| {
-        Regex::new(r"(?:1[ .\-]?)?\(?\d{3}\)?[ .\-]?\d{3}[ .\-]\d{4}").unwrap()
+        let sep = format!(r"[ .\-{PHONE_SEP_EXTRA}]");
+        Regex::new(&format!(
+            r"(?:1{sep}?)?\(?\d{{3}}\)?{sep}?\d{{3}}{sep}\d{{4}}"
+        ))
+        .unwrap()
     })
 }
 
@@ -1185,7 +1216,9 @@ fn phone_en_valid(m: &str) -> bool {
 
 fn phone_de_re() -> &'static Regex {
     static RE: OnceLock<Regex> = OnceLock::new();
-    RE.get_or_init(|| Regex::new(r"\(?0\d\)?(?:[ .\-/()]?\d){8,10}").unwrap())
+    RE.get_or_init(|| {
+        Regex::new(&format!(r"\(?0\d\)?(?:[ .\-/(){PHONE_SEP_EXTRA}]?\d){{8,10}}")).unwrap()
+    })
 }
 
 fn phone_de_valid(m: &str) -> bool {
@@ -1223,13 +1256,37 @@ fn no_trailing_hex_letters(text: &str, end: usize) -> bool {
 }
 
 fn scrub_phone_international(text: &str) -> (Option<String>, u32) {
-    replace_matches(
-        text,
-        phone_international_re(),
-        "[PHONE]",
-        |v, s, _| phone_left_ok(text, s) && phone_international_valid(v),
-        true,
-    )
+    let mut count = 0u32;
+    let mut out: Option<String> = None;
+    let mut last = 0usize;
+    let mut pos = 0usize;
+    while let Some(m) = phone_international_re().find_at(text, pos) {
+        let start = m.start();
+        let len = if phone_left_ok(text, start) {
+            phone_international_len(m.as_str())
+        } else {
+            0
+        };
+        if len == 0 {
+            // The match starts on an ASCII ``+`` / ``0``.
+            pos = start + 1;
+            continue;
+        }
+        let end = start + len;
+        let buf = out.get_or_insert_with(|| String::with_capacity(text.len()));
+        buf.push_str(&text[last..start]);
+        buf.push_str("[PHONE]");
+        last = end;
+        pos = end;
+        count += 1;
+    }
+    match out {
+        None => (None, 0),
+        Some(mut buf) => {
+            buf.push_str(&text[last..]);
+            (Some(buf), count)
+        }
+    }
 }
 
 /// National phone forms: emulate Python backtracking on the trailing

@@ -48,9 +48,12 @@
  *   only and SA/SD/SS rejects — structured fragment, not street-address NER.
  * - NL kenteken (``license_plate``): hyphenated RDW sidecodes 1–14 (case-
  *   insensitive), with SA/SD/SS letter-pair rejects.
- * - Phone packs: international (any active pack), NL national (allows ``/`` and
- *   parentheses; rejects hex-digest glue), NANP, DE national (DE excludes exact
- *   Dutch ``06…`` 10-digit mobiles; same hex-glue guard).
+ * - Phone packs: international (any active pack; a ``(0)`` trunk may sit
+ *   between groups and a run past 15 digits is cut back to the last whole
+ *   group), NL national (allows ``/`` and parentheses; rejects hex-digest glue),
+ *   NANP, DE national (DE excludes exact Dutch ``06…`` 10-digit mobiles; same
+ *   hex-glue guard). All phone forms also accept nbsp, thin / narrow nbsp, and
+ *   unicode dashes between groups.
  * - BSN spaced/dotted/hyphenated ``111-222-333`` groups.
  *
  * ``UNIVERSAL_DETECTORS`` (email, IBAN, credit card, BIC, MAC, IMEI, IP, location)
@@ -104,7 +107,7 @@ function replaceMatches(
     for (let m = re.exec(text); m !== null; m = re.exec(text)) {
       const len = acceptLen(m[0]);
       if (len === 0) {
-        if (m[0].length === 0) {
+        if (retry || m[0].length === 0) {
           re.lastIndex = m.index + 1;
         }
         continue;
@@ -784,18 +787,49 @@ function digitCount(text: string): number {
   return count;
 }
 
-const PHONE_INTERNATIONAL: readonly [RegExp, (value: string) => boolean] = [
-  /(?<![\w+])(?:\+|00)\d[\d .()-]{6,16}\d/g,
-  (m) => digitCount(m) >= 8 && digitCount(m) <= 15,
-];
+// Rich text / PDFs put nbsp, thin / narrow nbsp, or a unicode dash between
+// phone groups; every phone pattern accepts them alongside the ASCII seps.
+const PHONE_SEP_EXTRA = String.raw`\xa0\u2009\u202f\u2010-\u2015`;
+
+// The span allows more than 15 digits so a ``(0)`` trunk between spaced groups
+// (``+44 (0) 20 7946 0958``) fits; ``phoneInternationalLen`` cuts it back.
+const PHONE_INTERNATIONAL_RE = new RegExp(
+  String.raw`(?<![\w+])(?:\+|00)\d[\d .()\-${PHONE_SEP_EXTRA}]{6,20}\d`,
+  "g",
+);
+
+/**
+ * Length of the longest prefix ending on a whole digit group with 8–15 digits
+ * (E.164), so a run into the next number stops at the group boundary.
+ */
+function phoneInternationalLen(value: string): number {
+  for (let end = value.length; end > 0; end -= 1) {
+    if (!/\d/.test(value[end - 1]!) || (end < value.length && /\d/.test(value[end]!))) {
+      continue;
+    }
+    const digits = digitCount(value.slice(0, end));
+    if (digits >= 8 && digits <= 15) {
+      return end;
+    }
+  }
+  return 0;
+}
 
 const PHONE_NL_NATIONAL: readonly [RegExp, (value: string) => boolean] = [
-  /(?<![\w+])\(?0\d\)?(?:[ .\-/()]?\d){8}(?!\d)(?![A-Fa-f]{2})/g,
+  new RegExp(
+    String.raw`(?<![\w+])\(?0\d\)?(?:[ .\-/()${PHONE_SEP_EXTRA}]?\d){8}(?!\d)(?![A-Fa-f]{2})`,
+    "g",
+  ),
   (m) => digitCount(m) === 10,
 ];
 
+const NANP_SEP = String.raw`[ .\-${PHONE_SEP_EXTRA}]`;
+
 const PHONE_EN_NANP: readonly [RegExp, (value: string) => boolean] = [
-  /(?<![\w+])(?:1[ .-]?)?\(?\d{3}\)?[ .-]?\d{3}[ .-]\d{4}(?!\d)/g,
+  new RegExp(
+    String.raw`(?<![\w+])(?:1${NANP_SEP}?)?\(?\d{3}\)?${NANP_SEP}?\d{3}${NANP_SEP}\d{4}(?!\d)`,
+    "g",
+  ),
   (m) => {
     const digits = digitCount(m);
     return (
@@ -805,7 +839,10 @@ const PHONE_EN_NANP: readonly [RegExp, (value: string) => boolean] = [
 ];
 
 const PHONE_DE_NATIONAL: readonly [RegExp, (value: string) => boolean] = [
-  /(?<![\w+])\(?0\d\)?(?:[ .\-/()]?\d){8,10}(?!\d)(?![A-Fa-f]{2})/g,
+  new RegExp(
+    String.raw`(?<![\w+])\(?0\d\)?(?:[ .\-/()${PHONE_SEP_EXTRA}]?\d){8,10}(?!\d)(?![A-Fa-f]{2})`,
+    "g",
+  ),
   (m) => {
     const digits = digitCount(m);
     if (digits < 10 || digits > 12) {
@@ -848,7 +885,19 @@ function makePhoneDetector(
   };
 }
 
-export const phoneInternationalDetector = makePhoneDetector([PHONE_INTERNATIONAL]);
+export const phoneInternationalDetector: Detector = {
+  type: "phone",
+  scrub(text: string): { text: string; count: number } {
+    return replaceMatches(
+      text,
+      PHONE_INTERNATIONAL_RE,
+      "[PHONE]",
+      undefined,
+      true,
+      phoneInternationalLen,
+    );
+  },
+};
 export const phoneNlDetector = makePhoneDetector([PHONE_NL_NATIONAL]);
 export const phoneEnDetector = makePhoneDetector([PHONE_EN_NANP]);
 export const phoneDeDetector = makePhoneDetector([PHONE_DE_NATIONAL]);

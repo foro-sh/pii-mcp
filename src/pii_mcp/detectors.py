@@ -51,10 +51,13 @@ Patterns:
   street-address NER.
 - NL kenteken (``license_plate``): hyphenated RDW sidecodes 1–14 (case-
   insensitive), with SA/SD/SS letter-pair rejects.
-- Phone packs: international first (any active pack, before national IDs), NL
+- Phone packs: international first (any active pack, before national IDs; a
+  ``(0)`` trunk may sit between groups and a run past 15 digits is cut back to
+  the last whole group), NL
   national (allows ``/`` and parentheses; rejects hex-digest glue), NANP, DE
   national (DE excludes exact Dutch ``06…`` 10-digit mobiles and separator-free
-  12-digit UPC collisions; same hex-glue guard).
+  12-digit UPC collisions; same hex-glue guard). All phone forms also accept
+  nbsp, thin / narrow nbsp, and unicode dashes between groups.
 - BSN spaced/dotted/hyphenated ``111-222-333`` groups.
 
 ``UNIVERSAL_DETECTORS`` (email, IBAN, credit card, BIC, MAC, IMEI, IP, location)
@@ -762,23 +765,45 @@ def _digit_count(text: str) -> int:
     return sum(1 for ch in text if ch.isdigit())
 
 
-PHONE_INTERNATIONAL = (
-    re.compile(r"(?<![\w+])(?:\+|00)\d[\d .()-]{6,16}\d"),
-    lambda m: 8 <= _digit_count(m) <= 15,
+# Rich text / PDFs put nbsp, thin / narrow nbsp, or a unicode dash between
+# phone groups; every phone pattern accepts them alongside the ASCII seps.
+_PHONE_SEP_EXTRA = r"\xa0  ‐-―"
+
+# The span allows more than 15 digits so a ``(0)`` trunk between spaced groups
+# (``+44 (0) 20 7946 0958``) fits; ``_phone_international_len`` cuts it back.
+PHONE_INTERNATIONAL_RE = re.compile(
+    rf"(?<![\w+])(?:\+|00)\d[\d .()\-{_PHONE_SEP_EXTRA}]{{6,20}}\d"
 )
+
+
+def _phone_international_len(value: str) -> int:
+    """Length of the longest prefix ending on a whole digit group with 8–15
+    digits (E.164), so a run into the next number (``… 0031 20 …``) stops at
+    the group boundary instead of leaking or swallowing its head."""
+    for end in range(len(value), 0, -1):
+        if not value[end - 1].isdigit() or (end < len(value) and value[end].isdigit()):
+            continue
+        if 8 <= _digit_count(value[:end]) <= 15:
+            return end
+    return 0
+
 
 # Trailing (?!\d)(?![A-Fa-f]{2}) blocks longer digit runs and hex digest glue
 # (e.g. sha256:0123456789abcdef) without rejecting ``0612345678 ASAP``.
 # Optional wrapping parens cover ``(06)12345678``; seps stay single-char so
 # ``0132 / 415-…`` is not glued into one national hit.
 PHONE_NL_NATIONAL = (
-    re.compile(r"(?<![\w+])\(?0\d\)?(?:[ .\-/()]?\d){8}(?!\d)(?![A-Fa-f]{2})"),
+    re.compile(
+        rf"(?<![\w+])\(?0\d\)?(?:[ .\-/(){_PHONE_SEP_EXTRA}]?\d){{8}}(?!\d)(?![A-Fa-f]{{2}})"
+    ),
     lambda m: _digit_count(m) == 10,
 )
 
+_NANP_SEP = rf"[ .\-{_PHONE_SEP_EXTRA}]"
+
 PHONE_EN_NANP = (
     re.compile(
-        r"(?<![\w+])(?:1[ .-]?)?\(?\d{3}\)?[ .-]?\d{3}[ .-]\d{4}(?!\d)"
+        rf"(?<![\w+])(?:1{_NANP_SEP}?)?\(?\d{{3}}\)?{_NANP_SEP}?\d{{3}}{_NANP_SEP}\d{{4}}(?!\d)"
     ),
     lambda m: _digit_count(m) in (10, 11) and (
         _digit_count(m) == 10 or re.sub(r"\D", "", m).startswith("1")
@@ -786,7 +811,9 @@ PHONE_EN_NANP = (
 )
 
 PHONE_DE_NATIONAL = (
-    re.compile(r"(?<![\w+])\(?0\d\)?(?:[ .\-/()]?\d){8,10}(?!\d)(?![A-Fa-f]{2})"),
+    re.compile(
+        rf"(?<![\w+])\(?0\d\)?(?:[ .\-/(){_PHONE_SEP_EXTRA}]?\d){{8,10}}(?!\d)(?![A-Fa-f]{{2}})"
+    ),
     lambda m: (
         10 <= _digit_count(m) <= 12
         and not (
@@ -823,7 +850,17 @@ def _make_phone_detector(
     return Detector(type="phone", scrub=scrub)
 
 
-phone_international_detector = _make_phone_detector((PHONE_INTERNATIONAL,))
+def _scrub_phone_international(text: str) -> tuple[str, int]:
+    return _replace_matches(
+        text,
+        PHONE_INTERNATIONAL_RE,
+        "[PHONE]",
+        retry=True,
+        accept_len=_phone_international_len,
+    )
+
+
+phone_international_detector = Detector(type="phone", scrub=_scrub_phone_international)
 phone_nl_detector = _make_phone_detector((PHONE_NL_NATIONAL,))
 phone_en_detector = _make_phone_detector((PHONE_EN_NANP,))
 phone_de_detector = _make_phone_detector((PHONE_DE_NATIONAL,))

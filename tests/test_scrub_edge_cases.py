@@ -535,3 +535,36 @@ class TestGroupedGermanTaxId:
     def test_grouped_checksum_failure_kept(self) -> None:
         text = "IdNr 86 095 742 718"
         assert scrub_text(text, languages=["de"])["text"] == text
+
+
+class TestPhoneSeparatorsAndTrunk:
+    """Unicode group separators and the ``(0)`` trunk in international form."""
+
+    @pytest.mark.parametrize(
+        ("text", "languages"),
+        [
+            ("tel +31 6 12345678", ["nl"]),
+            ("tel +31 6 1234‑5678", ["nl"]),
+            ("tel +31–6–12345678", ["nl"]),
+            ("tel 06 12345678", ["nl"]),
+            ("tel 020–123 4567", ["nl"]),
+            ("tel (555) 123–4567", ["en"]),
+            ("tel 555 123 4567", ["en"]),
+            ("tel 030 12345678", ["de"]),
+            ("tel +44 (0) 20 7946 0958", ["en"]),
+            ("tel +49 (0) 30 1234 5678", ["de"]),
+        ],
+    )
+    def test_masked_whole(self, text: str, languages: list[str]) -> None:
+        result = scrub_text(text, languages=languages)
+        assert result["text"] == "tel [PHONE]"
+        assert result["counts"]["phone"] == 1
+
+    def test_back_to_back_numbers_split_at_group(self) -> None:
+        result = scrub_text("0031 20 1234567 0031 20 7654321", languages=["nl"])
+        assert result["text"] == "[PHONE] [PHONE]"
+        assert result["counts"]["phone"] == 2
+
+    def test_trailing_group_past_fifteen_digits_left(self) -> None:
+        result = scrub_text("call +31 6 12345678 12345", languages=["en"])
+        assert result["text"] == "call [PHONE] 12345"

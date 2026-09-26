@@ -303,6 +303,32 @@ describe("scrubText", () => {
     );
   });
 
+  it("masks phones with unicode separators or a (0) trunk whole", () => {
+    const cases: [string, string[]][] = [
+      ["+31 6 12345678", ["nl"]],
+      ["+31 6 1234‑5678", ["nl"]],
+      ["+31–6–12345678", ["nl"]],
+      ["06 12345678", ["nl"]],
+      ["020–123 4567", ["nl"]],
+      ["(555) 123–4567", ["en"]],
+      ["555 123 4567", ["en"]],
+      ["030 12345678", ["de"]],
+      ["+44 (0) 20 7946 0958", ["en"]],
+      ["+49 (0) 30 1234 5678", ["de"]],
+    ];
+    for (const [text, languages] of cases) {
+      const result = scrubText(`tel ${text}`, { languages });
+      expect(result.text).toBe("tel [PHONE]");
+      expect(result.counts.phone).toBe(1);
+    }
+    expect(
+      scrubText("0031 20 1234567 0031 20 7654321", { languages: ["nl"] }).text,
+    ).toBe("[PHONE] [PHONE]");
+    expect(scrubText("call +31 6 12345678 12345", { languages: ["en"] }).text).toBe(
+      "call [PHONE] 12345",
+    );
+  });
+
   it("rejects unknown language", () => {
     expect(() => scrubText("hi", { languages: ["fr"] })).toThrow(
       /unknown language/,
