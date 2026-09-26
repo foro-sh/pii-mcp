@@ -158,16 +158,16 @@ pub fn nl_passport_valid(value: &str) -> bool {
 /// Group separators the national-id patterns accept: space, dot, hyphen,
 /// slash, nbsp, thin / narrow nbsp, and unicode dashes / minus sign.
 fn is_id_sep(c: char) -> bool {
+    matches!(c, ' ' | '.' | '-' | '/') || is_group_sep(c)
+}
+
+/// Group separators word processors / PDFs substitute for a typed space or
+/// hyphen: nbsp, thin / narrow nbsp, unicode dashes and the minus sign. The
+/// same chars as the ``group_spaces!`` / ``group_dashes!`` regex fragments.
+pub(crate) fn is_group_sep(c: char) -> bool {
     matches!(
         c,
-        ' ' | '.'
-            | '-'
-            | '/'
-            | '\u{00a0}'
-            | '\u{2009}'
-            | '\u{202f}'
-            | '\u{2010}'..='\u{2015}'
-            | '\u{2212}'
+        '\u{00a0}' | '\u{2009}' | '\u{202f}' | '\u{2010}'..='\u{2015}' | '\u{2212}'
     )
 }
 

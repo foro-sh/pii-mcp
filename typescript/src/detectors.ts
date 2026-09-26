@@ -98,26 +98,27 @@ function replaceMatches(
   placeholder: string,
   isValid?: (value: string) => boolean,
   retry = false,
-  acceptLen?: (value: string, start: number, text: string) => number,
+  acceptEnd?: (text: string, start: number, end: number) => number,
 ): { text: string; count: number } {
   let count = 0;
   const re = cloneRegExp(pattern);
-  if (acceptLen !== undefined) {
-    // Replace only the accepted prefix (0 rejects), so a grouped hit that
-    // swallowed a trailing word is cut back to the part that validates. The
-    // match start and text let a hit be re-measured against its context.
+  if (acceptEnd !== undefined) {
+    // ``acceptEnd`` returns where the replacement ends (``start`` rejects),
+    // like Python ``accept_end`` / Rust ``replace_matches_end``: a grouped hit
+    // that swallowed a trailing word is cut back to the part that validates,
+    // or a hit is re-measured against the text (and may end past the match).
     let out = "";
     let last = 0;
     for (let m = re.exec(text); m !== null; m = re.exec(text)) {
-      const len = acceptLen(m[0], m.index, text);
-      if (len === 0) {
+      const end = acceptEnd(text, m.index, m.index + m[0].length);
+      if (end === m.index) {
         if (retry || m[0].length === 0) {
           re.lastIndex = m.index + 1;
         }
         continue;
       }
       out += text.slice(last, m.index) + placeholder;
-      last = m.index + len;
+      last = end;
       re.lastIndex = last;
       count += 1;
     }
@@ -400,7 +401,7 @@ function scrubIban(text: string): { text: string; count: number } {
       "[IBAN]",
       undefined,
       false,
-      ibanAcceptLen,
+      (full, start, end) => start + ibanAcceptLen(full.slice(start, end)),
     );
     out = result.text;
     count += result.count;
@@ -1079,7 +1080,7 @@ export const phoneInternationalDetector: Detector = {
       "[PHONE]",
       undefined,
       true,
-      (_, start, full) => phoneInternationalEnd(full, start) - start,
+      (full, start) => phoneInternationalEnd(full, start),
     );
   },
 };

@@ -4,8 +4,8 @@
 //! explicit boundary checks so matching stays on the linear-time `regex` crate.
 
 use crate::checksum::{
-    bsn_valid, iban_valid, imei_valid, luhn_valid, nl_passport_valid, nl_postcode_valid, ssn_valid,
-    tax_id_valid,
+    bsn_valid, iban_valid, imei_valid, is_group_sep, luhn_valid, nl_passport_valid,
+    nl_postcode_valid, ssn_valid, tax_id_valid,
 };
 use regex::Regex;
 use std::sync::OnceLock;
@@ -451,59 +451,23 @@ fn iban_accept_len(value: &str) -> usize {
 /// ``\b``-bounded patterns: replace the valid prefix; a reject resumes at the
 /// match end like Python ``re``.
 fn replace_iban_cut(text: &str, pattern: &Regex) -> (Option<String>, u32) {
-    let mut count = 0u32;
-    let mut out: Option<String> = None;
-    let mut last = 0usize;
-    let mut pos = 0usize;
-    while let Some(m) = pattern.find_at(text, pos) {
-        let len = iban_accept_len(m.as_str());
-        if len == 0 {
-            pos = m.end().max(m.start() + 1);
-            continue;
-        }
-        let end = m.start() + len;
-        let buf = out.get_or_insert_with(|| String::with_capacity(text.len()));
-        buf.push_str(&text[last..m.start()]);
-        buf.push_str("[IBAN]");
-        last = end;
-        pos = end;
-        count += 1;
-    }
-    match out {
-        None => (None, 0),
-        Some(mut buf) => {
-            buf.push_str(&text[last..]);
-            (Some(buf), count)
-        }
-    }
+    replace_matches_end(
+        text,
+        pattern,
+        "[IBAN]",
+        |s, e| s + iban_accept_len(&text[s..e]),
+        false,
+    )
 }
 
 fn replace_iban_glue(text: &str, pattern: &Regex) -> (Option<String>, u32) {
-    let mut count = 0u32;
-    let mut out: Option<String> = None;
-    let mut last = 0usize;
-    let mut pos = 0usize;
-    while let Some(m) = pattern.find_at(text, pos) {
-        let start = m.start();
-        let end = m.end();
-        let Some(ok_end) = iban_glue_accept(text, pattern, start, end) else {
-            pos = start + 1;
-            continue;
-        };
-        let buf = out.get_or_insert_with(|| String::with_capacity(text.len()));
-        buf.push_str(&text[last..start]);
-        buf.push_str("[IBAN]");
-        last = ok_end;
-        pos = ok_end;
-        count += 1;
-    }
-    match out {
-        None => (None, 0),
-        Some(mut buf) => {
-            buf.push_str(&text[last..]);
-            (Some(buf), count)
-        }
-    }
+    replace_matches_end(
+        text,
+        pattern,
+        "[IBAN]",
+        |s, e| iban_glue_accept(text, pattern, s, e).unwrap_or(s),
+        true,
+    )
 }
 
 fn credit_card_res() -> &'static [Regex] {
@@ -1232,7 +1196,8 @@ fn scrub_ip(text: &str) -> (Option<String>, u32) {
 
 /// Group separators word processors / PDFs substitute for a typed space or
 /// hyphen in ids and phone numbers: nbsp, thin / narrow nbsp, unicode dashes
-/// and the minus sign. Character-class fragments, shared by both.
+/// and the minus sign. Character-class fragments, shared by both; the same
+/// chars as ``checksum::is_group_sep``.
 macro_rules! group_spaces {
     () => {
         r"\u{00a0}\u{2009}\u{202f}"
@@ -1376,18 +1341,7 @@ fn phone_international_re() -> &'static Regex {
 }
 
 fn is_phone_international_sep(c: char) -> bool {
-    matches!(
-        c,
-        ' ' | '.'
-            | '('
-            | ')'
-            | '-'
-            | '\u{00a0}'
-            | '\u{2009}'
-            | '\u{202f}'
-            | '\u{2010}'..='\u{2015}'
-            | '\u{2212}'
-    )
+    matches!(c, ' ' | '.' | '(' | ')' | '-') || is_group_sep(c)
 }
 
 /// Unicode decimal digit (``\d`` / Python ``str.isdecimal``). The regex only

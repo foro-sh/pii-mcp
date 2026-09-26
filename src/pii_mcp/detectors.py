@@ -29,8 +29,8 @@ Patterns:
   accepted (``192.168.001.001``).
 - MAC: colon/dash IEEE, dotted IEEE (``aa.bb.cc.dd.ee.ff``), Cisco dotted,
   and Huawei/H3C ``aabb-ccdd-eeff`` (with a hex letter) forms (AP: device MAC
-  is personal data). A label colon
-  (``mac:aa:bb:…``) is allowed; a preceding hex group is not.
+  is personal data). A label colon (``mac:aa:bb:…``) is allowed; a preceding
+  hex group is not.
 - IMEI: hyphen/space/slash/dot-grouped 15-digit forms with Luhn (AP: gegevens
   over elektronische communicatie / device identifiers). Compact 15-digit
   IMEIs that are also Luhn-valid collide with Amex and stay under ``credit_card``.
@@ -282,7 +282,8 @@ _INVISIBLE = "\u00ad\u200b\u200c\u200d\ufeff"
 # hyphen in ids and phone numbers: nbsp, thin / narrow nbsp, unicode dashes
 # and the minus sign. Character-class fragments, shared by both.
 _GROUP_SPACES = "\xa0\u2009\u202f"
-_GROUP_DASHES = "\u2010-\u2015\u2212"
+_GROUP_DASHES = "\u2010-\u2015\u2212"  # regex range; the chars themselves:
+_GROUP_DASH_CHARS = "".join(map(chr, range(0x2010, 0x2016))) + "\u2212"
 
 IBAN_RES: tuple[re.Pattern[str], ...] = (
     # Allow after digits (card|IBAN glue); still reject mid-letter (xNL91…).
@@ -712,7 +713,7 @@ _ID_SPACE = f"[ {_GROUP_SPACES}]"
 _ID_DASH = f"[\\-{_GROUP_DASHES}]"
 # Everything the id patterns accept between groups, including the dash range.
 _ID_SEP_TABLE = str.maketrans(
-    "", "", " ./-" + _GROUP_SPACES + "".join(map(chr, range(0x2010, 0x2016))) + "\u2212"
+    "", "", " ./-" + _GROUP_SPACES + _GROUP_DASH_CHARS
 )
 
 
@@ -890,9 +891,7 @@ PHONE_INTERNATIONAL_RE = re.compile(
 )
 
 
-_PHONE_INTERNATIONAL_SEPS = frozenset(
-    " .()-" + _GROUP_SPACES + "".join(map(chr, range(0x2010, 0x2016))) + "\u2212"
-)
+_PHONE_INTERNATIONAL_SEPS = frozenset(" .()-" + _GROUP_SPACES + _GROUP_DASH_CHARS)
 
 
 def _phone_international_end(text: str, start: int, _end: int) -> int:
