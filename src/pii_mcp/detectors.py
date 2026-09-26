@@ -8,8 +8,8 @@ Patterns:
 - Email uses bounded quantifiers (unbounded local-part ``+`` is ReDoS-prone)
   and ``(?!@)`` so glued addresses (``a@b.comc@d.com``) backtrack to two hits.
   Local part, domain labels, and TLD accept Unicode letters (EAI / IDN); a
-  local part or TLD in a script written without spaces (CJK, Thai, …) may
-  not mix with other scripts, so glued prose is not taken into the address.
+  TLD in a script written without spaces (CJK, Thai, …) may not mix with
+  other scripts, so glued prose after the address is not taken into it.
   When a TLD absorbs a following IBAN/card/IP/MAC/location
   (``ada@example.comNL91…`` / ``…com192.0.2.1`` / ``…comaa:bb:…``), the match
   is shortened so both hits still redact.
@@ -149,19 +149,17 @@ def _replace_matches(
 # ``josé@example.com``, ``ada@münchen.de`` or ``田中@example.jp`` are as
 # personal as ASCII ones. Scripts written without spaces (Thai, Lao, Myanmar,
 # Khmer, kana, CJK, Hangul, fullwidth forms) glue prose straight onto an
-# address (``请发送至ada@example.com以便``), so a local part or TLD is either
-# all such script or free of it, and one such letter after the TLD ends the
-# address.
+# address (``请发送至ada@example.com以便``), so a TLD is either all such script
+# or free of it, and one such letter after the TLD ends the address. The local
+# part may mix scripts (``田中123@``): glued prose before it is over-masked
+# rather than a name part leaked.
 _UNSPACED_SCRIPTS = (
     "\u0e00-\u0eff\u1000-\u109f\u1780-\u17ff\u3000-\u30ff\u3400-\u4dbf"
     "\u4e00-\u9fff\uac00-\ud7af\uf900-\ufaff\uff00-\uffef"
 )
 _UNSPACED_CHAR_RE = re.compile(f"[{_UNSPACED_SCRIPTS}]")
 _EMAIL_ALNUM = r"[^\W_]"
-_EMAIL_LOCAL = (
-    rf"(?:(?:(?=[{_UNSPACED_SCRIPTS}])[^\W_]|[._%+-]){{1,64}}"
-    rf"|(?:(?![{_UNSPACED_SCRIPTS}])[\w.%+-]){{1,64}})"
-)
+_EMAIL_LOCAL = r"[\w.%+-]{1,64}"
 _EMAIL_TLD = (
     rf"(?:(?:(?![{_UNSPACED_SCRIPTS}])[^\W\d_]){{2,24}}"
     rf"|(?:(?=[{_UNSPACED_SCRIPTS}])[^\W\d_]){{2,24}})"

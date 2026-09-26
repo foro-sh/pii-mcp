@@ -157,16 +157,13 @@ where
 
 /// Scripts written without spaces (Thai, Lao, Myanmar, Khmer, kana, CJK,
 /// Hangul, fullwidth forms) glue prose straight onto an address
-/// (``请发送至ada@example.com以便``), so a local part or TLD is either all such
-/// script or free of it, and one such letter after the TLD ends the address.
+/// (``请发送至ada@example.com以便``), so a TLD is either all such script or free
+/// of it, and one such letter after the TLD ends the address. The local part
+/// may mix scripts (``田中123@``): glued prose before it is over-masked rather
+/// than a name part leaked.
 const UNSPACED_SCRIPTS: &str = r"[\u{0e00}-\u{0eff}\u{1000}-\u{109f}\u{1780}-\u{17ff}\u{3000}-\u{30ff}\u{3400}-\u{4dbf}\u{4e00}-\u{9fff}\u{ac00}-\u{d7af}\u{f900}-\u{faff}\u{ff00}-\u{ffef}]";
-/// Email local part (1–64 chars): wholly in an unspaced script, or free of
-/// one; letters / digits are Unicode, plus ``_.%+-``.
-fn email_local() -> String {
-    format!(
-        r"(?:(?:[[\p{{L}}\p{{N}}]&&{UNSPACED_SCRIPTS}]|[._%+\-]){{1,64}}|[[\p{{L}}\p{{N}}_.%+\-]--{UNSPACED_SCRIPTS}]{{1,64}})"
-    )
-}
+/// Email local part (1–64 chars): Unicode letters / digits plus ``_.%+-``.
+const EMAIL_LOCAL: &str = r"[\p{L}\p{N}_.%+\-]{1,64}";
 
 fn is_unspaced_script(c: char) -> bool {
     matches!(
@@ -192,9 +189,8 @@ fn email_re() -> &'static Regex {
         // ``is_unspaced_script``). Bounded Unicode classes need a larger
         // lazy-DFA cache than the 2 MiB default, or big inputs fall back to
         // the ~30x slower NFA engine.
-        let local = email_local();
         regex::RegexBuilder::new(&format!(
-            r"{local}@[\p{{L}}\p{{N}}-]{{1,63}}(?:\.[\p{{L}}\p{{N}}-]{{1,63}})*\.(?:[\p{{L}}--{UNSPACED_SCRIPTS}]{{2,24}}|[\p{{L}}&&{UNSPACED_SCRIPTS}]{{2,24}})"
+            r"{EMAIL_LOCAL}@[\p{{L}}\p{{N}}-]{{1,63}}(?:\.[\p{{L}}\p{{N}}-]{{1,63}})*\.(?:[\p{{L}}--{UNSPACED_SCRIPTS}]{{2,24}}|[\p{{L}}&&{UNSPACED_SCRIPTS}]{{2,24}})"
         ))
         .dfa_size_limit(16 << 20)
         .build()
@@ -208,9 +204,8 @@ fn email_re() -> &'static Regex {
 fn email_next_pii_re() -> &'static Regex {
     static RE: OnceLock<Regex> = OnceLock::new();
     RE.get_or_init(|| {
-        let local = email_local();
         Regex::new(&format!(
-            r"^(?:[A-Za-z]{{2}}\d{{2}}[A-Za-z0-9]|\d{{13,19}}|\d{{3}}[- ./]?\d{{2}}[- ./]?\d{{4}}|\d{{3}}[ .]\d{{3}}[ .]\d{{3}}|(?:\d{{1,3}}\.){{3}}\d{{1,3}}|\d{{1,3}}\.\d{{3,8}}|[0-9A-Fa-f]{{2}}([-:/.])[0-9A-Fa-f]{{2}}|(?:[0-9A-Fa-f]{{3,4}}:|::)|{local}@|[+0]\d)",
+            r"^(?:[A-Za-z]{{2}}\d{{2}}[A-Za-z0-9]|\d{{13,19}}|\d{{3}}[- ./]?\d{{2}}[- ./]?\d{{4}}|\d{{3}}[ .]\d{{3}}[ .]\d{{3}}|(?:\d{{1,3}}\.){{3}}\d{{1,3}}|\d{{1,3}}\.\d{{3,8}}|[0-9A-Fa-f]{{2}}([-:/.])[0-9A-Fa-f]{{2}}|(?:[0-9A-Fa-f]{{3,4}}:|::)|{EMAIL_LOCAL}@|[+0]\d)",
         ))
         .unwrap()
     })

@@ -151,11 +151,13 @@ function replaceMatches(
 
 // Scripts written without spaces (Thai, Lao, Myanmar, Khmer, kana, CJK,
 // Hangul, fullwidth forms) glue prose straight onto an address
-// (``请发送至ada@example.com以便``), so a local part or TLD is either all such
-// script or free of it, and one such letter after the TLD ends the address.
+// (``请发送至ada@example.com以便``), so a TLD is either all such script or free
+// of it, and one such letter after the TLD ends the address. The local part
+// may mix scripts (``田中123@``): glued prose before it is over-masked rather
+// than a name part leaked.
 const UNSPACED_SCRIPTS = String.raw`\u0e00-\u0eff\u1000-\u109f\u1780-\u17ff\u3000-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uac00-\ud7af\uf900-\ufaff\uff00-\uffef`;
 const UNSPACED_CHAR_RE = new RegExp(`[${UNSPACED_SCRIPTS}]`, "u");
-const EMAIL_LOCAL = String.raw`(?:(?:(?=[${UNSPACED_SCRIPTS}])[\p{L}\p{N}]|[._%+\-]){1,64}|(?:(?![${UNSPACED_SCRIPTS}])[\p{L}\p{N}_.%+\-]){1,64})`;
+const EMAIL_LOCAL = String.raw`[\p{L}\p{N}_.%+\-]{1,64}`;
 const EMAIL_TLD = String.raw`(?:(?:(?![${UNSPACED_SCRIPTS}])\p{L}){2,24}|(?:(?=[${UNSPACED_SCRIPTS}])\p{L}){2,24})`;
 
 // Letters and digits are Unicode (EAI / IDN: ``josé@example.com``,

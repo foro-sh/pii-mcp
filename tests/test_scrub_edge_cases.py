@@ -670,15 +670,16 @@ class TestInternationalizedEmail:
         ("text", "expected"),
         [
             ("\u8bf7\u53d1\u9001\u81f3ada@example.com\u4ee5\u4fbf\u56de\u590d",
-             "\u8bf7\u53d1\u9001\u81f3[EMAIL]\u4ee5\u4fbf\u56de\u590d"),
+             "[EMAIL]\u4ee5\u4fbf\u56de\u590d"),
             ("mail ada@example.com\u4eca\u65e5", "mail [EMAIL]\u4eca\u65e5"),
             ("\u0e2d\u0e35\u0e40\u0e21\u0e25ada@example.com\u0e04\u0e23\u0e31\u0e1a",
-             "\u0e2d\u0e35\u0e40\u0e21\u0e25[EMAIL]\u0e04\u0e23\u0e31\u0e1a"),
+             "\u0e2d\u0e35[EMAIL]\u0e04\u0e23\u0e31\u0e1a"),
         ],
     )
     def test_unspaced_script_prose_around_address(self, text: str, expected: str) -> None:
-        # Scripts written without spaces glue prose onto the address; it is
-        # masked on its own instead of dropped or swallowing the prose.
+        # Scripts written without spaces glue prose onto the address. Prose
+        # after it stays; prose before it joins the local part (over-masked,
+        # since a mixed-script local part like ``田中123`` is a real name).
         result = scrub_text(text)
         assert result["text"] == expected
         assert result["counts"]["email"] == 1
@@ -688,13 +689,16 @@ class TestInternationalizedEmail:
         [
             "\u7530\u4e2d@example.jp",
             "\u7530\u4e2d.\u592a\u90ce@example.jp",
+            "\u7530\u4e2d123@example.jp",
+            "\u7530\u4e2d.taro@example.jp",
+            "taro\u7530\u4e2d@example.jp",
             "\uae40\ucca0\uc218@example.kr",
             "\u5f20\u4f1f@\u516c\u53f8.\u4e2d\u56fd",
             "ada@example.\u0e44\u0e17\u0e22",
         ],
     )
     def test_unspaced_script_address_masked(self, value: str) -> None:
-        # A local part or TLD wholly in an unspaced script is still an address.
+        # Unspaced-script and mixed-script local parts are masked whole.
         assert scrub_text(f"mail {value} ok")["text"] == "mail [EMAIL] ok"
 
     def test_digit_tld_still_rejected(self) -> None:

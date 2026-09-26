@@ -394,17 +394,20 @@ describe("scrubText", () => {
     for (const [text, expected] of [
       [
         "\u8bf7\u53d1\u9001\u81f3ada@example.com\u4ee5\u4fbf\u56de\u590d",
-        "\u8bf7\u53d1\u9001\u81f3[EMAIL]\u4ee5\u4fbf\u56de\u590d",
+        "[EMAIL]\u4ee5\u4fbf\u56de\u590d",
       ],
       ["mail ada@example.com\u4eca\u65e5", "mail [EMAIL]\u4eca\u65e5"],
       ["mail \u7530\u4e2d@example.jp ok", "mail [EMAIL] ok"],
       ["mail \u7530\u4e2d.\u592a\u90ce@example.jp ok", "mail [EMAIL] ok"],
+      ["mail \u7530\u4e2d123@example.jp ok", "mail [EMAIL] ok"],
+      ["mail \u7530\u4e2d.taro@example.jp ok", "mail [EMAIL] ok"],
+      ["mail taro\u7530\u4e2d@example.jp ok", "mail [EMAIL] ok"],
       ["mail \uae40\ucca0\uc218@example.kr ok", "mail [EMAIL] ok"],
       ["mail \u5f20\u4f1f@\u516c\u53f8.\u4e2d\u56fd ok", "mail [EMAIL] ok"],
       ["mail ada@example.\u0e44\u0e17\u0e22 ok", "mail [EMAIL] ok"],
       [
         "\u0e2d\u0e35\u0e40\u0e21\u0e25ada@example.com\u0e04\u0e23\u0e31\u0e1a",
-        "\u0e2d\u0e35\u0e40\u0e21\u0e25[EMAIL]\u0e04\u0e23\u0e31\u0e1a",
+        "\u0e2d\u0e35[EMAIL]\u0e04\u0e23\u0e31\u0e1a",
       ],
     ]) {
       const result = scrubText(text!);
