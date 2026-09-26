@@ -155,13 +155,13 @@ where
     (current, count)
 }
 
-/// Scripts written without spaces (Thai, Lao, Myanmar, Khmer, kana, CJK,
-/// Hangul, fullwidth forms) glue prose straight onto an address
-/// (``请发送至ada@example.com以便``), so a TLD is either all such script or free
-/// of it, and one such letter after the TLD ends the address. The local part
-/// may mix scripts (``田中123@``): glued prose before it is over-masked rather
-/// than a name part leaked.
-const UNSPACED_SCRIPTS: &str = r"[\u{0e00}-\u{0eff}\u{1000}-\u{109f}\u{1780}-\u{17ff}\u{3000}-\u{30ff}\u{3400}-\u{4dbf}\u{4e00}-\u{9fff}\u{ac00}-\u{d7af}\u{f900}-\u{faff}\u{ff00}-\u{ffef}]";
+/// Scripts written without spaces (Thai, Lao, Tibetan, Myanmar, Khmer, kana,
+/// Bopomofo, CJK, Hangul, fullwidth forms) glue prose straight onto an
+/// address (``请发送至ada@example.com以便``), so a TLD is either all such
+/// script or free of it, and one such letter after the TLD ends the address.
+/// The local part may mix scripts (``田中123@``): glued prose before it is
+/// over-masked rather than a name part leaked.
+const UNSPACED_SCRIPTS: &str = r"[\u{0e00}-\u{0eff}\u{0f00}-\u{0fff}\u{1000}-\u{109f}\u{1100}-\u{11ff}\u{1780}-\u{17ff}\u{3000}-\u{31ff}\u{3400}-\u{4dbf}\u{4e00}-\u{9fff}\u{a960}-\u{a97f}\u{ac00}-\u{d7ff}\u{f900}-\u{faff}\u{ff00}-\u{ffef}\u{20000}-\u{3ffff}]";
 /// Email local part (1–64 chars): Unicode letters / digits plus ``_.%+-``.
 const EMAIL_LOCAL: &str = r"[\p{L}\p{N}_.%+\-]{1,64}";
 
@@ -169,14 +169,18 @@ fn is_unspaced_script(c: char) -> bool {
     matches!(
         c,
         '\u{0e00}'..='\u{0eff}'
+            | '\u{0f00}'..='\u{0fff}'
             | '\u{1000}'..='\u{109f}'
+            | '\u{1100}'..='\u{11ff}'
             | '\u{1780}'..='\u{17ff}'
-            | '\u{3000}'..='\u{30ff}'
+            | '\u{3000}'..='\u{31ff}'
             | '\u{3400}'..='\u{4dbf}'
             | '\u{4e00}'..='\u{9fff}'
-            | '\u{ac00}'..='\u{d7af}'
+            | '\u{a960}'..='\u{a97f}'
+            | '\u{ac00}'..='\u{d7ff}'
             | '\u{f900}'..='\u{faff}'
             | '\u{ff00}'..='\u{ffef}'
+            | '\u{20000}'..='\u{3ffff}'
     )
 }
 

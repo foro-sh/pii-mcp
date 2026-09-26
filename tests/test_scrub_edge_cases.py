@@ -672,6 +672,9 @@ class TestInternationalizedEmail:
             ("\u8bf7\u53d1\u9001\u81f3ada@example.com\u4ee5\u4fbf\u56de\u590d",
              "[EMAIL]\u4ee5\u4fbf\u56de\u590d"),
             ("mail ada@example.com\u4eca\u65e5", "mail [EMAIL]\u4eca\u65e5"),
+            # Hangul compatibility jamo (chat laughter) and CJK Ext B.
+            ("mail ada@example.com" + "\u314b" * 30, "mail [EMAIL]" + "\u314b" * 30),
+            ("mail ada@example.com\U00020000", "mail [EMAIL]\U00020000"),
             ("\u0e2d\u0e35\u0e40\u0e21\u0e25ada@example.com\u0e04\u0e23\u0e31\u0e1a",
              "\u0e2d\u0e35[EMAIL]\u0e04\u0e23\u0e31\u0e1a"),
         ],

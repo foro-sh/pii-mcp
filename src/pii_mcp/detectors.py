@@ -147,15 +147,17 @@ def _replace_matches(
 
 # Letters and digits are Unicode (``[^\W_]``): EAI / IDN addresses such as
 # ``josé@example.com``, ``ada@münchen.de`` or ``田中@example.jp`` are as
-# personal as ASCII ones. Scripts written without spaces (Thai, Lao, Myanmar,
-# Khmer, kana, CJK, Hangul, fullwidth forms) glue prose straight onto an
-# address (``请发送至ada@example.com以便``), so a TLD is either all such script
-# or free of it, and one such letter after the TLD ends the address. The local
-# part may mix scripts (``田中123@``): glued prose before it is over-masked
-# rather than a name part leaked.
+# personal as ASCII ones. Scripts written without spaces (Thai, Lao, Tibetan,
+# Myanmar, Khmer, kana, Bopomofo, CJK, Hangul, fullwidth forms) glue prose
+# straight onto an address (``请发送至ada@example.com以便``), so a TLD is
+# either all such script or free of it, and one such letter after the TLD ends
+# the address. The local part may mix scripts (``田中123@``): glued prose
+# before it is over-masked rather than a name part leaked.
 _UNSPACED_SCRIPTS = (
-    "\u0e00-\u0eff\u1000-\u109f\u1780-\u17ff\u3000-\u30ff\u3400-\u4dbf"
-    "\u4e00-\u9fff\uac00-\ud7af\uf900-\ufaff\uff00-\uffef"
+    "\u0e00-\u0eff\u0f00-\u0fff\u1000-\u109f\u1100-\u11ff"
+    "\u1780-\u17ff\u3000-\u31ff\u3400-\u4dbf\u4e00-\u9fff"
+    "\ua960-\ua97f\uac00-\ud7ff\uf900-\ufaff\uff00-\uffef"
+    "\U00020000-\U0003ffff"
 )
 _UNSPACED_CHAR_RE = re.compile(f"[{_UNSPACED_SCRIPTS}]")
 _EMAIL_ALNUM = r"[^\W_]"

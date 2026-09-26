@@ -397,6 +397,8 @@ describe("scrubText", () => {
         "[EMAIL]\u4ee5\u4fbf\u56de\u590d",
       ],
       ["mail ada@example.com\u4eca\u65e5", "mail [EMAIL]\u4eca\u65e5"],
+      ["mail ada@example.com" + "\u314b".repeat(30), "mail [EMAIL]" + "\u314b".repeat(30)],
+      ["mail ada@example.com\u{20000}", "mail [EMAIL]\u{20000}"],
       ["mail \u7530\u4e2d@example.jp ok", "mail [EMAIL] ok"],
       ["mail \u7530\u4e2d.\u592a\u90ce@example.jp ok", "mail [EMAIL] ok"],
       ["mail \u7530\u4e2d123@example.jp ok", "mail [EMAIL] ok"],
