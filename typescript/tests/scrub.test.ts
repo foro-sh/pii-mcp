@@ -371,6 +371,21 @@ describe("scrubText", () => {
     expect(scrubText("x@y.c0m").text).toBe("x@y.c0m");
   });
 
+  it("masks Huawei/H3C dash-grouped MACs but not digit-only part numbers", () => {
+    for (const value of ["00e0-fc12-3456", "AABB-CCDD-EEFF", "5489-98ab-cdef"]) {
+      const result = scrubText(`mac ${value} up`);
+      expect(result.text).toBe("mac [MAC] up");
+      expect(result.counts.mac).toBe(1);
+    }
+    for (const text of [
+      "part 1234-5678-9012 shipped",
+      "id 4d95a28a-0833-4533-82c1-de09362e46d1",
+      "ref aabb-ccdd-eeff-0011",
+    ]) {
+      expect(scrubText(text).counts.mac).toBe(0);
+    }
+  });
+
   it("rejects unknown language", () => {
     expect(() => scrubText("hi", { languages: ["fr"] })).toThrow(
       /unknown language/,

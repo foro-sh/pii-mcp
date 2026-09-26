@@ -599,6 +599,34 @@ fn mac_cisco_re() -> &'static Regex {
     RE.get_or_init(|| Regex::new(r"(?:[0-9A-Fa-f]{4}\.){2}[0-9A-Fa-f]{4}").unwrap())
 }
 
+/// Huawei / H3C ``aabb-ccdd-eeff``; ``mac_dash_valid`` needs a hex letter.
+fn mac_dash_re() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| Regex::new(r"(?:[0-9A-Fa-f]{4}-){2}[0-9A-Fa-f]{4}").unwrap())
+}
+
+/// A 4-4-4 dash run of digits only is a part / order number, not a MAC.
+fn mac_dash_valid(value: &str) -> bool {
+    value.bytes().any(|b| b.is_ascii_hexdigit() && b.is_ascii_alphabetic())
+}
+
+fn mac_dash_boundary_ok(text: &str, start: usize, end: usize) -> bool {
+    // (?<![\w.-]) … (?![\w.-])
+    if start > 0 {
+        let prev = text[..start].chars().next_back().unwrap();
+        if is_word_char(prev) || prev == '.' || prev == '-' {
+            return false;
+        }
+    }
+    if end < text.len() {
+        let next = text[end..].chars().next().unwrap();
+        if is_word_char(next) || next == '.' || next == '-' {
+            return false;
+        }
+    }
+    true
+}
+
 /// Allow ``label:<hit>``; reject when the ``:`` continues a colon-hex run
 /// (the token before it is empty or a 1–4 digit hex group).
 fn colon_label_ok(text: &str, start: usize) -> bool {
@@ -677,7 +705,22 @@ fn scrub_mac(text: &str) -> (Option<String>, u32) {
         )
     };
     count += n;
-    (third.or(second).or(first), count)
+    let (fourth, n) = {
+        let src = third
+            .as_deref()
+            .or(second.as_deref())
+            .or(first.as_deref())
+            .unwrap_or(text);
+        replace_matches(
+            src,
+            mac_dash_re(),
+            "[MAC]",
+            |v, s, e| mac_dash_boundary_ok(src, s, e) && mac_dash_valid(v),
+            true,
+        )
+    };
+    count += n;
+    (fourth.or(third).or(second).or(first), count)
 }
 
 // Grouped only — compact 15-digit Luhn values collide with Amex credit cards.

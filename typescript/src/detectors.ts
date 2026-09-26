@@ -22,7 +22,8 @@
  *   grouped forms also accept tab, nbsp, ideographic space, unicode dashes,
  *   ``.``, and ``/``; zero-width characters are stripped before matching.
  * - BIC/SWIFT: 8 or 11 alnum with ISO 3166-1 country letters (AP: financial data).
- * - MAC: colon/dash IEEE and Cisco dotted forms (AP: device MAC is personal data).
+ * - MAC: colon/dash IEEE, Cisco dotted, and Huawei/H3C ``aabb-ccdd-eeff`` (with a
+ *   hex letter) forms (AP: device MAC is personal data).
  *   A label colon (``mac:aa:bb:…``) is allowed; a preceding hex group is not.
  * - IMEI: hyphen/space-grouped 15-digit forms with Luhn (AP: gegevens over
  *   elektronische communicatie / device identifiers). Compact 15-digit IMEIs
@@ -507,6 +508,14 @@ const MAC_RES = [
   /(?<![\w.])(?:[0-9A-Fa-f]{4}\.){2}[0-9A-Fa-f]{4}(?![\w.])/g,
 ] as const;
 
+// Huawei / H3C ``aabb-ccdd-eeff``; ``macDashValid`` needs a hex letter.
+const MAC_DASH_RE = /(?<![\w.-])(?:[0-9A-Fa-f]{4}-){2}[0-9A-Fa-f]{4}(?![\w.-])/g;
+
+/** A 4-4-4 dash run of digits only is a part / order number, not a MAC. */
+function macDashValid(value: string): boolean {
+  return /[A-Fa-f]/.test(value);
+}
+
 function scrubMac(text: string): { text: string; count: number } {
   let out = text;
   let count = 0;
@@ -515,7 +524,8 @@ function scrubMac(text: string): { text: string; count: number } {
     out = result.text;
     count += result.count;
   }
-  return { text: out, count };
+  const dash = replaceMatches(out, MAC_DASH_RE, "[MAC]", macDashValid);
+  return { text: dash.text, count: count + dash.count };
 }
 
 export const macDetector: Detector = { type: "mac", scrub: scrubMac };

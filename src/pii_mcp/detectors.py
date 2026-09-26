@@ -25,8 +25,9 @@ Patterns:
   ``64:ff9b::a.b.c.d``) is matched whole before bare IPv4, so bare IPv4 may
   follow a label colon (``host:10.0.0.1``); leading zeros in octets are
   accepted (``192.168.001.001``).
-- MAC: colon/dash IEEE, dotted IEEE (``aa.bb.cc.dd.ee.ff``), and Cisco
-  dotted forms (AP: device MAC is personal data). A label colon
+- MAC: colon/dash IEEE, dotted IEEE (``aa.bb.cc.dd.ee.ff``), Cisco dotted,
+  and Huawei/H3C ``aabb-ccdd-eeff`` (with a hex letter) forms (AP: device MAC
+  is personal data). A label colon
   (``mac:aa:bb:…``) is allowed; a preceding hex group is not.
 - IMEI: hyphen/space/slash/dot-grouped 15-digit forms with Luhn (AP: gegevens
   over elektronische communicatie / device identifiers). Compact 15-digit
@@ -435,6 +436,10 @@ MAC_RES: tuple[re.Pattern[str], ...] = (
     re.compile(
         r"(?<![\w.])(?:[0-9A-Fa-f]{4}\.){2}[0-9A-Fa-f]{4}(?![\w.])"
     ),
+    # Huawei / H3C ``aabb-ccdd-eeff``; ``_mac_dash_valid`` needs a hex letter.
+    re.compile(
+        r"(?<![\w.-])(?:[0-9A-Fa-f]{4}-){2}[0-9A-Fa-f]{4}(?![\w.-])"
+    ),
 )
 
 
@@ -456,12 +461,18 @@ def _colon_label_ok(text: str, start: int, _end: int) -> bool:
     return re.fullmatch(r"[0-9A-Fa-f]{0,4}", text[j : start - 1]) is None
 
 
+def _mac_dash_valid(value: str) -> bool:
+    """A 4-4-4 dash run of digits only is a part / order number, not a MAC."""
+    return any(ch in "abcdefABCDEF" for ch in value)
+
+
 def _scrub_mac(text: str) -> tuple[str, int]:
     out, count = _replace_matches(text, MAC_RES[0], "[MAC]", context_ok=_colon_label_ok)
-    for pattern in MAC_RES[1:]:
+    for pattern in MAC_RES[1:3]:
         out, n = _replace_matches(out, pattern, "[MAC]")
         count += n
-    return out, count
+    out, n = _replace_matches(out, MAC_RES[3], "[MAC]", _mac_dash_valid)
+    return out, count + n
 
 
 mac_detector = Detector(type="mac", scrub=_scrub_mac)

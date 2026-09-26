@@ -627,3 +627,24 @@ class TestInternationalizedEmail:
 
     def test_digit_tld_still_rejected(self) -> None:
         assert scrub_text("x@y.c0m")["text"] == "x@y.c0m"
+
+
+class TestDashGroupedMac:
+    """Huawei / H3C switches print MACs as ``aabb-ccdd-eeff``."""
+
+    @pytest.mark.parametrize("value", ["00e0-fc12-3456", "AABB-CCDD-EEFF", "5489-98ab-cdef"])
+    def test_masked(self, value: str) -> None:
+        result = scrub_text(f"mac {value} up")
+        assert result["text"] == "mac [MAC] up"
+        assert result["counts"]["mac"] == 1
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "part 1234-5678-9012 shipped",
+            "id 4d95a28a-0833-4533-82c1-de09362e46d1",
+            "ref aabb-ccdd-eeff-0011",
+        ],
+    )
+    def test_not_mac(self, text: str) -> None:
+        assert scrub_text(text)["counts"]["mac"] == 0
