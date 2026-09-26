@@ -5,7 +5,7 @@
 
 use crate::checksum::{
     bsn_valid, iban_valid, imei_valid, is_group_sep, luhn_valid, nl_passport_valid,
-    nl_postcode_valid, ssn_valid, tax_id_valid,
+    nl_postcode_valid, ssn_valid, tax_id_valid, GROUP_DASHES, GROUP_SPACES,
 };
 use regex::Regex;
 use std::sync::OnceLock;
@@ -1198,27 +1198,31 @@ fn scrub_ip(text: &str) -> (Option<String>, u32) {
     (second.or(first).or(mapped), count)
 }
 
-/// Group separators word processors / PDFs substitute for a typed space or
-/// hyphen in ids and phone numbers: nbsp, thin / narrow nbsp, unicode dashes
-/// and the minus sign. Character-class fragments, shared by both; the same
-/// chars as ``checksum::is_group_sep``.
-macro_rules! group_spaces {
-    () => {
-        r"\u{00a0}\u{2009}\u{202f}"
-    };
+/// Regex class body for ``chars`` (``checksum::GROUP_SPACES`` /
+/// ``GROUP_DASHES``), so the patterns and the separator checks share one list.
+fn group_class(chars: &[char]) -> String {
+    chars
+        .iter()
+        .map(|&c| format!(r"\u{{{:04x}}}", u32::from(c)))
+        .collect()
 }
-macro_rules! group_dashes {
-    () => {
-        r"\u{2010}-\u{2015}\u{2212}"
-    };
+
+/// National-id group separators: space or ``GROUP_SPACES``.
+fn id_space() -> String {
+    format!("[ {}]", group_class(&GROUP_SPACES))
 }
-const ID_SPACE: &str = concat!("[ ", group_spaces!(), "]");
-const ID_DASH: &str = concat!(r"[\-", group_dashes!(), "]");
+
+/// National-id group separators: hyphen or ``GROUP_DASHES``.
+fn id_dash() -> String {
+    format!(r"[\-{}]", group_class(&GROUP_DASHES))
+}
 
 fn bsn_res() -> &'static [Regex] {
     static RES: OnceLock<Vec<Regex>> = OnceLock::new();
     RES.get_or_init(|| {
-        let sep = format!(r"(?:{ID_SPACE}|{ID_DASH}|\.)");
+        let id_space = id_space();
+        let id_dash = id_dash();
+        let sep = format!(r"(?:{id_space}|{id_dash}|\.)");
         vec![
             Regex::new(r"\b\d{8,9}\b").unwrap(),
             Regex::new(&format!(r"\b\d{{3}}{sep}\d{{3}}{sep}\d{{3}}\b")).unwrap(),
@@ -1250,11 +1254,13 @@ fn scrub_bsn(text: &str) -> (Option<String>, u32) {
 fn ssn_res() -> &'static [Regex] {
     static RES: OnceLock<Vec<Regex>> = OnceLock::new();
     RES.get_or_init(|| {
+        let id_space = id_space();
+        let id_dash = id_dash();
         vec![
-            Regex::new(&format!(r"\b\d{{3}}{ID_DASH}\d{{2}}{ID_DASH}\d{{4}}\b")).unwrap(),
+            Regex::new(&format!(r"\b\d{{3}}{id_dash}\d{{2}}{id_dash}\d{{4}}\b")).unwrap(),
             Regex::new(r"\b\d{3}/\d{2}/\d{4}\b").unwrap(),
             Regex::new(&format!(
-                r"\b\d{{3}}(?:{ID_SPACE}|\.)\d{{2}}(?:{ID_SPACE}|\.)\d{{4}}\b"
+                r"\b\d{{3}}(?:{id_space}|\.)\d{{2}}(?:{id_space}|\.)\d{{4}}\b"
             ))
             .unwrap(),
             Regex::new(r"\b\d{9}\b").unwrap(),
@@ -1283,10 +1289,11 @@ fn scrub_ssn(text: &str) -> (Option<String>, u32) {
 fn tax_id_res() -> &'static [Regex] {
     static RES: OnceLock<Vec<Regex>> = OnceLock::new();
     RES.get_or_init(|| {
+        let id_space = id_space();
         vec![
             Regex::new(r"\b\d{11}\b").unwrap(),
             Regex::new(&format!(
-                r"\b\d{{2}}{ID_SPACE}\d{{3}}{ID_SPACE}\d{{3}}{ID_SPACE}\d{{3}}\b"
+                r"\b\d{{2}}{id_space}\d{{3}}{id_space}\d{{3}}{id_space}\d{{3}}\b"
             ))
             .unwrap(),
         ]
@@ -1329,16 +1336,19 @@ fn phone_left_ok(text: &str, start: usize) -> bool {
 
 /// Rich text / PDFs put nbsp, thin / narrow nbsp, or a unicode dash between
 /// phone groups; every phone pattern accepts them alongside the ASCII seps.
-const PHONE_SEP_EXTRA: &str = concat!(group_spaces!(), group_dashes!());
+fn phone_sep_extra() -> String {
+    group_class(&GROUP_SPACES) + &group_class(&GROUP_DASHES)
+}
 
 /// The span allows more than 15 digits so a ``(0)`` trunk between spaced
-/// groups (``+44 (0) 20 7946 0958``) fits; ``phone_international_end`` cuts
-/// it back.
+/// groups (``+44 (0) 20 7946 0958``) fits; ``phone_international_end``
+/// re-measures the run.
 fn phone_international_re() -> &'static Regex {
     static RE: OnceLock<Regex> = OnceLock::new();
     RE.get_or_init(|| {
+        let phone_sep_extra = phone_sep_extra();
         Regex::new(&format!(
-            r"(?:\+|00)\d[\d .()\-{PHONE_SEP_EXTRA}]{{6,20}}\d"
+            r"(?:\+|00)\d[\d .()\-{phone_sep_extra}]{{6,20}}\d"
         ))
         .unwrap()
     })
@@ -1419,7 +1429,8 @@ fn phone_international_end(text: &str, start: usize) -> usize {
 fn phone_nl_re() -> &'static Regex {
     static RE: OnceLock<Regex> = OnceLock::new();
     RE.get_or_init(|| {
-        Regex::new(&format!(r"\(?0\d\)?(?:[ .\-/(){PHONE_SEP_EXTRA}]?\d){{8}}")).unwrap()
+        let phone_sep_extra = phone_sep_extra();
+        Regex::new(&format!(r"\(?0\d\)?(?:[ .\-/(){phone_sep_extra}]?\d){{8}}")).unwrap()
     })
 }
 
@@ -1430,7 +1441,8 @@ fn phone_nl_valid(m: &str) -> bool {
 fn phone_en_re() -> &'static Regex {
     static RE: OnceLock<Regex> = OnceLock::new();
     RE.get_or_init(|| {
-        let sep = format!(r"[ .\-{PHONE_SEP_EXTRA}]");
+        let phone_sep_extra = phone_sep_extra();
+        let sep = format!(r"[ .\-{phone_sep_extra}]");
         Regex::new(&format!(
             r"(?:1{sep}?)?\(?\d{{3}}\)?{sep}?\d{{3}}{sep}\d{{4}}"
         ))
@@ -1452,7 +1464,8 @@ fn phone_en_valid(m: &str) -> bool {
 fn phone_de_re() -> &'static Regex {
     static RE: OnceLock<Regex> = OnceLock::new();
     RE.get_or_init(|| {
-        Regex::new(&format!(r"\(?0\d\)?(?:[ .\-/(){PHONE_SEP_EXTRA}]?\d){{8,10}}")).unwrap()
+        let phone_sep_extra = phone_sep_extra();
+        Regex::new(&format!(r"\(?0\d\)?(?:[ .\-/(){phone_sep_extra}]?\d){{8,10}}")).unwrap()
     })
 }
 

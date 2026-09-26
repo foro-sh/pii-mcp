@@ -281,9 +281,9 @@ _INVISIBLE = "\u00ad\u200b\u200c\u200d\ufeff"
 # Group separators word processors / PDFs substitute for a typed space or
 # hyphen in ids and phone numbers: nbsp, thin / narrow nbsp, unicode dashes
 # and the minus sign. Character-class fragments, shared by both.
+# The chars double as regex class fragments (none is special in a class).
 _GROUP_SPACES = "\xa0\u2009\u202f"
-_GROUP_DASHES = "\u2010-\u2015\u2212"  # regex range; the chars themselves:
-_GROUP_DASH_CHARS = "".join(map(chr, range(0x2010, 0x2016))) + "\u2212"
+_GROUP_DASHES = "".join(map(chr, range(0x2010, 0x2016))) + "\u2212"
 
 IBAN_RES: tuple[re.Pattern[str], ...] = (
     # Allow after digits (card|IBAN glue); still reject mid-letter (xNL91…).
@@ -713,7 +713,7 @@ _ID_SPACE = f"[ {_GROUP_SPACES}]"
 _ID_DASH = f"[\\-{_GROUP_DASHES}]"
 # Everything the id patterns accept between groups, including the dash range.
 _ID_SEP_TABLE = str.maketrans(
-    "", "", " ./-" + _GROUP_SPACES + _GROUP_DASH_CHARS
+    "", "", " ./-" + _GROUP_SPACES + _GROUP_DASHES
 )
 
 
@@ -892,7 +892,7 @@ PHONE_INTERNATIONAL_RE = re.compile(
 )
 
 
-_PHONE_INTERNATIONAL_SEPS = frozenset(" .()-" + _GROUP_SPACES + _GROUP_DASH_CHARS)
+_PHONE_INTERNATIONAL_SEPS = frozenset(" .()-" + _GROUP_SPACES + _GROUP_DASHES)
 
 
 def _phone_international_end(text: str, start: int, _end: int) -> int:

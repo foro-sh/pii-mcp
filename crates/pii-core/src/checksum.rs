@@ -162,13 +162,15 @@ fn is_id_sep(c: char) -> bool {
 }
 
 /// Group separators word processors / PDFs substitute for a typed space or
-/// hyphen: nbsp, thin / narrow nbsp, unicode dashes and the minus sign. The
-/// same chars as the ``group_spaces!`` / ``group_dashes!`` regex fragments.
+/// hyphen in ids and phone numbers: nbsp, thin / narrow nbsp, unicode dashes
+/// and the minus sign. The detector patterns build their classes from these.
+pub(crate) const GROUP_SPACES: [char; 3] = ['\u{00a0}', '\u{2009}', '\u{202f}'];
+pub(crate) const GROUP_DASHES: [char; 7] = [
+    '\u{2010}', '\u{2011}', '\u{2012}', '\u{2013}', '\u{2014}', '\u{2015}', '\u{2212}',
+];
+
 pub(crate) fn is_group_sep(c: char) -> bool {
-    matches!(
-        c,
-        '\u{00a0}' | '\u{2009}' | '\u{202f}' | '\u{2010}'..='\u{2015}' | '\u{2212}'
-    )
+    GROUP_SPACES.contains(&c) || GROUP_DASHES.contains(&c)
 }
 
 /// Dutch BSN 11-check (8–9 digits, zero-padded to 9). Group separators (see
