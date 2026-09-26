@@ -730,6 +730,10 @@ class TestDashGroupedMac:
         assert result["text"] == "mac [MAC] up"
         assert result["counts"]["mac"] == 1
 
+    def test_mixed_case_masked(self) -> None:
+        # A hand-typed MAC may mix cases; recall over the rare all-hex key.
+        assert scrub_text("mac 00E0-fc12-3456 up")["text"] == "mac [MAC] up"
+
     def test_non_ascii_letter_before_is_a_boundary(self) -> None:
         # Same ASCII word boundary as the Rust / JS backends.
         assert scrub_text("mac:ж00e0-fc12-3456")["text"] == "mac:ж[MAC]"
