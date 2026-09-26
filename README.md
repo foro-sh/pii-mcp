@@ -67,9 +67,9 @@ full street addresses need NER or media handling and stay out of scope.
 
 | AP example / category                         | Detector                               | Notes                         |
 | --------------------------------------------- | -------------------------------------- | ----------------------------- |
-| e-mail / contact                              | `email`, `phone`                       |                               |
+| e-mail / contact                              | `email`, `phone`                       | Incl. Unicode (EAI/IDN) email |
 | IP-adres                                      | `ip`                                   | Indirect identifier           |
-| Locatiegegevens                               | `location`                             | Decimal lat/lon               |
+| Locatiegegevens                               | `location`                             | Decimal and DMS lat/lon       |
 | Financiële gegevens                           | `iban`, `credit_card`, `bic`, `vat_id` |                               |
 | BSN / nationaal ID                            | `bsn`, `passport`                      | Passport/NIK format (nl pack) |
 | Online / device IDs                           | `mac`, `imei`                          | IMEI: grouped forms + Luhn    |
