@@ -57,8 +57,8 @@ Patterns:
 - NL kenteken (``license_plate``): hyphenated RDW sidecodes 1–14 (case-
   insensitive), with SA/SD/SS letter-pair rejects.
 - Phone packs: international first (any active pack, before national IDs; a
-  ``(0)`` trunk may sit between groups and a run past 15 digits is cut back to
-  the last whole group), NL
+  ``(0)`` trunk may sit between groups, and a run of groups past 15 digits is
+  masked whole since it holds more than one number), NL
   national (allows ``/`` and parentheses; rejects hex-digest glue), NANP, DE
   national (DE excludes exact Dutch ``06…`` 10-digit mobiles and separator-free
   12-digit UPC collisions; same hex-glue guard). All phone forms also accept
@@ -885,7 +885,8 @@ def _digit_count(text: str) -> int:
 _PHONE_SEP_EXTRA = _GROUP_SPACES + _GROUP_DASHES
 
 # The span allows more than 15 digits so a ``(0)`` trunk between spaced groups
-# (``+44 (0) 20 7946 0958``) fits; ``_phone_international_end`` cuts it back.
+# (``+44 (0) 20 7946 0958``) fits; ``_phone_international_end`` re-measures
+# the run.
 PHONE_INTERNATIONAL_RE = re.compile(
     rf"(?<![\w+])(?:\+|00)\d[\d .()\-{_PHONE_SEP_EXTRA}]{{6,20}}\d"
 )
@@ -895,28 +896,23 @@ _PHONE_INTERNATIONAL_SEPS = frozenset(" .()-" + _GROUP_SPACES + _GROUP_DASH_CHAR
 
 
 def _phone_international_end(text: str, start: int, _end: int) -> int:
-    """End of the phone number starting at ``start`` (``start`` rejects).
+    """End of the run of digit groups starting at ``start`` (``start``
+    rejects).
 
-    The run of digit groups is rescanned from ``start`` (40 chars of groups
-    and gaps) so a group the regex span cut in half never counts. Neither a
-    ``00`` prefix nor a ``(0)`` trunk counts toward E.164's 8–15 digits. A run
-    within that range is taken whole. A longer one holds a second number: cut
-    at the last valid group boundary where one starts, i.e. before a spaced
-    ``(`` group, a ``00`` + country-code group, or a ``0``-led group with a
-    full national number (10+ digits) left (``… 1234567 (06) …``,
-    ``… 0031 6 …``, ``… 020 7654321``); else at the last valid boundary. So the
-    next number's area code is not swallowed and its subscriber part leaked,
-    while a ``0``-led subscriber group (``+44 20 7946 0958``) stays whole.
+    The run is rescanned from ``start`` (64 chars of groups and separators,
+    whole groups only) so a group the regex span cut in half never counts. It
+    needs 8+ digits, not counting a ``00`` prefix or a ``(0)`` trunk. Past 15
+    digits it holds more than one number (``… 1234567 (06) 12345678``,
+    ``… 0958 - 020 7946 …``); no split point is reliable, and any tail left
+    out could be a subscriber part, so the whole run is masked.
     """
-    cuts: list[tuple[int, int, bool, bool]] = []  # (end, digits, new, zero-led)
+    end = start
     digits = 0
-    whole = False
     if text.startswith("00", start):
         i = start + 2
     else:
         i = start + 1 if text[start] == "+" else start
-    limit = min(len(text), start + 40)
-    cap = min(len(text), start + 64)
+    limit = min(len(text), start + 64)
     while i < limit:
         ch = text[i]
         if ch in _PHONE_INTERNATIONAL_SEPS:
@@ -927,28 +923,14 @@ def _phone_international_end(text: str, start: int, _end: int) -> int:
         if text[i - 1] == "(" and text.startswith("0)", i):
             i += 1
             continue
-        while i < cap and text[i].isdecimal():
-            digits += 1
+        run = i
+        while i < limit and text[i].isdecimal():
             i += 1
         if i < len(text) and text[i].isdecimal():
-            break
-        g = i
-        while g < limit and text[g] in _PHONE_INTERNATIONAL_SEPS:
-            g += 1
-        more = g < limit and text[g].isdecimal()
-        new = more and (
-            "(" in text[i:g] or (text.startswith("00", g) and text[g + 2 : g + 3].isdecimal())
-        )
-        cuts.append((i, digits, new, more and text[g] == "0"))
-        if not more:
-            whole = True
-            break
-        i = g
-    if whole and 8 <= digits <= 15:
-        return cuts[-1][0]
-    valid = [cut for cut in cuts if 8 <= cut[1] <= 15]
-    marked = [c for c in valid if c[2] or (c[3] and digits - c[1] >= 10)]
-    return (marked or valid)[-1][0] if valid else start
+            break  # the group runs past the window
+        digits += i - run
+        end = i
+    return end if digits >= 8 else start
 
 
 # Trailing (?!\d)(?![A-Fa-f]{2}) blocks longer digit runs and hex digest glue

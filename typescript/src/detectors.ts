@@ -52,8 +52,8 @@
  * - NL kenteken (``license_plate``): hyphenated RDW sidecodes 1–14 (case-
  *   insensitive), with SA/SD/SS letter-pair rejects.
  * - Phone packs: international (any active pack; a ``(0)`` trunk may sit
- *   between groups and a run past 15 digits is cut back to the last whole
- *   group), NL national (allows ``/`` and parentheses; rejects hex-digest glue),
+ *   between groups, and a run of groups past 15 digits is masked whole since
+ *   it holds more than one number), NL national (allows ``/`` and parentheses; rejects hex-digest glue),
  *   NANP, DE national (DE excludes exact Dutch ``06…`` 10-digit mobiles; same
  *   hex-glue guard). All phone forms also accept nbsp, thin / narrow nbsp, and
  *   unicode dashes between groups.
@@ -918,7 +918,8 @@ function digitCount(text: string): number {
 const PHONE_SEP_EXTRA = GROUP_SPACES + GROUP_DASHES;
 
 // The span allows more than 15 digits so a ``(0)`` trunk between spaced groups
-// (``+44 (0) 20 7946 0958``) fits; ``phoneInternationalEnd`` cuts it back.
+// (``+44 (0) 20 7946 0958``) fits; ``phoneInternationalEnd`` re-measures the
+// run.
 const PHONE_INTERNATIONAL_RE = new RegExp(
   String.raw`(?<![\w+])(?:\+|00)\d[\d .()\-${PHONE_SEP_EXTRA}]{6,20}\d`,
   "g",
@@ -931,30 +932,23 @@ function isAsciiDigit(ch: string | undefined): boolean {
 }
 
 /**
- * End of the phone number starting at ``start`` (``start`` rejects).
+ * End of the run of digit groups starting at ``start`` (``start`` rejects).
  *
- * The run of digit groups is rescanned from ``start`` (40 chars of groups and
- * gaps) so a group the regex span cut in half never counts. Neither a ``00``
- * prefix nor a ``(0)`` trunk counts toward E.164's 8–15 digits. A run within
- * that range is taken whole. A longer one holds a second number: cut at the
- * last valid group boundary where one starts, i.e. before a spaced ``(``
- * group, a ``00`` + country-code group, or a ``0``-led group with a full
- * national number (10+ digits) left (``… 1234567 (06) …``, ``… 0031 6 …``,
- * ``… 020 7654321``); else at the last valid boundary. So the next number's
- * area code is not swallowed and its subscriber part leaked, while a
- * ``0``-led subscriber group (``+44 20 7946 0958``) stays whole. Digits are
- * ASCII, as JS ``\d`` is.
+ * The run is rescanned from ``start`` (64 chars of groups and separators,
+ * whole groups only) so a group the regex span cut in half never counts. It
+ * needs 8+ digits, not counting a ``00`` prefix or a ``(0)`` trunk. Past 15
+ * digits it holds more than one number (``… 1234567 (06) 12345678``,
+ * ``… 0958 - 020 7946 …``); no split point is reliable, and any tail left out
+ * could be a subscriber part, so the whole run is masked. Digits are ASCII,
+ * as JS ``\d`` is.
  */
 function phoneInternationalEnd(text: string, start: number): number {
   const isSep = (k: number) =>
     k < text.length && PHONE_INTERNATIONAL_SEP_RE.test(text[k]!);
-  // (end, digits so far, next group starts a new number, next is 0-led)
-  const cuts: [number, number, boolean, boolean][] = [];
+  let end = start;
   let digits = 0;
-  let whole = false;
   let i = text.startsWith("00", start) ? start + 2 : text[start] === "+" ? start + 1 : start;
-  const limit = Math.min(text.length, start + 40);
-  const cap = Math.min(text.length, start + 64);
+  const limit = Math.min(text.length, start + 64);
   while (i < limit) {
     if (isSep(i)) {
       i += 1;
@@ -967,38 +961,17 @@ function phoneInternationalEnd(text: string, start: number): number {
       i += 1;
       continue;
     }
-    while (i < cap && isAsciiDigit(text[i])) {
-      digits += 1;
+    const run = i;
+    while (i < limit && isAsciiDigit(text[i])) {
       i += 1;
     }
     if (isAsciiDigit(text[i])) {
-      break;
+      break; // the group runs past the window
     }
-    let g = i;
-    while (g < limit && isSep(g)) {
-      g += 1;
-    }
-    const more = g < limit && isAsciiDigit(text[g]);
-    const newNumber =
-      more &&
-      (text.slice(i, g).includes("(") ||
-        (text.startsWith("00", g) && isAsciiDigit(text[g + 2])));
-    cuts.push([i, digits, newNumber, more && text[g] === "0"]);
-    if (!more) {
-      whole = true;
-      break;
-    }
-    i = g;
+    digits += i - run;
+    end = i;
   }
-  if (whole && digits >= 8 && digits <= 15) {
-    return cuts[cuts.length - 1]![0];
-  }
-  const valid = cuts.filter(([, n]) => n >= 8 && n <= 15);
-  const marked = valid.filter(
-    ([, n, next, zero]) => next || (zero && digits - n >= 10),
-  );
-  const pick = marked.length > 0 ? marked : valid;
-  return pick.length > 0 ? pick[pick.length - 1]![0] : start;
+  return digits >= 8 ? end : start;
 }
 
 const PHONE_NL_NATIONAL: readonly [RegExp, (value: string) => boolean] = [

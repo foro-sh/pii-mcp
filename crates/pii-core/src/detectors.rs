@@ -1360,39 +1360,27 @@ fn is_decimal(c: char) -> bool {
                 .is_match(c.encode_utf8(&mut [0u8; 4])))
 }
 
-/// End of the phone number starting at ``start`` (``start`` rejects).
+/// End of the run of digit groups starting at ``start`` (``start`` rejects).
 ///
-/// The run of digit groups is rescanned from ``start`` (40 chars of groups and
-/// gaps) so a group the regex span cut in half never counts. Neither a ``00``
-/// prefix nor a ``(0)`` trunk counts toward E.164's 8–15 digits. A run within
-/// that range is taken whole. A longer one holds a second number: cut at the
-/// last valid group boundary where one starts, i.e. before a spaced ``(``
-/// group, a ``00`` + country-code group, or a ``0``-led group with a full
-/// national number (10+ digits) left (``… 1234567 (06) …``, ``… 0031 6 …``,
-/// ``… 020 7654321``); else at the last valid boundary. So the next number's
-/// area code is not swallowed and its subscriber part leaked, while a
-/// ``0``-led subscriber group (``+44 20 7946 0958``) stays whole.
+/// The run is rescanned from ``start`` (64 chars of groups and separators,
+/// whole groups only) so a group the regex span cut in half never counts. It
+/// needs 8+ digits, not counting a ``00`` prefix or a ``(0)`` trunk. Past 15
+/// digits it holds more than one number (``… 1234567 (06) 12345678``,
+/// ``… 0958 - 020 7946 …``); no split point is reliable, and any tail left out
+/// could be a subscriber part, so the whole run is masked.
 fn phone_international_end(text: &str, start: usize) -> usize {
-    // Groups and gaps stop at char 40, digit runs at char 64: on the stack.
-    let mut chars = [(0usize, '\0'); 64];
+    // The 64-char window plus one char to see whether a group goes on.
+    let mut chars = [(0usize, '\0'); 65];
     let mut n = 0usize;
     for (i, c) in text[start..].char_indices().take(chars.len()) {
         chars[n] = (start + i, c);
         n += 1;
     }
     let at = |k: usize| (k < n).then(|| chars[k].1);
-    let digit = |k: usize| at(k).is_some_and(is_decimal);
-    let end_of = |k: usize| match (k < n, n) {
-        (true, _) => chars[k].0,
-        (false, 0) => start,
-        (false, _) => chars[n - 1].0 + chars[n - 1].1.len_utf8(),
-    };
-    let limit = n.min(40);
-    // (end, digits so far, next group starts a new number, next is 0-led)
-    let mut cuts = [(0usize, 0usize, false, false); 40];
-    let mut n_cuts = 0usize;
+    let end_of = |k: usize| if k < n { chars[k].0 } else { text.len() };
+    let limit = n.min(64);
+    let mut end = start;
     let mut digits = 0usize;
-    let mut whole = false;
     let mut k = if at(0) == Some('0') && at(1) == Some('0') {
         2
     } else {
@@ -1411,42 +1399,21 @@ fn phone_international_end(text: &str, start: usize) -> usize {
             k += 1;
             continue;
         }
-        while digit(k) {
-            digits += 1;
+        let run = k;
+        while k < limit && is_decimal(chars[k].1) {
             k += 1;
         }
-        if k == n && text[end_of(n)..].chars().next().is_some_and(is_decimal) {
-            // The digit run reached the scan cap and the group goes on.
-            break;
+        if at(k).is_some_and(is_decimal) {
+            break; // the group runs past the window
         }
-        let mut g = k;
-        while g < limit && at(g).is_some_and(is_phone_international_sep) {
-            g += 1;
-        }
-        let more = g < limit && digit(g);
-        let new_number = more
-            && ((k..g).any(|j| chars[j].1 == '(')
-                || (chars[g].1 == '0' && at(g + 1) == Some('0') && digit(g + 2)));
-        cuts[n_cuts] = (end_of(k), digits, new_number, more && chars[g].1 == '0');
-        n_cuts += 1;
-        if !more {
-            whole = true;
-            break;
-        }
-        k = g;
+        digits += k - run;
+        end = end_of(k);
     }
-    let cuts = &cuts[..n_cuts];
-    if whole && (8..=15).contains(&digits) {
-        return cuts[n_cuts - 1].0;
+    if digits >= 8 {
+        end
+    } else {
+        start
     }
-    let total = digits;
-    let valid = |c: &&(usize, usize, bool, bool)| (8..=15).contains(&c.1);
-    cuts.iter()
-        .filter(valid)
-        .filter(|c| c.2 || (c.3 && total - c.1 >= 10))
-        .last()
-        .or_else(|| cuts.iter().filter(valid).last())
-        .map_or(start, |c| c.0)
 }
 
 fn phone_nl_re() -> &'static Regex {

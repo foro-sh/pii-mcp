@@ -322,18 +322,6 @@ describe("scrubText", () => {
       expect(result.counts.phone).toBe(1);
     }
     expect(
-      scrubText("0031 20 1234567 0031 20 7654321", { languages: ["nl"] }).text,
-    ).toBe("[PHONE] [PHONE]");
-    expect(scrubText("call +31 6 12345678 12345", { languages: ["en"] }).text).toBe(
-      "call [PHONE] 12345",
-    );
-    for (const text of [
-      "Tel +31 (20) 123 4567 (06) 12345678",
-      "Tel +31 20 1234567 0031 6 12345678",
-    ]) {
-      expect(scrubText(text, { languages: ["nl"] }).text).toBe("Tel [PHONE] [PHONE]");
-    }
-    expect(
       scrubText("Tel +49 (0) 30 - 1234 - 5678901 x", { languages: ["de"] }).text,
     ).toBe("Tel [PHONE] x");
     expect(scrubText("tel +31 20\u22121234567", { languages: ["nl"] }).text).toBe(
@@ -342,15 +330,23 @@ describe("scrubText", () => {
     expect(scrubText("See (+33 1 35 39 12 00) x", { languages: ["en"] }).text).toBe(
       "See ([PHONE]) x",
     );
-    for (const [text, expected] of [
-      ["call +44 20 7946 0958 - 2024 today", "call [PHONE] - 2024 today"],
-      ["call +44 20 7946 0958 12345 today", "call [PHONE] 12345 today"],
-      ["call 0049 33204 1234567 now", "call [PHONE] now"],
-      ["+31 20 1234567 020 7654321", "[PHONE] [PHONE]"],
-      ["+31 6 12345678 06-12345678", "[PHONE] [PHONE]"],
-      ["+31-20-1234567-0031-6-12345678", "[PHONE]-[PHONE]"],
+    expect(scrubText("call 0049 33204 1234567 now", { languages: ["de"] }).text).toBe(
+      "call [PHONE] now",
+    );
+    // Past 15 digits a run holds more than one number: masked whole.
+    for (const text of [
+      "Tel +31 (20) 123 4567 (06) 12345678 x",
+      "Tel +31 20 1234567 0031 6 12345678 x",
+      "Tel +31 20 1234567 020 7654321 x",
+      "Tel +31 6 12345678 06-12345678 x",
+      "Tel +31-20-1234567-0031-6-12345678 x",
+      "Tel 0031 20 1234567 0031 20 7654321 x",
+      "Tel +44 20 7946 0958 - 2024 x",
+      "Tel +44 20 7946 0958 12345 67890 x",
+      "Tel +32 2 123 45 67 02 765 43 21 x",
+      "Tel +44 (0) 20 - 7946 - 0958 - 020 - 7946 - 0959 x",
     ]) {
-      expect(scrubText(text!, { languages: ["nl"] }).text).toBe(expected);
+      expect(scrubText(text, { languages: ["en", "nl"] }).text).toBe("Tel [PHONE] x");
     }
   });
 

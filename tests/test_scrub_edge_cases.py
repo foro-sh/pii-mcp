@@ -560,17 +560,6 @@ class TestPhoneSeparatorsAndTrunk:
         assert result["text"] == "tel [PHONE]"
         assert result["counts"]["phone"] == 1
 
-    @pytest.mark.parametrize(
-        "text",
-        [
-            "Tel +31 (20) 123 4567 (06) 12345678",
-            "Tel +31 20 1234567 0031 6 12345678",
-        ],
-    )
-    def test_next_number_area_code_not_swallowed(self, text: str) -> None:
-        result = scrub_text(text, languages=["nl"])
-        assert result["text"] == "Tel [PHONE] [PHONE]"
-
     def test_span_cut_mid_group_does_not_leak_tail(self) -> None:
         # 15 digits once the ``(0)`` trunk is left out; the regex span stops
         # inside the last group, the rescan does not.
@@ -582,29 +571,29 @@ class TestPhoneSeparatorsAndTrunk:
         assert result["text"] == "See ([PHONE]) x"
 
     @pytest.mark.parametrize(
-        ("text", "expected"),
+        "text",
         [
-            ("+31 20 1234567 020 7654321", "[PHONE] [PHONE]"),
-            ("+31 6 12345678 06-12345678", "[PHONE] [PHONE]"),
-            ("+31-20-1234567-0031-6-12345678", "[PHONE]-[PHONE]"),
+            "Tel +31 (20) 123 4567 (06) 12345678 x",
+            "Tel +31 20 1234567 0031 6 12345678 x",
+            "Tel +31 20 1234567 020 7654321 x",
+            "Tel +31 6 12345678 06-12345678 x",
+            "Tel +31-20-1234567-0031-6-12345678 x",
+            "Tel 0031 20 1234567 0031 20 7654321 x",
+            "Tel +44 20 7946 0958 - 2024 x",
+            "Tel +44 20 7946 0958 12345 67890 x",
+            "Tel +32 2 123 45 67 02 765 43 21 x",
+            "Tel +44 (0) 20 - 7946 - 0958 - 020 - 7946 - 0959 x",
         ],
     )
-    def test_back_to_back_trunk_led_number(self, text: str, expected: str) -> None:
-        # Past 15 digits the run holds two numbers; cut before the 0-led one.
-        assert scrub_text(text, languages=["nl"])["text"] == expected
+    def test_run_past_fifteen_digits_masked_whole(self, text: str) -> None:
+        # More than one number (or a number and more digits): no split point
+        # is reliable, so the whole run is masked rather than a tail leaked.
+        result = scrub_text(text, languages=["en", "nl"])
+        assert result["text"] == "Tel [PHONE] x"
 
-    @pytest.mark.parametrize(
-        ("text", "expected"),
-        [
-            ("call +44 20 7946 0958 - 2024 today", "call [PHONE] - 2024 today"),
-            ("call +44 20 7946 0958 12345 today", "call [PHONE] 12345 today"),
-            ("call 0049 33204 1234567 now", "call [PHONE] now"),
-        ],
-    )
-    def test_zero_led_subscriber_group_and_00_prefix(self, text: str, expected: str) -> None:
-        # A 0-led group splits off only with a full national number left, and
-        # a 00 prefix is not an E.164 digit.
-        assert scrub_text(text, languages=["en", "de"])["text"] == expected
+    def test_00_prefix_is_not_an_e164_digit(self) -> None:
+        result = scrub_text("call 0049 33204 1234567 now", languages=["de"])
+        assert result["text"] == "call [PHONE] now"
 
     def test_non_ascii_digits(self) -> None:
         text = "call +\u0663\u0661 \u0662\u0660 \u0661\u0662\u0663\u0664\u0665\u0666\u0667 now"
@@ -613,15 +602,6 @@ class TestPhoneSeparatorsAndTrunk:
     def test_minus_sign_separator(self) -> None:
         result = scrub_text("tel +31 20\u22121234567", languages=["nl"])
         assert result["text"] == "tel [PHONE]"
-
-    def test_back_to_back_numbers_split_at_group(self) -> None:
-        result = scrub_text("0031 20 1234567 0031 20 7654321", languages=["nl"])
-        assert result["text"] == "[PHONE] [PHONE]"
-        assert result["counts"]["phone"] == 2
-
-    def test_trailing_group_past_fifteen_digits_left(self) -> None:
-        result = scrub_text("call +31 6 12345678 12345", languages=["en"])
-        assert result["text"] == "call [PHONE] 12345"
 
 
 class TestDmsLocation:
