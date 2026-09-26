@@ -343,6 +343,9 @@ describe("scrubText", () => {
       "See ([PHONE]) x",
     );
     for (const [text, expected] of [
+      ["call +44 20 7946 0958 - 2024 today", "call [PHONE] - 2024 today"],
+      ["call +44 20 7946 0958 12345 today", "call [PHONE] 12345 today"],
+      ["call 0049 33204 1234567 now", "call [PHONE] now"],
       ["+31 20 1234567 020 7654321", "[PHONE] [PHONE]"],
       ["+31 6 12345678 06-12345678", "[PHONE] [PHONE]"],
       ["+31-20-1234567-0031-6-12345678", "[PHONE]-[PHONE]"],

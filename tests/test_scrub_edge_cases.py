@@ -593,6 +593,19 @@ class TestPhoneSeparatorsAndTrunk:
         # Past 15 digits the run holds two numbers; cut before the 0-led one.
         assert scrub_text(text, languages=["nl"])["text"] == expected
 
+    @pytest.mark.parametrize(
+        ("text", "expected"),
+        [
+            ("call +44 20 7946 0958 - 2024 today", "call [PHONE] - 2024 today"),
+            ("call +44 20 7946 0958 12345 today", "call [PHONE] 12345 today"),
+            ("call 0049 33204 1234567 now", "call [PHONE] now"),
+        ],
+    )
+    def test_zero_led_subscriber_group_and_00_prefix(self, text: str, expected: str) -> None:
+        # A 0-led group splits off only with a full national number left, and
+        # a 00 prefix is not an E.164 digit.
+        assert scrub_text(text, languages=["en", "de"])["text"] == expected
+
     def test_non_ascii_digits(self) -> None:
         text = "call +\u0663\u0661 \u0662\u0660 \u0661\u0662\u0663\u0664\u0665\u0666\u0667 now"
         assert scrub_text(text, languages=["en"])["text"] == "call [PHONE] now"

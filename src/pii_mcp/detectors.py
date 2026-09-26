@@ -898,19 +898,26 @@ _PHONE_INTERNATIONAL_SEPS = frozenset(
 def _phone_international_end(text: str, start: int, _end: int) -> int:
     """End of the phone number starting at ``start`` (``start`` rejects).
 
-    The run of digit groups is rescanned from ``start`` (40 chars at most) so
-    a group the regex span cut in half never counts, and a ``(0)`` trunk is
-    not counted toward E.164's 8–15 digits. A run within that range is taken
-    whole. A longer one holds a second number: cut at the last valid group
-    boundary followed by a ``(`` or ``0``-led group (``… 1234567 (06) …``,
-    ``… 0031 6 …``, ``… 020 …``), else at the last valid boundary, so the
-    next number's area code is not swallowed and its subscriber part leaked.
+    The run of digit groups is rescanned from ``start`` (40 chars of groups
+    and gaps) so a group the regex span cut in half never counts. Neither a
+    ``00`` prefix nor a ``(0)`` trunk counts toward E.164's 8–15 digits. A run
+    within that range is taken whole. A longer one holds a second number: cut
+    at the last valid group boundary where one starts, i.e. before a spaced
+    ``(`` group, a ``00`` + country-code group, or a ``0``-led group with a
+    full national number (10+ digits) left (``… 1234567 (06) …``,
+    ``… 0031 6 …``, ``… 020 7654321``); else at the last valid boundary. So the
+    next number's area code is not swallowed and its subscriber part leaked,
+    while a ``0``-led subscriber group (``+44 20 7946 0958``) stays whole.
     """
-    cuts: list[tuple[int, int, bool]] = []  # (end, digits so far, next is new)
+    cuts: list[tuple[int, int, bool, bool]] = []  # (end, digits, new, zero-led)
     digits = 0
     whole = False
-    i = start + 1 if text[start] == "+" else start
+    if text.startswith("00", start):
+        i = start + 2
+    else:
+        i = start + 1 if text[start] == "+" else start
     limit = min(len(text), start + 40)
+    cap = min(len(text), start + 64)
     while i < limit:
         ch = text[i]
         if ch in _PHONE_INTERNATIONAL_SEPS:
@@ -921,16 +928,19 @@ def _phone_international_end(text: str, start: int, _end: int) -> int:
         if text[i - 1] == "(" and text.startswith("0)", i):
             i += 1
             continue
-        while i < len(text) and text[i].isdecimal() and digits <= 15:
+        while i < cap and text[i].isdecimal():
             digits += 1
             i += 1
-        if digits > 15 or (i < len(text) and text[i].isdecimal()):
+        if i < len(text) and text[i].isdecimal():
             break
         g = i
         while g < limit and text[g] in _PHONE_INTERNATIONAL_SEPS:
             g += 1
         more = g < limit and text[g].isdecimal()
-        cuts.append((i, digits, more and ("(" in text[i:g] or text[g] == "0")))
+        new = more and (
+            "(" in text[i:g] or (text.startswith("00", g) and text[g + 2 : g + 3].isdecimal())
+        )
+        cuts.append((i, digits, new, more and text[g] == "0"))
         if not more:
             whole = True
             break
@@ -938,7 +948,7 @@ def _phone_international_end(text: str, start: int, _end: int) -> int:
     if whole and 8 <= digits <= 15:
         return cuts[-1][0]
     valid = [cut for cut in cuts if 8 <= cut[1] <= 15]
-    marked = [cut for cut in valid if cut[2]]
+    marked = [c for c in valid if c[2] or (c[3] and digits - c[1] >= 10)]
     return (marked or valid)[-1][0] if valid else start
 
 

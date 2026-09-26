@@ -932,23 +932,28 @@ function isAsciiDigit(ch: string | undefined): boolean {
 /**
  * End of the phone number starting at ``start`` (``start`` rejects).
  *
- * The run of digit groups is rescanned from ``start`` (40 chars at most) so a
- * group the regex span cut in half never counts, and a ``(0)`` trunk is not
- * counted toward E.164's 8–15 digits. A run within that range is taken whole.
- * A longer one holds a second number: cut at the last valid group boundary
- * followed by a ``(`` or ``0``-led group (``… 1234567 (06) …``,
- * ``… 0031 6 …``, ``… 020 …``), else at the last valid boundary, so the next
- * number's area code is not swallowed and its subscriber part leaked. Digits
- * are ASCII, as JS ``\d`` is.
+ * The run of digit groups is rescanned from ``start`` (40 chars of groups and
+ * gaps) so a group the regex span cut in half never counts. Neither a ``00``
+ * prefix nor a ``(0)`` trunk counts toward E.164's 8–15 digits. A run within
+ * that range is taken whole. A longer one holds a second number: cut at the
+ * last valid group boundary where one starts, i.e. before a spaced ``(``
+ * group, a ``00`` + country-code group, or a ``0``-led group with a full
+ * national number (10+ digits) left (``… 1234567 (06) …``, ``… 0031 6 …``,
+ * ``… 020 7654321``); else at the last valid boundary. So the next number's
+ * area code is not swallowed and its subscriber part leaked, while a
+ * ``0``-led subscriber group (``+44 20 7946 0958``) stays whole. Digits are
+ * ASCII, as JS ``\d`` is.
  */
 function phoneInternationalEnd(text: string, start: number): number {
   const isSep = (k: number) =>
     k < text.length && PHONE_INTERNATIONAL_SEP_RE.test(text[k]!);
-  const cuts: [number, number, boolean][] = [];
+  // (end, digits so far, next group starts a new number, next is 0-led)
+  const cuts: [number, number, boolean, boolean][] = [];
   let digits = 0;
   let whole = false;
-  let i = text[start] === "+" ? start + 1 : start;
+  let i = text.startsWith("00", start) ? start + 2 : text[start] === "+" ? start + 1 : start;
   const limit = Math.min(text.length, start + 40);
+  const cap = Math.min(text.length, start + 64);
   while (i < limit) {
     if (isSep(i)) {
       i += 1;
@@ -961,11 +966,11 @@ function phoneInternationalEnd(text: string, start: number): number {
       i += 1;
       continue;
     }
-    while (isAsciiDigit(text[i]) && digits <= 15) {
+    while (i < cap && isAsciiDigit(text[i])) {
       digits += 1;
       i += 1;
     }
-    if (digits > 15 || isAsciiDigit(text[i])) {
+    if (isAsciiDigit(text[i])) {
       break;
     }
     let g = i;
@@ -973,7 +978,11 @@ function phoneInternationalEnd(text: string, start: number): number {
       g += 1;
     }
     const more = g < limit && isAsciiDigit(text[g]);
-    cuts.push([i, digits, more && (text.slice(i, g).includes("(") || text[g] === "0")]);
+    const newNumber =
+      more &&
+      (text.slice(i, g).includes("(") ||
+        (text.startsWith("00", g) && isAsciiDigit(text[g + 2])));
+    cuts.push([i, digits, newNumber, more && text[g] === "0"]);
     if (!more) {
       whole = true;
       break;
@@ -984,7 +993,9 @@ function phoneInternationalEnd(text: string, start: number): number {
     return cuts[cuts.length - 1]![0];
   }
   const valid = cuts.filter(([, n]) => n >= 8 && n <= 15);
-  const marked = valid.filter(([, , next]) => next);
+  const marked = valid.filter(
+    ([, n, next, zero]) => next || (zero && digits - n >= 10),
+  );
   const pick = marked.length > 0 ? marked : valid;
   return pick.length > 0 ? pick[pick.length - 1]![0] : start;
 }
