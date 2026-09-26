@@ -784,7 +784,105 @@ fn location_valid(value: &str) -> bool {
     (-90.0..=90.0).contains(&lat) && (-180.0..=180.0).contains(&lon)
 }
 
+/// Degrees-minutes(-seconds) as maps, EXIF, and GPS units print them
+/// (``52°22'3.4"N 4°54'14.8"E``, ``N 52° 22.057' E 4° 54.246'``). Each half
+/// needs a degree sign, a minute mark, and a hemisphere letter before or after
+/// (Dutch / German ``Z`` / ``O`` for south / east); prime and double-prime
+/// glyphs stand in for ``'`` / ``"``.
+fn location_dms_re() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| {
+        let body = r#"\d{1,3}\s?[°º]\s?\d{1,2}(?:[.,]\d{1,4})?\s?['′’](?:\s?\d{1,2}(?:[.,]\d{1,4})?\s?(?:["″”]|''|′′))?"#;
+        Regex::new(&format!(
+            r"(?:[NSZ]\s?{body}|{body}\s?[NSZ])\s{{0,3}}[,;/]?\s{{0,3}}(?:[EOW]\s?{body}|{body}\s?[EOW])"
+        ))
+        .unwrap()
+    })
+}
+
+fn location_dms_boundary_ok(text: &str, start: usize, end: usize) -> bool {
+    // (?<![A-Za-z0-9_.]) … (?![A-Za-z0-9_])
+    if start > 0 {
+        let prev = text[..start].chars().next_back().unwrap();
+        if is_word_char(prev) || prev == '.' {
+            return false;
+        }
+    }
+    if end < text.len() {
+        let next = text[end..].chars().next().unwrap();
+        if is_word_char(next) {
+            return false;
+        }
+    }
+    true
+}
+
+/// Numbers (``3`` / ``3.4`` / ``3,4``) in a DMS fragment.
+fn dms_numbers(part: &str) -> Vec<f64> {
+    let mut out = Vec::new();
+    let mut chars = part.char_indices().peekable();
+    while let Some((i, c)) = chars.next() {
+        if !c.is_ascii_digit() {
+            continue;
+        }
+        let mut end = i + 1;
+        let mut seen_sep = false;
+        while let Some(&(j, d)) = chars.peek() {
+            if d.is_ascii_digit() {
+                end = j + 1;
+                chars.next();
+            } else if (d == '.' || d == ',')
+                && !seen_sep
+                && part[j + 1..].starts_with(|n: char| n.is_ascii_digit())
+            {
+                seen_sep = true;
+                chars.next();
+            } else {
+                break;
+            }
+        }
+        if let Ok(n) = part[i..end].replace(',', ".").parse() {
+            out.push(n);
+        }
+    }
+    out
+}
+
+/// Degrees within ±90 / ±180, minutes and seconds below 60. The two degree
+/// signs split the hit: the number before the first is the latitude degrees,
+/// the one before the second the longitude degrees.
+fn location_dms_valid(value: &str) -> bool {
+    let parts: Vec<&str> = value.split(['°', 'º']).collect();
+    if parts.len() != 3 {
+        return false;
+    }
+    let lat = dms_numbers(parts[0]);
+    let mid = dms_numbers(parts[1]);
+    let (Some(&lat_deg), Some((&lon_deg, lat_ms))) = (lat.last(), mid.split_last()) else {
+        return false;
+    };
+    lat_deg <= 90.0
+        && lon_deg <= 180.0
+        && lat_ms
+            .iter()
+            .chain(dms_numbers(parts[2]).iter())
+            .all(|&n| n < 60.0)
+}
+
 fn scrub_location(text: &str) -> (Option<String>, u32) {
+    let (dms, dms_count) = replace_matches(
+        text,
+        location_dms_re(),
+        "[LOCATION]",
+        |v, s, e| location_dms_boundary_ok(text, s, e) && location_dms_valid(v),
+        true,
+    );
+    let src = dms.as_deref().unwrap_or(text);
+    let (decimal, count) = scrub_location_decimal(src);
+    (decimal.or(dms), dms_count + count)
+}
+
+fn scrub_location_decimal(text: &str) -> (Option<String>, u32) {
     let accept =
         |s: usize, e: usize| location_boundary_ok(text, s, e) && location_valid(&text[s..e]);
     let mut count = 0u32;

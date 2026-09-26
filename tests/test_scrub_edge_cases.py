@@ -568,3 +568,37 @@ class TestPhoneSeparatorsAndTrunk:
     def test_trailing_group_past_fifteen_digits_left(self) -> None:
         result = scrub_text("call +31 6 12345678 12345", languages=["en"])
         assert result["text"] == "call [PHONE] 12345"
+
+
+class TestDmsLocation:
+    """Degrees-minutes(-seconds) pairs as maps, EXIF, and GPS units print them."""
+
+    @pytest.mark.parametrize(
+        "value",
+        [
+            "52°22'3.4\"N 4°54'14.8\"E",
+            "52° 22′ 03″ N, 4° 54′ 14″ E",
+            "33°52'4\"S 151°12'26\"W",
+            "N 52° 22.057' E 004° 54.246'",
+            "N 52° 22.057', E 4° 54.246'",
+            "52°22,5'N 4°54,2'O",
+            "52º22'3''N 4º54'14''E",
+        ],
+    )
+    def test_dms_pair_masked(self, value: str) -> None:
+        result = scrub_text(f"at {value} today")
+        assert result["text"] == "at [LOCATION] today"
+        assert result["counts"]["location"] == 1
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "lat 52°22'3\"N only",
+            "95°22'3\"N 4°54'14\"E",
+            "52°72'3\"N 4°54'14\"E",
+            "angle 45° 30' and 12° 5'",
+            "12°C at 5' N",
+        ],
+    )
+    def test_non_coordinates_kept(self, text: str) -> None:
+        assert scrub_text(text)["text"] == text

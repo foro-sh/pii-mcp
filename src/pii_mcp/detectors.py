@@ -35,7 +35,8 @@ Patterns:
 - Location: decimal lat/lon pairs with ≥3 fractional digits, optional
   ``N``/``S``/``E``/``W`` hemisphere letters, and range checks (AP lists
   locatiegegevens as privacy-sensitive). Pairs with both |values| <= 1 are
-  rejected (open ocean; embedding / weight vectors).
+  rejected (open ocean; embedding / weight vectors). Degrees-minutes(-seconds)
+  pairs need a degree sign, minute mark, and hemisphere letter per half.
 - US SSN: hyphen/space/dot/slash or compact 9-digit with SSA area/group/serial
   rejects, plus obvious fakes (all-same digit, 123456789 / 987654321). Grouped
   SSN / BSN forms also accept nbsp, thin / narrow nbsp, and unicode dashes.
@@ -589,8 +590,47 @@ def _location_valid(value: str) -> bool:
     return -90.0 <= lat <= 90.0 and -180.0 <= lon <= 180.0
 
 
+# Degrees-minutes(-seconds) as maps, EXIF, and GPS units print them
+# (``52°22'3.4"N 4°54'14.8"E``, ``N 52° 22.057' E 4° 54.246'``). Each half
+# needs a degree sign, a minute mark, and a hemisphere letter before or after
+# (Dutch / German ``Z`` / ``O`` for south / east); prime and double-prime
+# glyphs stand in for ``'`` / ``"``.
+_DMS_BODY = (
+    r"\d{1,3}\s?[°º]\s?\d{1,2}(?:[.,]\d{1,4})?\s?['′’]"
+    r"(?:\s?\d{1,2}(?:[.,]\d{1,4})?\s?(?:[\"″”]|''|′′))?"
+)
+LOCATION_DMS_RE = re.compile(
+    rf"(?<![A-Za-z0-9_.])(?:[NSZ]\s?{_DMS_BODY}|{_DMS_BODY}\s?[NSZ])"
+    rf"\s{{0,3}}[,;/]?\s{{0,3}}"
+    rf"(?:[EOW]\s?{_DMS_BODY}|{_DMS_BODY}\s?[EOW])(?![A-Za-z0-9_])"
+)
+_DMS_NUMBER_RE = re.compile(r"\d+(?:[.,]\d+)?")
+
+
+def _location_dms_valid(value: str) -> bool:
+    """Degrees within ±90 / ±180, minutes and seconds below 60. The two degree
+    signs split the hit: the number before the first is the latitude degrees,
+    the one before the second the longitude degrees."""
+    parts = re.split(r"[°º]", value)
+    if len(parts) != 3:
+        return False
+    nums = [
+        [float(n.replace(",", ".")) for n in _DMS_NUMBER_RE.findall(part)]
+        for part in parts
+    ]
+    if not nums[0] or not nums[1]:
+        return False
+    lat_deg, lon_deg = nums[0][-1], nums[1][-1]
+    minutes_seconds = nums[1][:-1] + nums[2]
+    return lat_deg <= 90 and lon_deg <= 180 and all(n < 60 for n in minutes_seconds)
+
+
 def _scrub_location(text: str) -> tuple[str, int]:
-    return _replace_matches(text, LOCATION_RE, "[LOCATION]", _location_valid)
+    out, count = _replace_matches(
+        text, LOCATION_DMS_RE, "[LOCATION]", _location_dms_valid, retry=True
+    )
+    out, n = _replace_matches(out, LOCATION_RE, "[LOCATION]", _location_valid)
+    return out, count + n
 
 
 location_detector = Detector(type="location", scrub=_scrub_location)

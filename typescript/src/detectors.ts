@@ -33,7 +33,8 @@
  * - Location: decimal lat/lon pairs with ≥3 fractional digits, optional
  *   ``N``/``S``/``E``/``W`` hemisphere letters, and range checks (AP lists
  *   locatiegegevens as privacy-sensitive). Pairs with both |values| <= 1 are
- *   rejected (open ocean; embedding / weight vectors).
+ *   rejected (open ocean; embedding / weight vectors). Degrees-minutes(-seconds)
+ *   pairs need a degree sign, minute mark, and hemisphere letter per half.
  * - US SSN: hyphen/space/dot/slash or compact 9-digit with SSA area/group/serial
  *   rejects, plus obvious fakes (all-same digit, 123456789 / 987654321). Grouped
  *   SSN / BSN forms also accept nbsp, thin / narrow nbsp, and unicode dashes.
@@ -588,8 +589,54 @@ function locationValid(value: string): boolean {
   return lat >= -90.0 && lat <= 90.0 && lon >= -180.0 && lon <= 180.0;
 }
 
+// Degrees-minutes(-seconds) as maps, EXIF, and GPS units print them
+// (``52°22'3.4"N 4°54'14.8"E``, ``N 52° 22.057' E 4° 54.246'``). Each half
+// needs a degree sign, a minute mark, and a hemisphere letter before or after
+// (Dutch / German ``Z`` / ``O`` for south / east); prime and double-prime
+// glyphs stand in for ``'`` / ``"``.
+const DMS_BODY = String.raw`\d{1,3}\s?[°º]\s?\d{1,2}(?:[.,]\d{1,4})?\s?['′’](?:\s?\d{1,2}(?:[.,]\d{1,4})?\s?(?:["″”]|''|′′))?`;
+const LOCATION_DMS_RE = new RegExp(
+  String.raw`(?<![A-Za-z0-9_.])(?:[NSZ]\s?${DMS_BODY}|${DMS_BODY}\s?[NSZ])\s{0,3}[,;/]?\s{0,3}(?:[EOW]\s?${DMS_BODY}|${DMS_BODY}\s?[EOW])(?![A-Za-z0-9_])`,
+  "g",
+);
+
+function dmsNumbers(part: string): number[] {
+  return [...part.matchAll(/\d+(?:[.,]\d+)?/g)].map((m) =>
+    Number(m[0].replace(",", ".")),
+  );
+}
+
+/**
+ * Degrees within ±90 / ±180, minutes and seconds below 60. The two degree
+ * signs split the hit: the number before the first is the latitude degrees,
+ * the one before the second the longitude degrees.
+ */
+function locationDmsValid(value: string): boolean {
+  const parts = value.split(/[°º]/);
+  if (parts.length !== 3) {
+    return false;
+  }
+  const lat = dmsNumbers(parts[0]!);
+  const mid = dmsNumbers(parts[1]!);
+  if (lat.length === 0 || mid.length === 0) {
+    return false;
+  }
+  const latDeg = lat[lat.length - 1]!;
+  const lonDeg = mid[mid.length - 1]!;
+  const minutesSeconds = [...mid.slice(0, -1), ...dmsNumbers(parts[2]!)];
+  return latDeg <= 90 && lonDeg <= 180 && minutesSeconds.every((n) => n < 60);
+}
+
 function scrubLocation(text: string): { text: string; count: number } {
-  return replaceMatches(text, LOCATION_RE, "[LOCATION]", locationValid);
+  const dms = replaceMatches(
+    text,
+    LOCATION_DMS_RE,
+    "[LOCATION]",
+    locationDmsValid,
+    true,
+  );
+  const decimal = replaceMatches(dms.text, LOCATION_RE, "[LOCATION]", locationValid);
+  return { text: decimal.text, count: dms.count + decimal.count };
 }
 
 export const locationDetector: Detector = {

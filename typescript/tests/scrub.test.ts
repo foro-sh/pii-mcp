@@ -329,6 +329,31 @@ describe("scrubText", () => {
     );
   });
 
+  it("masks degrees-minutes-seconds coordinate pairs", () => {
+    for (const value of [
+      `52°22'3.4"N 4°54'14.8"E`,
+      "52° 22′ 03″ N, 4° 54′ 14″ E",
+      `33°52'4"S 151°12'26"W`,
+      "N 52° 22.057' E 004° 54.246'",
+      "N 52° 22.057', E 4° 54.246'",
+      "52°22,5'N 4°54,2'O",
+      "52º22'3''N 4º54'14''E",
+    ]) {
+      const result = scrubText(`at ${value} today`);
+      expect(result.text).toBe("at [LOCATION] today");
+      expect(result.counts.location).toBe(1);
+    }
+    for (const text of [
+      `lat 52°22'3"N only`,
+      `95°22'3"N 4°54'14"E`,
+      `52°72'3"N 4°54'14"E`,
+      "angle 45° 30' and 12° 5'",
+      "12°C at 5' N",
+    ]) {
+      expect(scrubText(text).text).toBe(text);
+    }
+  });
+
   it("rejects unknown language", () => {
     expect(() => scrubText("hi", { languages: ["fr"] })).toThrow(
       /unknown language/,
