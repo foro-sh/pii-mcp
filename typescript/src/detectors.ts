@@ -8,6 +8,7 @@
  * Patterns:
  * - Email uses bounded quantifiers (unbounded local-part ``+`` is ReDoS-prone)
  *   and ``(?!@)`` so glued addresses (``a@b.comc@d.com``) backtrack to two hits.
+ *   Local part, domain labels, and TLD accept Unicode letters (EAI / IDN).
  *   When a TLD absorbs a following IBAN/card/IP/MAC/location, the match is
  *   shortened so both hits still redact.
  * - Spaced IBANs use separate upper- and lower-case optional-space patterns so a
@@ -21,7 +22,8 @@
  *   grouped forms also accept tab, nbsp, ideographic space, unicode dashes,
  *   ``.``, and ``/``; zero-width characters are stripped before matching.
  * - BIC/SWIFT: 8 or 11 alnum with ISO 3166-1 country letters (AP: financial data).
- * - MAC: colon/dash IEEE and Cisco dotted forms (AP: device MAC is personal data).
+ * - MAC: colon/dash IEEE, Cisco dotted, and Huawei/H3C ``aabb-ccdd-eeff`` (with a
+ *   hex letter) forms (AP: device MAC is personal data).
  *   A label colon (``mac:aa:bb:…``) is allowed; a preceding hex group is not.
  * - IMEI: hyphen/space-grouped 15-digit forms with Luhn (AP: gegevens over
  *   elektronische communicatie / device identifiers). Compact 15-digit IMEIs
@@ -33,10 +35,13 @@
  * - Location: decimal lat/lon pairs with ≥3 fractional digits, optional
  *   ``N``/``S``/``E``/``W`` hemisphere letters, and range checks (AP lists
  *   locatiegegevens as privacy-sensitive). Pairs with both |values| <= 1 are
- *   rejected (open ocean; embedding / weight vectors).
+ *   rejected (open ocean; embedding / weight vectors). Degrees-minutes(-seconds)
+ *   pairs need a degree sign, minute mark, and hemisphere letter per half.
  * - US SSN: hyphen/space/dot/slash or compact 9-digit with SSA area/group/serial
- *   rejects, plus obvious fakes (all-same digit, 123456789 / 987654321).
- * - German Steuer-IdNr (tax_id): 11 digits with structure + mod-11/10 check.
+ *   rejects, plus obvious fakes (all-same digit, 123456789 / 987654321). Grouped
+ *   SSN / BSN forms also accept nbsp, thin / narrow nbsp, and unicode dashes.
+ * - German Steuer-IdNr (tax_id): 11 digits, compact or grouped ``12 345 678 901``,
+ *   with structure + mod-11/10 check.
  * - NL BTW-id (``vat_id``): ``NL`` + 9 digits + ``B`` + 2 digits with optional
  *   spaces/dots (format only — post-2020 sole-trader ids are not elfproef-gated).
  * - NL passport / ID-card number (``passport``): 9-char RvIG document number
@@ -46,9 +51,12 @@
  *   only and SA/SD/SS rejects — structured fragment, not street-address NER.
  * - NL kenteken (``license_plate``): hyphenated RDW sidecodes 1–14 (case-
  *   insensitive), with SA/SD/SS letter-pair rejects.
- * - Phone packs: international (any active pack), NL national (allows ``/`` and
- *   parentheses; rejects hex-digest glue), NANP, DE national (DE excludes exact
- *   Dutch ``06…`` 10-digit mobiles; same hex-glue guard).
+ * - Phone packs: international (any active pack; a ``(0)`` trunk may sit
+ *   between groups, and a run of groups past 15 digits is masked whole since
+ *   it holds more than one number), NL national (allows ``/`` and parentheses; rejects hex-digest glue),
+ *   NANP, DE national (DE excludes exact Dutch ``06…`` 10-digit mobiles; same
+ *   hex-glue guard). All phone forms also accept nbsp, thin / narrow nbsp, and
+ *   unicode dashes between groups.
  * - BSN spaced/dotted/hyphenated ``111-222-333`` groups.
  *
  * ``UNIVERSAL_DETECTORS`` (email, IBAN, credit card, BIC, MAC, IMEI, IP, location)
@@ -90,25 +98,27 @@ function replaceMatches(
   placeholder: string,
   isValid?: (value: string) => boolean,
   retry = false,
-  acceptLen?: (value: string) => number,
+  acceptEnd?: (text: string, start: number, end: number) => number,
 ): { text: string; count: number } {
   let count = 0;
   const re = cloneRegExp(pattern);
-  if (acceptLen !== undefined) {
-    // Replace only the accepted prefix (0 rejects), so a grouped hit that
-    // swallowed a trailing word is cut back to the part that validates.
+  if (acceptEnd !== undefined) {
+    // ``acceptEnd`` returns where the replacement ends (``start`` rejects),
+    // like Python ``accept_end`` / Rust ``replace_matches_end``: a grouped hit
+    // that swallowed a trailing word is cut back to the part that validates,
+    // or a hit is re-measured against the text (and may end past the match).
     let out = "";
     let last = 0;
     for (let m = re.exec(text); m !== null; m = re.exec(text)) {
-      const len = acceptLen(m[0]);
-      if (len === 0) {
-        if (m[0].length === 0) {
+      const end = acceptEnd(text, m.index, m.index + m[0].length);
+      if (end === m.index) {
+        if (retry || m[0].length === 0) {
           re.lastIndex = m.index + 1;
         }
         continue;
       }
       out += text.slice(last, m.index) + placeholder;
-      last = m.index + len;
+      last = end;
       re.lastIndex = last;
       count += 1;
     }
@@ -140,11 +150,28 @@ function replaceMatches(
   return { text: out, count };
 }
 
-const EMAIL_RE =
-  /[A-Za-z0-9._%+-]{1,64}@[A-Za-z0-9-]{1,63}(?:\.[A-Za-z0-9-]{1,63})*\.[A-Za-z]{2,24}(?!@)/g;
+// Scripts written without spaces (Thai, Lao, Tibetan, Myanmar, Khmer, kana,
+// Bopomofo, CJK, Hangul, fullwidth forms) glue prose straight onto an
+// address (``请发送至ada@example.com以便``), so a TLD is either all such
+// script or free of it, and one such letter after the TLD ends the address.
+// The local part may mix scripts (``田中123@``): glued prose before it is
+// over-masked rather than a name part leaked.
+const UNSPACED_SCRIPTS = String.raw`\u0e00-\u0eff\u0f00-\u0fff\u1000-\u109f\u1100-\u11ff\u1780-\u17ff\u3000-\u31ff\u3400-\u4dbf\u4e00-\u9fff\ua960-\ua97f\uac00-\ud7ff\uf900-\ufaff\uff00-\uffef\u{20000}-\u{3ffff}`;
+const UNSPACED_CHAR_RE = new RegExp(`[${UNSPACED_SCRIPTS}]`, "u");
+const EMAIL_LOCAL = String.raw`[\p{L}\p{N}_.%+\-]{1,64}`;
+const EMAIL_TLD = String.raw`(?:(?:(?![${UNSPACED_SCRIPTS}])\p{L}){2,24}|(?:(?=[${UNSPACED_SCRIPTS}])\p{L}){2,24})`;
 
-const EMAIL_NEXT_PII_RE =
-  /^(?:[A-Za-z]{2}\d{2}[A-Za-z0-9]|\d{13,19}|\d{3}[- ./]?\d{2}[- ./]?\d{4}|\d{3}[ .]\d{3}[ .]\d{3}|\d{8,9}(?!\d)|(?:\d{1,3}\.){3}\d{1,3}|\d{1,3}\.\d{3,8}|[0-9A-Fa-f]{2}([-:/.])[0-9A-Fa-f]{2}|(?:[0-9A-Fa-f]{3,4}:|::)|[A-Za-z0-9._%+-]{1,64}@|[+0]\d)/;
+// Letters and digits are Unicode (EAI / IDN: ``josé@example.com``,
+// ``ada@münchen.de``), matching Python's ``\w`` / ``[^\W_]``.
+const EMAIL_RE = new RegExp(
+  String.raw`${EMAIL_LOCAL}@[\p{L}\p{N}\-]{1,63}(?:\.[\p{L}\p{N}\-]{1,63})*\.${EMAIL_TLD}(?!@)`,
+  "gu",
+);
+
+const EMAIL_NEXT_PII_RE = new RegExp(
+  String.raw`^(?:[A-Za-z]{2}\d{2}[A-Za-z0-9]|\d{13,19}|\d{3}[- ./]?\d{2}[- ./]?\d{4}|\d{3}[ .]\d{3}[ .]\d{3}|\d{8,9}(?!\d)|(?:\d{1,3}\.){3}\d{1,3}|\d{1,3}\.\d{3,8}|[0-9A-Fa-f]{2}([-:/.])[0-9A-Fa-f]{2}|(?:[0-9A-Fa-f]{3,4}:|::)|${EMAIL_LOCAL}@|[+0]\d)`,
+  "u",
+);
 
 function emailEndOk(text: string, end: number): boolean {
   if (end >= text.length) {
@@ -154,7 +181,7 @@ function emailEndOk(text: string, end: number): boolean {
   if (ch === "@") {
     return false;
   }
-  if (!/[A-Za-z0-9]/.test(ch)) {
+  if (!/[\p{L}\p{N}]/u.test(ch) || UNSPACED_CHAR_RE.test(ch)) {
     return true;
   }
   return EMAIL_NEXT_PII_RE.test(text.slice(end));
@@ -162,7 +189,7 @@ function emailEndOk(text: string, end: number): boolean {
 
 function emailShouldPeel(text: string, start: number, end: number): boolean {
   for (let tryEnd = end - 1; tryEnd > start; tryEnd -= 1) {
-    if (!/[A-Za-z]/.test(text[tryEnd]!)) {
+    if (!/\p{L}/u.test(text[tryEnd]!)) {
       break;
     }
     const cand = text.slice(start, tryEnd);
@@ -179,17 +206,61 @@ function emailShouldPeel(text: string, start: number, end: number): boolean {
   return false;
 }
 
+const EMAIL_DOMAIN_RUN_RE = /[\p{L}\p{N}.\-]*/uy;
+
+/**
+ * Leftmost ``EMAIL_RE`` match at or after ``pos``. Unicode letter classes make
+ * every word of non-Latin prose a local-part candidate, so the regex runs only
+ * on a window around each ``@``: 64 code points back (the local-part bound)
+ * and forward over the domain run plus one char for ``(?!@)``. A match for one
+ * ``@`` always starts before any match for the next (local parts exclude
+ * ``@``), so taking the ``@``s in order keeps the whole-text result.
+ */
+function findEmail(text: string, pos: number): [number, number] | null {
+  const re = cloneRegExp(EMAIL_RE);
+  let dot = -1;
+  for (let at = text.indexOf("@", pos); at !== -1; at = text.indexOf("@", at + 1)) {
+    let winStart = at;
+    for (let n = 0; n < 64 && winStart > pos; n += 1) {
+      winStart -= 1;
+      const unit = text.charCodeAt(winStart);
+      if (unit >= 0xdc00 && unit <= 0xdfff && winStart > pos) {
+        winStart -= 1;
+      }
+    }
+    EMAIL_DOMAIN_RUN_RE.lastIndex = at + 1;
+    EMAIL_DOMAIN_RUN_RE.exec(text);
+    const runEnd = EMAIL_DOMAIN_RUN_RE.lastIndex;
+    // No dot in the domain run: no TLD, so no address at this ``@``. The next
+    // dot is cached so dot-free text with many ``@`` stays linear.
+    if (dot !== Infinity && dot <= at) {
+      dot = text.indexOf(".", at + 1);
+      if (dot === -1) {
+        dot = Infinity;
+      }
+    }
+    if (dot >= runEnd) {
+      continue;
+    }
+    const winEnd = Math.min(text.length, runEnd + 1);
+    re.lastIndex = 0;
+    const m = re.exec(text.slice(winStart, winEnd));
+    if (m !== null) {
+      return [winStart + m.index, winStart + m.index + m[0].length];
+    }
+  }
+  return null;
+}
+
 function scrubEmail(text: string): { text: string; count: number } {
   let count = 0;
   const parts: string[] = [];
   let last = 0;
   let pos = 0;
-  const re = cloneRegExp(EMAIL_RE);
-  re.lastIndex = 0;
-  let match: RegExpExecArray | null;
-  while ((match = re.exec(text)) !== null) {
-    let start = match.index;
-    let end = start + match[0].length;
+  let found: [number, number] | null;
+  while ((found = findEmail(text, pos)) !== null) {
+    const start = found[0];
+    let end = found[1];
     if (!emailEndOk(text, end) || emailShouldPeel(text, start, end)) {
       let shortened: number | null = null;
       for (let tryEnd = end - 1; tryEnd > start; tryEnd -= 1) {
@@ -205,17 +276,17 @@ function scrubEmail(text: string): { text: string; count: number } {
           break;
         }
       }
-      if (shortened === null) {
-        re.lastIndex = start + 1;
-        continue;
+      // No clean shorter end (letters glued after the TLD): mask the match as
+      // found rather than leak the address.
+      if (shortened !== null) {
+        end = shortened;
       }
-      end = shortened;
     }
     parts.push(text.slice(last, start));
     parts.push("[EMAIL]");
     last = end;
+    pos = end;
     count += 1;
-    re.lastIndex = end;
   }
   if (count === 0) {
     return { text, count: 0 };
@@ -229,6 +300,11 @@ export const emailDetector: Detector = { type: "email", scrub: scrubEmail };
 // Unicode Zs separators commonly used in OCR / rich text (thin/figure/nbsp…).
 const SEP_SPACE = String.raw`[ \t\r\n\xa0\u2000-\u200a\u202f\u3000]`;
 const INVISIBLE = /[\u00ad\u200b\u200c\u200d\ufeff]/g;
+// Group separators word processors / PDFs substitute for a typed space or
+// hyphen in ids and phone numbers: nbsp, thin / narrow nbsp, unicode dashes
+// and the minus sign. Character-class fragments, shared by both.
+const GROUP_SPACES = String.raw`\xa0\u2009\u202f`;
+const GROUP_DASHES = String.raw`\u2010-\u2015\u2212`;
 
 const IBAN_RES = [
   // Allow after digits (card|IBAN glue); still reject mid-letter (xNL91…).
@@ -325,7 +401,7 @@ function scrubIban(text: string): { text: string; count: number } {
       "[IBAN]",
       undefined,
       false,
-      ibanAcceptLen,
+      (full, start, end) => start + ibanAcceptLen(full.slice(start, end)),
     );
     out = result.text;
     count += result.count;
@@ -467,6 +543,14 @@ const MAC_RES = [
   /(?<![\w.])(?:[0-9A-Fa-f]{4}\.){2}[0-9A-Fa-f]{4}(?![\w.])/g,
 ] as const;
 
+// Huawei / H3C ``aabb-ccdd-eeff``; ``macDashValid`` needs a hex letter.
+const MAC_DASH_RE = /(?<![\w.-])(?:[0-9A-Fa-f]{4}-){2}[0-9A-Fa-f]{4}(?![\w.-])/g;
+
+/** A 4-4-4 dash run of digits only is a part / order number, not a MAC. */
+function macDashValid(value: string): boolean {
+  return /[A-Fa-f]/.test(value);
+}
+
 function scrubMac(text: string): { text: string; count: number } {
   let out = text;
   let count = 0;
@@ -475,7 +559,8 @@ function scrubMac(text: string): { text: string; count: number } {
     out = result.text;
     count += result.count;
   }
-  return { text: out, count };
+  const dash = replaceMatches(out, MAC_DASH_RE, "[MAC]", macDashValid);
+  return { text: dash.text, count: count + dash.count };
 }
 
 export const macDetector: Detector = { type: "mac", scrub: scrubMac };
@@ -583,8 +668,54 @@ function locationValid(value: string): boolean {
   return lat >= -90.0 && lat <= 90.0 && lon >= -180.0 && lon <= 180.0;
 }
 
+// Degrees-minutes(-seconds) as maps, EXIF, and GPS units print them
+// (``52°22'3.4"N 4°54'14.8"E``, ``N 52° 22.057' E 4° 54.246'``). Each half
+// needs a degree sign, a minute mark, and a hemisphere letter before or after
+// (Dutch / German ``Z`` / ``O`` for south / east); prime and double-prime
+// glyphs stand in for ``'`` / ``"``.
+const DMS_BODY = String.raw`\d{1,3}\s?[°º]\s?\d{1,2}(?:[.,]\d{1,4})?\s?['′’](?:\s?\d{1,2}(?:[.,]\d{1,4})?\s?(?:["″”]|''|′′))?`;
+const LOCATION_DMS_RE = new RegExp(
+  String.raw`(?<![A-Za-z0-9_.])(?:[NSZ]\s?${DMS_BODY}|${DMS_BODY}\s?[NSZ])\s{0,3}[,;/]?\s{0,3}(?:[EOW]\s?${DMS_BODY}|${DMS_BODY}\s?[EOW])(?![A-Za-z0-9_])`,
+  "g",
+);
+
+function dmsNumbers(part: string): number[] {
+  return [...part.matchAll(/\d+(?:[.,]\d+)?/g)].map((m) =>
+    Number(m[0].replace(",", ".")),
+  );
+}
+
+/**
+ * Degrees within ±90 / ±180, minutes and seconds below 60. The two degree
+ * signs split the hit: the number before the first is the latitude degrees,
+ * the one before the second the longitude degrees.
+ */
+function locationDmsValid(value: string): boolean {
+  const parts = value.split(/[°º]/);
+  if (parts.length !== 3) {
+    return false;
+  }
+  const lat = dmsNumbers(parts[0]!);
+  const mid = dmsNumbers(parts[1]!);
+  if (lat.length === 0 || mid.length === 0) {
+    return false;
+  }
+  const latDeg = lat[lat.length - 1]!;
+  const lonDeg = mid[mid.length - 1]!;
+  const minutesSeconds = [...mid.slice(0, -1), ...dmsNumbers(parts[2]!)];
+  return latDeg <= 90 && lonDeg <= 180 && minutesSeconds.every((n) => n < 60);
+}
+
 function scrubLocation(text: string): { text: string; count: number } {
-  return replaceMatches(text, LOCATION_RE, "[LOCATION]", locationValid);
+  const dms = replaceMatches(
+    text,
+    LOCATION_DMS_RE,
+    "[LOCATION]",
+    locationDmsValid,
+    true,
+  );
+  const decimal = replaceMatches(dms.text, LOCATION_RE, "[LOCATION]", locationValid);
+  return { text: decimal.text, count: dms.count + decimal.count };
 }
 
 export const locationDetector: Detector = {
@@ -592,14 +723,23 @@ export const locationDetector: Detector = {
   scrub: scrubLocation,
 };
 
+// Group separators for national ids: word processors and PDFs turn the typed
+// space / hyphen into nbsp, thin / narrow nbsp, or a unicode dash.
+const ID_SPACE = `[ ${GROUP_SPACES}]`;
+const ID_DASH = String.raw`[\-${GROUP_DASHES}]`;
+const ID_SEPS = new RegExp(String.raw`[ .\-/${GROUP_SPACES}${GROUP_DASHES}]`, "g");
+
 // ``(?<!\d\.)``: the fractional part of a decimal (``0.12345678``) is not an id.
 const BSN_RES = [
   /(?<!\d\.)\b\d{8,9}\b/g,
-  /\b\d{3}[ .\-]\d{3}[ .\-]\d{3}\b/g,
+  new RegExp(
+    String.raw`\b\d{3}(?:${ID_SPACE}|${ID_DASH}|\.)\d{3}(?:${ID_SPACE}|${ID_DASH}|\.)\d{3}\b`,
+    "g",
+  ),
 ] as const;
 
 function bsnValid(value: string): boolean {
-  const digits = value.replace(/[ .\-]/g, "");
+  const digits = value.replace(ID_SEPS, "");
   if (digits.length < 8 || digits.length > 9 || !/^\d+$/.test(digits)) {
     return false;
   }
@@ -629,9 +769,12 @@ function scrubBsn(text: string): { text: string; count: number } {
 export const bsnDetector: Detector = { type: "bsn", scrub: scrubBsn };
 
 const SSN_RES = [
-  /\b\d{3}-\d{2}-\d{4}\b/g,
+  new RegExp(String.raw`\b\d{3}${ID_DASH}\d{2}${ID_DASH}\d{4}\b`, "g"),
   /\b\d{3}\/\d{2}\/\d{4}\b/g,
-  /\b\d{3}[ .]\d{2}[ .]\d{4}\b/g,
+  new RegExp(
+    String.raw`\b\d{3}(?:${ID_SPACE}|\.)\d{2}(?:${ID_SPACE}|\.)\d{4}\b`,
+    "g",
+  ),
   /(?<!\d\.)\b\d{9}\b/g,
 ] as const;
 
@@ -643,7 +786,7 @@ function ssnObviouslyFake(digits: string): boolean {
 }
 
 function ssnValid(value: string): boolean {
-  const digits = value.replace(/[ .\-/]/g, "");
+  const digits = value.replace(ID_SEPS, "");
   if (digits.length !== 9 || !/^\d{9}$/.test(digits)) {
     return false;
   }
@@ -675,9 +818,18 @@ function scrubSsn(text: string): { text: string; count: number } {
 
 export const ssnDetector: Detector = { type: "ssn", scrub: scrubSsn };
 
-const TAX_ID_RE = /\b\d{11}\b/g;
+// Compact, or the ``12 345 678 901`` grouping printed on Steuerbescheide and
+// payslips (single space / nbsp between groups).
+const TAX_ID_RES = [
+  /\b\d{11}\b/g,
+  new RegExp(
+    String.raw`\b\d{2}${ID_SPACE}\d{3}${ID_SPACE}\d{3}${ID_SPACE}\d{3}\b`,
+    "g",
+  ),
+] as const;
 
-function taxIdValid(digits: string): boolean {
+function taxIdValid(value: string): boolean {
+  const digits = value.replace(ID_SEPS, "");
   if (digits.length !== 11 || !/^\d{11}$/.test(digits)) {
     return false;
   }
@@ -709,7 +861,14 @@ function taxIdValid(digits: string): boolean {
 }
 
 function scrubTaxId(text: string): { text: string; count: number } {
-  return replaceMatches(text, TAX_ID_RE, "[TAX_ID]", taxIdValid);
+  let out = text;
+  let count = 0;
+  for (const pattern of TAX_ID_RES) {
+    const result = replaceMatches(out, pattern, "[TAX_ID]", taxIdValid);
+    out = result.text;
+    count += result.count;
+  }
+  return { text: out, count };
 }
 
 export const taxIdDetector: Detector = { type: "tax_id", scrub: scrubTaxId };
@@ -754,18 +913,82 @@ function digitCount(text: string): number {
   return count;
 }
 
-const PHONE_INTERNATIONAL: readonly [RegExp, (value: string) => boolean] = [
-  /(?<![\w+])(?:\+|00)\d[\d .()-]{6,16}\d/g,
-  (m) => digitCount(m) >= 8 && digitCount(m) <= 15,
-];
+// Rich text / PDFs put nbsp, thin / narrow nbsp, or a unicode dash between
+// phone groups; every phone pattern accepts them alongside the ASCII seps.
+const PHONE_SEP_EXTRA = GROUP_SPACES + GROUP_DASHES;
+
+// The span allows more than 15 digits so a ``(0)`` trunk between spaced groups
+// (``+44 (0) 20 7946 0958``) fits; ``phoneInternationalEnd`` re-measures the
+// run.
+const PHONE_INTERNATIONAL_RE = new RegExp(
+  String.raw`(?<![\w+])(?:\+|00)\d[\d .()\-${PHONE_SEP_EXTRA}]{6,20}\d`,
+  "g",
+);
+
+const PHONE_INTERNATIONAL_SEP_RE = new RegExp(String.raw`[ .()\-${PHONE_SEP_EXTRA}]`);
+
+function isAsciiDigit(ch: string | undefined): boolean {
+  return ch !== undefined && ch >= "0" && ch <= "9";
+}
+
+/**
+ * End of the run of digit groups starting at ``start`` (``start`` rejects).
+ *
+ * The run is rescanned from ``start`` (64 chars of groups and separators,
+ * whole groups only) so a group the regex span cut in half never counts. It
+ * needs 8+ digits, not counting a ``00`` prefix or a ``(0)`` trunk. Past 15
+ * digits it holds more than one number (``… 1234567 (06) 12345678``,
+ * ``… 0958 - 020 7946 …``); no split point is reliable, and any tail left out
+ * could be a subscriber part, so the whole run is masked. Digits are ASCII,
+ * as JS ``\d`` is.
+ */
+function phoneInternationalEnd(text: string, start: number): number {
+  const isSep = (k: number) =>
+    k < text.length && PHONE_INTERNATIONAL_SEP_RE.test(text[k]!);
+  let end = start;
+  let digits = 0;
+  let i = text.startsWith("00", start) ? start + 2 : text[start] === "+" ? start + 1 : start;
+  const limit = Math.min(text.length, start + 64);
+  while (i < limit) {
+    if (isSep(i)) {
+      i += 1;
+      continue;
+    }
+    if (!isAsciiDigit(text[i])) {
+      break;
+    }
+    if (text[i - 1] === "(" && text.startsWith("0)", i)) {
+      i += 1;
+      continue;
+    }
+    const run = i;
+    while (i < limit && isAsciiDigit(text[i])) {
+      i += 1;
+    }
+    if (isAsciiDigit(text[i])) {
+      break; // the group runs past the window
+    }
+    digits += i - run;
+    end = i;
+  }
+  return digits >= 8 ? end : start;
+}
 
 const PHONE_NL_NATIONAL: readonly [RegExp, (value: string) => boolean] = [
-  /(?<![\w+])\(?0\d\)?(?:[ .\-/()]?\d){8}(?!\d)(?![A-Fa-f]{2})/g,
+  new RegExp(
+    String.raw`(?<![\w+])\(?0\d\)?(?:[ .\-/()${PHONE_SEP_EXTRA}]?\d){8}(?!\d)(?![A-Fa-f]{2})`,
+    "g",
+  ),
   (m) => digitCount(m) === 10,
 ];
 
+const NANP_SEP = String.raw`[ .\-${PHONE_SEP_EXTRA}]`;
+
 const PHONE_EN_NANP: readonly [RegExp, (value: string) => boolean] = [
-  /(?<![\w+])(?:1[ .-]?)?\(?\d{3}\)?[ .-]?\d{3}[ .-]\d{4}(?!\d)/g,
+  new RegExp(
+    String.raw`(?<![\w+])(?:1${NANP_SEP}?)?\(?\d{3}\)?${NANP_SEP}?\d{3}${NANP_SEP}\d{4}(?!\d)`,
+    "g",
+  ),
   (m) => {
     const digits = digitCount(m);
     return (
@@ -775,7 +998,10 @@ const PHONE_EN_NANP: readonly [RegExp, (value: string) => boolean] = [
 ];
 
 const PHONE_DE_NATIONAL: readonly [RegExp, (value: string) => boolean] = [
-  /(?<![\w+])\(?0\d\)?(?:[ .\-/()]?\d){8,10}(?!\d)(?![A-Fa-f]{2})/g,
+  new RegExp(
+    String.raw`(?<![\w+])\(?0\d\)?(?:[ .\-/()${PHONE_SEP_EXTRA}]?\d){8,10}(?!\d)(?![A-Fa-f]{2})`,
+    "g",
+  ),
   (m) => {
     const digits = digitCount(m);
     if (digits < 10 || digits > 12) {
@@ -818,7 +1044,19 @@ function makePhoneDetector(
   };
 }
 
-export const phoneInternationalDetector = makePhoneDetector([PHONE_INTERNATIONAL]);
+export const phoneInternationalDetector: Detector = {
+  type: "phone",
+  scrub(text: string): { text: string; count: number } {
+    return replaceMatches(
+      text,
+      PHONE_INTERNATIONAL_RE,
+      "[PHONE]",
+      undefined,
+      true,
+      (full, start) => phoneInternationalEnd(full, start),
+    );
+  },
+};
 export const phoneNlDetector = makePhoneDetector([PHONE_NL_NATIONAL]);
 export const phoneEnDetector = makePhoneDetector([PHONE_EN_NANP]);
 export const phoneDeDetector = makePhoneDetector([PHONE_DE_NATIONAL]);

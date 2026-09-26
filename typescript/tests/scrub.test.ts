@@ -270,6 +270,176 @@ describe("scrubText", () => {
     expect(result.counts.passport).toBe(1);
   });
 
+  it("masks BSN and SSN groups split by nbsp or unicode dashes", () => {
+    for (const text of ["111\xa0222\xa0333", "111\u202f222\u202f333", "111\u2013222\u2013333"]) {
+      const result = scrubText(`BSN ${text}`, { languages: ["nl"] });
+      expect(result.text).toBe("BSN [BSN]");
+    }
+    for (const text of [
+      "219\u201309\u20139999",
+      "219\u201109\u20119999",
+      "219\u221209\u22129999",
+      "219\xa009\xa09999",
+      "219\u200909\u20099999",
+    ]) {
+      const result = scrubText(`SSN ${text}`, { languages: ["en"] });
+      expect(result.text).toBe("SSN [SSN]");
+    }
+    expect(
+      scrubText("pages 219\u201309 9999", { languages: ["en"] }).counts.ssn,
+    ).toBe(0);
+  });
+
+  it("masks grouped German tax ids ahead of a BSN-shaped tail", () => {
+    for (const text of ["86 095 742 719", "86\xa0095\xa0742\xa0719"]) {
+      const result = scrubText(`IdNr ${text}`, { languages: ["de"] });
+      expect(result.text).toBe("IdNr [TAX_ID]");
+    }
+    const both = scrubText("IdNr 57 482 956 513", { languages: ["nl", "de"] });
+    expect(both.text).toBe("IdNr [TAX_ID]");
+    expect(both.counts.bsn).toBe(0);
+    expect(scrubText("IdNr 86 095 742 718", { languages: ["de"] }).text).toBe(
+      "IdNr 86 095 742 718",
+    );
+  });
+
+  it("masks phones with unicode separators or a (0) trunk whole", () => {
+    const cases: [string, string[]][] = [
+      ["+31\xa06\xa012345678", ["nl"]],
+      ["+31 6 1234\u20115678", ["nl"]],
+      ["+31\u20136\u201312345678", ["nl"]],
+      ["06\xa012345678", ["nl"]],
+      ["020\u2013123\xa04567", ["nl"]],
+      ["(555) 123\u20134567", ["en"]],
+      ["555\u2009123\u20094567", ["en"]],
+      ["030\xa012345678", ["de"]],
+      ["+44 (0) 20 7946 0958", ["en"]],
+      ["+49 (0) 30 1234 5678", ["de"]],
+    ];
+    for (const [text, languages] of cases) {
+      const result = scrubText(`tel ${text}`, { languages });
+      expect(result.text).toBe("tel [PHONE]");
+      expect(result.counts.phone).toBe(1);
+    }
+    expect(
+      scrubText("Tel +49 (0) 30 - 1234 - 5678901 x", { languages: ["de"] }).text,
+    ).toBe("Tel [PHONE] x");
+    expect(scrubText("tel +31 20\u22121234567", { languages: ["nl"] }).text).toBe(
+      "tel [PHONE]",
+    );
+    expect(scrubText("See (+33 1 35 39 12 00) x", { languages: ["en"] }).text).toBe(
+      "See ([PHONE]) x",
+    );
+    expect(scrubText("call 0049 33204 1234567 now", { languages: ["de"] }).text).toBe(
+      "call [PHONE] now",
+    );
+    // Past 15 digits a run holds more than one number: masked whole.
+    for (const text of [
+      "Tel +31 (20) 123 4567 (06) 12345678 x",
+      "Tel +31 20 1234567 0031 6 12345678 x",
+      "Tel +31 20 1234567 020 7654321 x",
+      "Tel +31 6 12345678 06-12345678 x",
+      "Tel +31-20-1234567-0031-6-12345678 x",
+      "Tel 0031 20 1234567 0031 20 7654321 x",
+      "Tel +44 20 7946 0958 - 2024 x",
+      "Tel +44 20 7946 0958 12345 67890 x",
+      "Tel +32 2 123 45 67 02 765 43 21 x",
+      "Tel +44 (0) 20 - 7946 - 0958 - 020 - 7946 - 0959 x",
+    ]) {
+      expect(scrubText(text, { languages: ["en", "nl"] }).text).toBe("Tel [PHONE] x");
+    }
+  });
+
+  it("masks degrees-minutes-seconds coordinate pairs", () => {
+    for (const value of [
+      `52°22'3.4"N 4°54'14.8"E`,
+      "52° 22′ 03″ N, 4° 54′ 14″ E",
+      `33°52'4"S 151°12'26"W`,
+      "N 52° 22.057' E 004° 54.246'",
+      "N 52° 22.057', E 4° 54.246'",
+      "52°22,5'N 4°54,2'O",
+      "52º22'3''N 4º54'14''E",
+    ]) {
+      const result = scrubText(`at ${value} today`);
+      expect(result.text).toBe("at [LOCATION] today");
+      expect(result.counts.location).toBe(1);
+    }
+    for (const text of [
+      `lat 52°22'3"N only`,
+      `95°22'3"N 4°54'14"E`,
+      `52°72'3"N 4°54'14"E`,
+      "angle 45° 30' and 12° 5'",
+      "12°C at 5' N",
+    ]) {
+      expect(scrubText(text).text).toBe(text);
+    }
+  });
+
+  it("masks internationalized email addresses", () => {
+    for (const value of [
+      "josé@example.com",
+      "ada@münchen.de",
+      "ада@пример.рф",
+      "zoë.müller@bücher.example.de",
+    ]) {
+      const result = scrubText(`mail ${value} ok`);
+      expect(result.text).toBe("mail [EMAIL] ok");
+      expect(result.counts.email).toBe(1);
+    }
+    expect(scrubText("ada@münchen.deNL91ABNA0417164300").text).toBe(
+      "[EMAIL][IBAN]",
+    );
+    expect(scrubText("x@y.c0m").text).toBe("x@y.c0m");
+    // Letters glued after the TLD: masked as found instead of dropped.
+    for (const glue of ["a".repeat(30), "\ua188".repeat(30), "\ua98f".repeat(30)]) {
+      const text = scrubText(`mail ada@example.com${glue}`).text;
+      expect(text.startsWith("mail [EMAIL]")).toBe(true);
+      expect(text).not.toContain("@");
+    }
+    for (const [text, expected] of [
+      [
+        "\u8bf7\u53d1\u9001\u81f3ada@example.com\u4ee5\u4fbf\u56de\u590d",
+        "[EMAIL]\u4ee5\u4fbf\u56de\u590d",
+      ],
+      ["mail ada@example.com\u4eca\u65e5", "mail [EMAIL]\u4eca\u65e5"],
+      ["mail ada@example.com" + "\u314b".repeat(30), "mail [EMAIL]" + "\u314b".repeat(30)],
+      ["mail ada@example.com\u{20000}", "mail [EMAIL]\u{20000}"],
+      ["mail \u7530\u4e2d@example.jp ok", "mail [EMAIL] ok"],
+      ["mail \u7530\u4e2d.\u592a\u90ce@example.jp ok", "mail [EMAIL] ok"],
+      ["mail \u7530\u4e2d123@example.jp ok", "mail [EMAIL] ok"],
+      ["mail \u7530\u4e2d.taro@example.jp ok", "mail [EMAIL] ok"],
+      ["mail taro\u7530\u4e2d@example.jp ok", "mail [EMAIL] ok"],
+      ["mail \uae40\ucca0\uc218@example.kr ok", "mail [EMAIL] ok"],
+      ["mail \u5f20\u4f1f@\u516c\u53f8.\u4e2d\u56fd ok", "mail [EMAIL] ok"],
+      ["mail ada@example.\u0e44\u0e17\u0e22 ok", "mail [EMAIL] ok"],
+      [
+        "\u0e2d\u0e35\u0e40\u0e21\u0e25ada@example.com\u0e04\u0e23\u0e31\u0e1a",
+        "\u0e2d\u0e35[EMAIL]\u0e04\u0e23\u0e31\u0e1a",
+      ],
+    ]) {
+      const result = scrubText(text!);
+      expect(result.text).toBe(expected);
+      expect(result.counts.email).toBe(1);
+    }
+  });
+
+  it("masks Huawei/H3C dash-grouped MACs but not digit-only part numbers", () => {
+    for (const value of ["00e0-fc12-3456", "AABB-CCDD-EEFF", "5489-98ab-cdef"]) {
+      const result = scrubText(`mac ${value} up`);
+      expect(result.text).toBe("mac [MAC] up");
+      expect(result.counts.mac).toBe(1);
+    }
+    expect(scrubText("mac 00E0-fc12-3456 up").text).toBe("mac [MAC] up");
+    expect(scrubText("mac:ж00e0-fc12-3456").text).toBe("mac:ж[MAC]");
+    for (const text of [
+      "part 1234-5678-9012 shipped",
+      "id 4d95a28a-0833-4533-82c1-de09362e46d1",
+      "ref aabb-ccdd-eeff-0011",
+    ]) {
+      expect(scrubText(text).counts.mac).toBe(0);
+    }
+  });
+
   it("rejects unknown language", () => {
     expect(() => scrubText("hi", { languages: ["fr"] })).toThrow(
       /unknown language/,

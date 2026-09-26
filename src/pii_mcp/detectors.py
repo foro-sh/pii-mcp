@@ -7,6 +7,9 @@ numeric detectors run.
 Patterns:
 - Email uses bounded quantifiers (unbounded local-part ``+`` is ReDoS-prone)
   and ``(?!@)`` so glued addresses (``a@b.comc@d.com``) backtrack to two hits.
+  Local part, domain labels, and TLD accept Unicode letters (EAI / IDN); a
+  TLD in a script written without spaces (CJK, Thai, …) may not mix with
+  other scripts, so glued prose after the address is not taken into it.
   When a TLD absorbs a following IBAN/card/IP/MAC/location
   (``ada@example.comNL91…`` / ``…com192.0.2.1`` / ``…comaa:bb:…``), the match
   is shortened so both hits still redact.
@@ -24,9 +27,10 @@ Patterns:
   ``64:ff9b::a.b.c.d``) is matched whole before bare IPv4, so bare IPv4 may
   follow a label colon (``host:10.0.0.1``); leading zeros in octets are
   accepted (``192.168.001.001``).
-- MAC: colon/dash IEEE, dotted IEEE (``aa.bb.cc.dd.ee.ff``), and Cisco
-  dotted forms (AP: device MAC is personal data). A label colon
-  (``mac:aa:bb:…``) is allowed; a preceding hex group is not.
+- MAC: colon/dash IEEE, dotted IEEE (``aa.bb.cc.dd.ee.ff``), Cisco dotted,
+  and Huawei/H3C ``aabb-ccdd-eeff`` (with a hex letter) forms (AP: device MAC
+  is personal data). A label colon (``mac:aa:bb:…``) is allowed; a preceding
+  hex group is not.
 - IMEI: hyphen/space/slash/dot-grouped 15-digit forms with Luhn (AP: gegevens
   over elektronische communicatie / device identifiers). Compact 15-digit
   IMEIs that are also Luhn-valid collide with Amex and stay under ``credit_card``.
@@ -35,10 +39,13 @@ Patterns:
 - Location: decimal lat/lon pairs with ≥3 fractional digits, optional
   ``N``/``S``/``E``/``W`` hemisphere letters, and range checks (AP lists
   locatiegegevens as privacy-sensitive). Pairs with both |values| <= 1 are
-  rejected (open ocean; embedding / weight vectors).
+  rejected (open ocean; embedding / weight vectors). Degrees-minutes(-seconds)
+  pairs need a degree sign, minute mark, and hemisphere letter per half.
 - US SSN: hyphen/space/dot/slash or compact 9-digit with SSA area/group/serial
-  rejects, plus obvious fakes (all-same digit, 123456789 / 987654321).
-- German Steuer-IdNr (tax_id): 11 digits with structure + mod-11/10 check.
+  rejects, plus obvious fakes (all-same digit, 123456789 / 987654321). Grouped
+  SSN / BSN forms also accept nbsp, thin / narrow nbsp, and unicode dashes.
+- German Steuer-IdNr (tax_id): 11 digits, compact or grouped ``12 345 678 901``,
+  with structure + mod-11/10 check.
 - NL BTW-id (``vat_id``): ``NL`` + 9 digits + ``B`` + 2 digits with optional
   spaces/dots (format only — post-2020 sole-trader ids are not elfproef-gated).
 - NL passport / ID-card number (``passport``): 9-char RvIG document number
@@ -49,10 +56,13 @@ Patterns:
   street-address NER.
 - NL kenteken (``license_plate``): hyphenated RDW sidecodes 1–14 (case-
   insensitive), with SA/SD/SS letter-pair rejects.
-- Phone packs: international first (any active pack, before national IDs), NL
+- Phone packs: international first (any active pack, before national IDs; a
+  ``(0)`` trunk may sit between groups, and a run of groups past 15 digits is
+  masked whole since it holds more than one number), NL
   national (allows ``/`` and parentheses; rejects hex-digest glue), NANP, DE
   national (DE excludes exact Dutch ``06…`` 10-digit mobiles and separator-free
-  12-digit UPC collisions; same hex-glue guard).
+  12-digit UPC collisions; same hex-glue guard). All phone forms also accept
+  nbsp, thin / narrow nbsp, and unicode dashes between groups.
 - BSN spaced/dotted/hyphenated ``111-222-333`` groups.
 
 ``UNIVERSAL_DETECTORS`` (email, IBAN, credit card, BIC, MAC, IMEI, IP, location)
@@ -100,7 +110,7 @@ def _replace_matches(
     is_valid: Callable[[str], bool] | None = None,
     context_ok: Callable[[str, int, int], bool] | None = None,
     retry: bool = False,
-    accept_len: Callable[[str], int] | None = None,
+    accept_end: Callable[[str, int, int], int] | None = None,
 ) -> tuple[str, int]:
     """Replace accepted matches.
 
@@ -108,17 +118,18 @@ def _replace_matches(
     an overlapping bogus candidate (``2024 4111 1111 1111`` failing Luhn) does
     not swallow the real hit that starts inside it.
 
-    ``accept_len`` returns how much of a match to replace (0 rejects), so a
-    grouped hit that swallowed a trailing word can be cut back to the prefix
-    that validates.
+    ``accept_end`` gets ``(text, start, end)`` and returns where the
+    replacement ends (``start`` rejects), so a grouped hit that swallowed a
+    trailing word can be cut back to the prefix that validates, or a hit can
+    be re-measured against the surrounding text.
     """
     count = 0
     parts: list[str] = []
     last = pos = 0
     while (match := pattern.search(text, pos)) is not None:
         start, end = match.span()
-        if accept_len is not None:
-            end = start + accept_len(match.group(0))
+        if accept_end is not None:
+            end = accept_end(text, start, end)
         if end == start or (is_valid is not None and not is_valid(match.group(0))) or (
             context_ok is not None and not context_ok(text, start, end)
         ):
@@ -134,9 +145,30 @@ def _replace_matches(
     return "".join(parts), count
 
 
+# Letters and digits are Unicode (``[^\W_]``): EAI / IDN addresses such as
+# ``josé@example.com``, ``ada@münchen.de`` or ``田中@example.jp`` are as
+# personal as ASCII ones. Scripts written without spaces (Thai, Lao, Tibetan,
+# Myanmar, Khmer, kana, Bopomofo, CJK, Hangul, fullwidth forms) glue prose
+# straight onto an address (``请发送至ada@example.com以便``), so a TLD is
+# either all such script or free of it, and one such letter after the TLD ends
+# the address. The local part may mix scripts (``田中123@``): glued prose
+# before it is over-masked rather than a name part leaked.
+_UNSPACED_SCRIPTS = (
+    "\u0e00-\u0eff\u0f00-\u0fff\u1000-\u109f\u1100-\u11ff"
+    "\u1780-\u17ff\u3000-\u31ff\u3400-\u4dbf\u4e00-\u9fff"
+    "\ua960-\ua97f\uac00-\ud7ff\uf900-\ufaff\uff00-\uffef"
+    "\U00020000-\U0003ffff"
+)
+_UNSPACED_CHAR_RE = re.compile(f"[{_UNSPACED_SCRIPTS}]")
+_EMAIL_ALNUM = r"[^\W_]"
+_EMAIL_LOCAL = r"[\w.%+-]{1,64}"
+_EMAIL_TLD = (
+    rf"(?:(?:(?![{_UNSPACED_SCRIPTS}])[^\W\d_]){{2,24}}"
+    rf"|(?:(?=[{_UNSPACED_SCRIPTS}])[^\W\d_]){{2,24}})"
+)
 EMAIL_RE = re.compile(
-    r"[A-Za-z0-9._%+-]{1,64}@[A-Za-z0-9-]{1,63}"
-    r"(?:\.[A-Za-z0-9-]{1,63})*\.[A-Za-z]{2,24}(?!@)"
+    rf"{_EMAIL_LOCAL}@(?:{_EMAIL_ALNUM}|-){{1,63}}"
+    rf"(?:\.(?:{_EMAIL_ALNUM}|-){{1,63}})*\.{_EMAIL_TLD}(?!@)"
 )
 
 # After a shortened email, remainder may start a new structured hit.
@@ -151,7 +183,7 @@ _EMAIL_NEXT_PII_RE = re.compile(
     r"|\d{1,3}\.\d{3,8}"  # location lat
     r"|[0-9A-Fa-f]{2}([-:/.])[0-9A-Fa-f]{2}"  # MAC
     r"|(?:[0-9A-Fa-f]{3,4}:|::)"  # IPv6 (3–4 digit hextet or compressed)
-    r"|[A-Za-z0-9._%+-]{1,64}@"  # another email
+    rf"|{_EMAIL_LOCAL}@"  # another email
     r"|[+0]\d"  # phone-ish
     r")"
 )
@@ -163,7 +195,7 @@ def _email_end_ok(text: str, end: int) -> bool:
     ch = text[end]
     if ch == "@":
         return False
-    if not ch.isalnum():
+    if not ch.isalnum() or _UNSPACED_CHAR_RE.match(ch):
         return True
     return _EMAIL_NEXT_PII_RE.match(text, end) is not None
 
@@ -181,6 +213,30 @@ def _email_should_peel(text: str, start: int, end: int) -> bool:
     return False
 
 
+_EMAIL_DOMAIN_RUN_RE = re.compile(r"[\w.-]*")
+
+
+def _find_email(text: str, pos: int) -> re.Match[str] | None:
+    """Leftmost ``EMAIL_RE`` match at or after ``pos``.
+
+    Unicode letter classes make every word of long prose a local-part
+    candidate, so the regex runs only on a window around each ``@``: 64
+    chars back (the local-part bound) and forward over the domain run plus
+    one char for ``(?!@)``. A match for one ``@`` always starts before any
+    match for the next (local parts exclude ``@``), so taking the ``@``s in
+    order keeps the whole-text result."""
+    at = text.find("@", pos)
+    while at != -1:
+        run_end = _EMAIL_DOMAIN_RUN_RE.match(text, at + 1).end()
+        # No dot in the domain run: no TLD, so no address at this ``@``.
+        if text.find(".", at + 1, run_end) != -1:
+            match = EMAIL_RE.search(text, max(pos, at - 64), min(len(text), run_end + 1))
+            if match is not None:
+                return match
+        at = text.find("@", at + 1)
+    return None
+
+
 def _scrub_email(text: str) -> tuple[str, int]:
     """Mask emails; shorten when the TLD absorbed a following structured hit."""
     count = 0
@@ -188,7 +244,7 @@ def _scrub_email(text: str) -> tuple[str, int]:
     last = 0
     pos = 0
     while True:
-        match = EMAIL_RE.search(text, pos)
+        match = _find_email(text, pos)
         if match is None:
             break
         start, end = match.start(), match.end()
@@ -201,10 +257,10 @@ def _scrub_email(text: str) -> tuple[str, int]:
                 if _email_end_ok(text, try_end):
                     shortened = try_end
                     break
-            if shortened is None:
-                pos = start + 1
-                continue
-            end = shortened
+            # No clean shorter end (letters glued after the TLD): mask the
+            # match as found rather than leak the address.
+            if shortened is not None:
+                end = shortened
         parts.append(text[last:start])
         parts.append("[EMAIL]")
         last = end
@@ -222,6 +278,12 @@ email_detector = Detector(type="email", scrub=_scrub_email)
 _SEP_SPACE = r"[ \t\r\n\xa0\u2000-\u200a\u202f\u3000]"
 # Soft hyphen + zero-width chars that OCR/copy-paste insert between groups.
 _INVISIBLE = "\u00ad\u200b\u200c\u200d\ufeff"
+# Group separators word processors / PDFs substitute for a typed space or
+# hyphen in ids and phone numbers: nbsp, thin / narrow nbsp, unicode dashes
+# and the minus sign. Character-class fragments, shared by both.
+# The chars double as regex class fragments (none is special in a class).
+_GROUP_SPACES = "\xa0\u2009\u202f"
+_GROUP_DASHES = "".join(map(chr, range(0x2010, 0x2016))) + "\u2212"
 
 IBAN_RES: tuple[re.Pattern[str], ...] = (
     # Allow after digits (card|IBAN glue); still reject mid-letter (xNL91…).
@@ -295,7 +357,12 @@ def _scrub_iban(text: str) -> tuple[str, int]:
         out = out.replace(ch, "")
     count = 0
     for pattern in IBAN_RES:
-        out, n = _replace_matches(out, pattern, "[IBAN]", accept_len=_iban_accept_len)
+        out, n = _replace_matches(
+            out,
+            pattern,
+            "[IBAN]",
+            accept_end=lambda t, s, e: s + _iban_accept_len(t[s:e]),
+        )
         count += n
     return out, count
 
@@ -425,6 +492,11 @@ MAC_RES: tuple[re.Pattern[str], ...] = (
     re.compile(
         r"(?<![\w.])(?:[0-9A-Fa-f]{4}\.){2}[0-9A-Fa-f]{4}(?![\w.])"
     ),
+    # Huawei / H3C ``aabb-ccdd-eeff``; ``_mac_dash_valid`` needs a hex letter.
+    # ASCII word boundaries, as in the Rust / JS backends.
+    re.compile(
+        r"(?<![A-Za-z0-9_.-])(?:[0-9A-Fa-f]{4}-){2}[0-9A-Fa-f]{4}(?![A-Za-z0-9_.-])"
+    ),
 )
 
 
@@ -446,12 +518,18 @@ def _colon_label_ok(text: str, start: int, _end: int) -> bool:
     return re.fullmatch(r"[0-9A-Fa-f]{0,4}", text[j : start - 1]) is None
 
 
+def _mac_dash_valid(value: str) -> bool:
+    """A 4-4-4 dash run of digits only is a part / order number, not a MAC."""
+    return any(ch in "abcdefABCDEF" for ch in value)
+
+
 def _scrub_mac(text: str) -> tuple[str, int]:
     out, count = _replace_matches(text, MAC_RES[0], "[MAC]", context_ok=_colon_label_ok)
-    for pattern in MAC_RES[1:]:
+    for pattern in MAC_RES[1:3]:
         out, n = _replace_matches(out, pattern, "[MAC]")
         count += n
-    return out, count
+    out, n = _replace_matches(out, MAC_RES[3], "[MAC]", _mac_dash_valid)
+    return out, count + n
 
 
 mac_detector = Detector(type="mac", scrub=_scrub_mac)
@@ -584,21 +662,77 @@ def _location_valid(value: str) -> bool:
     return -90.0 <= lat <= 90.0 and -180.0 <= lon <= 180.0
 
 
+# Degrees-minutes(-seconds) as maps, EXIF, and GPS units print them
+# (``52°22'3.4"N 4°54'14.8"E``, ``N 52° 22.057' E 4° 54.246'``). Each half
+# needs a degree sign, a minute mark, and a hemisphere letter before or after
+# (Dutch / German ``Z`` / ``O`` for south / east); prime and double-prime
+# glyphs stand in for ``'`` / ``"``.
+_DMS_BODY = (
+    r"\d{1,3}\s?[°º]\s?\d{1,2}(?:[.,]\d{1,4})?\s?['′’]"
+    r"(?:\s?\d{1,2}(?:[.,]\d{1,4})?\s?(?:[\"″”]|''|′′))?"
+)
+LOCATION_DMS_RE = re.compile(
+    rf"(?<![A-Za-z0-9_.])(?:[NSZ]\s?{_DMS_BODY}|{_DMS_BODY}\s?[NSZ])"
+    rf"\s{{0,3}}[,;/]?\s{{0,3}}"
+    rf"(?:[EOW]\s?{_DMS_BODY}|{_DMS_BODY}\s?[EOW])(?![A-Za-z0-9_])"
+)
+_DMS_NUMBER_RE = re.compile(r"\d+(?:[.,]\d+)?")
+
+
+def _location_dms_valid(value: str) -> bool:
+    """Degrees within ±90 / ±180, minutes and seconds below 60. The two degree
+    signs split the hit: the number before the first is the latitude degrees,
+    the one before the second the longitude degrees."""
+    parts = re.split(r"[°º]", value)
+    if len(parts) != 3:
+        return False
+    nums = [
+        [float(n.replace(",", ".")) for n in _DMS_NUMBER_RE.findall(part)]
+        for part in parts
+    ]
+    if not nums[0] or not nums[1]:
+        return False
+    lat_deg, lon_deg = nums[0][-1], nums[1][-1]
+    minutes_seconds = nums[1][:-1] + nums[2]
+    return lat_deg <= 90 and lon_deg <= 180 and all(n < 60 for n in minutes_seconds)
+
+
 def _scrub_location(text: str) -> tuple[str, int]:
-    return _replace_matches(text, LOCATION_RE, "[LOCATION]", _location_valid)
+    out, count = _replace_matches(
+        text, LOCATION_DMS_RE, "[LOCATION]", _location_dms_valid, retry=True
+    )
+    out, n = _replace_matches(out, LOCATION_RE, "[LOCATION]", _location_valid)
+    return out, count + n
 
 
 location_detector = Detector(type="location", scrub=_scrub_location)
 
+# Group separators for national ids: word processors and PDFs turn the
+# typed space / hyphen into nbsp, thin / narrow nbsp, or a unicode dash.
+_ID_SPACE = f"[ {_GROUP_SPACES}]"
+_ID_DASH = f"[\\-{_GROUP_DASHES}]"
+# Everything the id patterns accept between groups, including the dash range.
+_ID_SEP_TABLE = str.maketrans(
+    "", "", " ./-" + _GROUP_SPACES + _GROUP_DASHES
+)
+
+
+def _strip_id_seps(value: str) -> str:
+    """Drop the group separators national-id patterns accept, keeping digits."""
+    return value.translate(_ID_SEP_TABLE)
+
+
 # ``(?<!\d\.)``: the fractional part of a decimal (``0.12345678``) is not an id.
 BSN_RES: tuple[re.Pattern[str], ...] = (
     re.compile(r"(?<!\d\.)\b\d{8,9}\b"),
-    re.compile(r"\b\d{3}[ .\-]\d{3}[ .\-]\d{3}\b"),
+    re.compile(
+        rf"\b\d{{3}}(?:{_ID_SPACE}|{_ID_DASH}|\.)\d{{3}}(?:{_ID_SPACE}|{_ID_DASH}|\.)\d{{3}}\b"
+    ),
 )
 
 
 def _bsn_valid(value: str) -> bool:
-    digits = re.sub(r"[ .\-]", "", value)
+    digits = _strip_id_seps(value)
     if len(digits) < 8 or len(digits) > 9 or not digits.isdigit():
         return False
     padded = digits.zfill(9)
@@ -621,9 +755,9 @@ def _scrub_bsn(text: str) -> tuple[str, int]:
 bsn_detector = Detector(type="bsn", scrub=_scrub_bsn)
 
 SSN_RES: tuple[re.Pattern[str], ...] = (
-    re.compile(r"\b\d{3}-\d{2}-\d{4}\b"),
+    re.compile(rf"\b\d{{3}}{_ID_DASH}\d{{2}}{_ID_DASH}\d{{4}}\b"),
     re.compile(r"\b\d{3}/\d{2}/\d{4}\b"),
-    re.compile(r"\b\d{3}[ .]\d{2}[ .]\d{4}\b"),
+    re.compile(rf"\b\d{{3}}(?:{_ID_SPACE}|\.)\d{{2}}(?:{_ID_SPACE}|\.)\d{{4}}\b"),
     re.compile(r"(?<!\d\.)\b\d{9}\b"),
 )
 
@@ -639,7 +773,7 @@ def _ssn_obviously_fake(digits: str) -> bool:
 
 def _ssn_valid(value: str) -> bool:
     """SSA rejects: area 000/666/9xx, group 00, serial 0000; drop obvious fakes."""
-    digits = re.sub(r"[ .\-/]", "", value)
+    digits = _strip_id_seps(value)
     if len(digits) != 9 or not digits.isdigit():
         return False
     if _ssn_obviously_fake(digits):
@@ -665,11 +799,17 @@ def _scrub_ssn(text: str) -> tuple[str, int]:
 
 ssn_detector = Detector(type="ssn", scrub=_scrub_ssn)
 
-TAX_ID_RE = re.compile(r"\b\d{11}\b")
+# Compact, or the ``12 345 678 901`` grouping printed on Steuerbescheide and
+# payslips (single space / nbsp between groups).
+TAX_ID_RES: tuple[re.Pattern[str], ...] = (
+    re.compile(r"\b\d{11}\b"),
+    re.compile(rf"\b\d{{2}}{_ID_SPACE}\d{{3}}{_ID_SPACE}\d{{3}}{_ID_SPACE}\d{{3}}\b"),
+)
 
 
-def _tax_id_valid(digits: str) -> bool:
+def _tax_id_valid(value: str) -> bool:
     """German IdNr: no leading zero; one digit repeats 2–3× in body; check digit."""
+    digits = _strip_id_seps(value)
     if len(digits) != 11 or not digits.isdigit():
         return False
     if digits[0] == "0":
@@ -694,7 +834,12 @@ def _tax_id_valid(digits: str) -> bool:
 
 
 def _scrub_tax_id(text: str) -> tuple[str, int]:
-    return _replace_matches(text, TAX_ID_RE, "[TAX_ID]", _tax_id_valid)
+    out = text
+    count = 0
+    for pattern in TAX_ID_RES:
+        out, n = _replace_matches(out, pattern, "[TAX_ID]", _tax_id_valid)
+        count += n
+    return out, count
 
 
 tax_id_detector = Detector(type="tax_id", scrub=_scrub_tax_id)
@@ -735,23 +880,75 @@ def _digit_count(text: str) -> int:
     return sum(1 for ch in text if ch.isdigit())
 
 
-PHONE_INTERNATIONAL = (
-    re.compile(r"(?<![\w+])(?:\+|00)\d[\d .()-]{6,16}\d"),
-    lambda m: 8 <= _digit_count(m) <= 15,
+# Rich text / PDFs put nbsp, thin / narrow nbsp, or a unicode dash between
+# phone groups; every phone pattern accepts them alongside the ASCII seps.
+_PHONE_SEP_EXTRA = _GROUP_SPACES + _GROUP_DASHES
+
+# The span allows more than 15 digits so a ``(0)`` trunk between spaced groups
+# (``+44 (0) 20 7946 0958``) fits; ``_phone_international_end`` re-measures
+# the run.
+PHONE_INTERNATIONAL_RE = re.compile(
+    rf"(?<![\w+])(?:\+|00)\d[\d .()\-{_PHONE_SEP_EXTRA}]{{6,20}}\d"
 )
+
+
+_PHONE_INTERNATIONAL_SEPS = frozenset(" .()-" + _GROUP_SPACES + _GROUP_DASHES)
+
+
+def _phone_international_end(text: str, start: int, _end: int) -> int:
+    """End of the run of digit groups starting at ``start`` (``start``
+    rejects).
+
+    The run is rescanned from ``start`` (64 chars of groups and separators,
+    whole groups only) so a group the regex span cut in half never counts. It
+    needs 8+ digits, not counting a ``00`` prefix or a ``(0)`` trunk. Past 15
+    digits it holds more than one number (``… 1234567 (06) 12345678``,
+    ``… 0958 - 020 7946 …``); no split point is reliable, and any tail left
+    out could be a subscriber part, so the whole run is masked.
+    """
+    end = start
+    digits = 0
+    if text.startswith("00", start):
+        i = start + 2
+    else:
+        i = start + 1 if text[start] == "+" else start
+    limit = min(len(text), start + 64)
+    while i < limit:
+        ch = text[i]
+        if ch in _PHONE_INTERNATIONAL_SEPS:
+            i += 1
+            continue
+        if not ch.isdecimal():
+            break
+        if text[i - 1] == "(" and text.startswith("0)", i):
+            i += 1
+            continue
+        run = i
+        while i < limit and text[i].isdecimal():
+            i += 1
+        if i < len(text) and text[i].isdecimal():
+            break  # the group runs past the window
+        digits += i - run
+        end = i
+    return end if digits >= 8 else start
+
 
 # Trailing (?!\d)(?![A-Fa-f]{2}) blocks longer digit runs and hex digest glue
 # (e.g. sha256:0123456789abcdef) without rejecting ``0612345678 ASAP``.
 # Optional wrapping parens cover ``(06)12345678``; seps stay single-char so
 # ``0132 / 415-…`` is not glued into one national hit.
 PHONE_NL_NATIONAL = (
-    re.compile(r"(?<![\w+])\(?0\d\)?(?:[ .\-/()]?\d){8}(?!\d)(?![A-Fa-f]{2})"),
+    re.compile(
+        rf"(?<![\w+])\(?0\d\)?(?:[ .\-/(){_PHONE_SEP_EXTRA}]?\d){{8}}(?!\d)(?![A-Fa-f]{{2}})"
+    ),
     lambda m: _digit_count(m) == 10,
 )
 
+_NANP_SEP = rf"[ .\-{_PHONE_SEP_EXTRA}]"
+
 PHONE_EN_NANP = (
     re.compile(
-        r"(?<![\w+])(?:1[ .-]?)?\(?\d{3}\)?[ .-]?\d{3}[ .-]\d{4}(?!\d)"
+        rf"(?<![\w+])(?:1{_NANP_SEP}?)?\(?\d{{3}}\)?{_NANP_SEP}?\d{{3}}{_NANP_SEP}\d{{4}}(?!\d)"
     ),
     lambda m: _digit_count(m) in (10, 11) and (
         _digit_count(m) == 10 or re.sub(r"\D", "", m).startswith("1")
@@ -759,7 +956,9 @@ PHONE_EN_NANP = (
 )
 
 PHONE_DE_NATIONAL = (
-    re.compile(r"(?<![\w+])\(?0\d\)?(?:[ .\-/()]?\d){8,10}(?!\d)(?![A-Fa-f]{2})"),
+    re.compile(
+        rf"(?<![\w+])\(?0\d\)?(?:[ .\-/(){_PHONE_SEP_EXTRA}]?\d){{8,10}}(?!\d)(?![A-Fa-f]{{2}})"
+    ),
     lambda m: (
         10 <= _digit_count(m) <= 12
         and not (
@@ -796,7 +995,17 @@ def _make_phone_detector(
     return Detector(type="phone", scrub=scrub)
 
 
-phone_international_detector = _make_phone_detector((PHONE_INTERNATIONAL,))
+def _scrub_phone_international(text: str) -> tuple[str, int]:
+    return _replace_matches(
+        text,
+        PHONE_INTERNATIONAL_RE,
+        "[PHONE]",
+        retry=True,
+        accept_end=_phone_international_end,
+    )
+
+
+phone_international_detector = Detector(type="phone", scrub=_scrub_phone_international)
 phone_nl_detector = _make_phone_detector((PHONE_NL_NATIONAL,))
 phone_en_detector = _make_phone_detector((PHONE_EN_NANP,))
 phone_de_detector = _make_phone_detector((PHONE_DE_NATIONAL,))
