@@ -110,7 +110,7 @@ def _replace_matches(
     is_valid: Callable[[str], bool] | None = None,
     context_ok: Callable[[str, int, int], bool] | None = None,
     retry: bool = False,
-    accept_len: Callable[[str], int] | None = None,
+    accept_end: Callable[[str, int, int], int] | None = None,
 ) -> tuple[str, int]:
     """Replace accepted matches.
 
@@ -118,17 +118,18 @@ def _replace_matches(
     an overlapping bogus candidate (``2024 4111 1111 1111`` failing Luhn) does
     not swallow the real hit that starts inside it.
 
-    ``accept_len`` returns how much of a match to replace (0 rejects), so a
-    grouped hit that swallowed a trailing word can be cut back to the prefix
-    that validates.
+    ``accept_end`` gets ``(text, start, end)`` and returns where the
+    replacement ends (``start`` rejects), so a grouped hit that swallowed a
+    trailing word can be cut back to the prefix that validates, or a hit can
+    be re-measured against the surrounding text.
     """
     count = 0
     parts: list[str] = []
     last = pos = 0
     while (match := pattern.search(text, pos)) is not None:
         start, end = match.span()
-        if accept_len is not None:
-            end = start + accept_len(match.group(0))
+        if accept_end is not None:
+            end = accept_end(text, start, end)
         if end == start or (is_valid is not None and not is_valid(match.group(0))) or (
             context_ok is not None and not context_ok(text, start, end)
         ):
@@ -277,6 +278,11 @@ email_detector = Detector(type="email", scrub=_scrub_email)
 _SEP_SPACE = r"[ \t\r\n\xa0\u2000-\u200a\u202f\u3000]"
 # Soft hyphen + zero-width chars that OCR/copy-paste insert between groups.
 _INVISIBLE = "\u00ad\u200b\u200c\u200d\ufeff"
+# Group separators word processors / PDFs substitute for a typed space or
+# hyphen in ids and phone numbers: nbsp, thin / narrow nbsp, unicode dashes
+# and the minus sign. Character-class fragments, shared by both.
+_GROUP_SPACES = "\xa0\u2009\u202f"
+_GROUP_DASHES = "\u2010-\u2015\u2212"
 
 IBAN_RES: tuple[re.Pattern[str], ...] = (
     # Allow after digits (card|IBAN glue); still reject mid-letter (xNL91…).
@@ -350,7 +356,12 @@ def _scrub_iban(text: str) -> tuple[str, int]:
         out = out.replace(ch, "")
     count = 0
     for pattern in IBAN_RES:
-        out, n = _replace_matches(out, pattern, "[IBAN]", accept_len=_iban_accept_len)
+        out, n = _replace_matches(
+            out,
+            pattern,
+            "[IBAN]",
+            accept_end=lambda t, s, e: s + _iban_accept_len(t[s:e]),
+        )
         count += n
     return out, count
 
@@ -697,14 +708,17 @@ location_detector = Detector(type="location", scrub=_scrub_location)
 
 # Group separators for national ids: word processors and PDFs turn the
 # typed space / hyphen into nbsp, thin / narrow nbsp, or a unicode dash.
-_ID_SPACE = r"[ \xa0\u2009\u202f]"
-_ID_DASH = r"[\-\u2010-\u2015\u2212]"
-_ID_SEP_CHARS = " .-/\xa0\u2009\u202f\u2010\u2011\u2012\u2013\u2014\u2015\u2212"
+_ID_SPACE = f"[ {_GROUP_SPACES}]"
+_ID_DASH = f"[\\-{_GROUP_DASHES}]"
+# Everything the id patterns accept between groups, including the dash range.
+_ID_SEP_TABLE = str.maketrans(
+    "", "", " ./-" + _GROUP_SPACES + "".join(map(chr, range(0x2010, 0x2016))) + "\u2212"
+)
 
 
 def _strip_id_seps(value: str) -> str:
     """Drop the group separators national-id patterns accept, keeping digits."""
-    return value.translate({ord(ch): None for ch in _ID_SEP_CHARS})
+    return value.translate(_ID_SEP_TABLE)
 
 
 # ``(?<!\d\.)``: the fractional part of a decimal (``0.12345678``) is not an id.
@@ -867,25 +881,65 @@ def _digit_count(text: str) -> int:
 
 # Rich text / PDFs put nbsp, thin / narrow nbsp, or a unicode dash between
 # phone groups; every phone pattern accepts them alongside the ASCII seps.
-_PHONE_SEP_EXTRA = r"\xa0\u2009\u202f\u2010-\u2015"
+_PHONE_SEP_EXTRA = _GROUP_SPACES + _GROUP_DASHES
 
 # The span allows more than 15 digits so a ``(0)`` trunk between spaced groups
-# (``+44 (0) 20 7946 0958``) fits; ``_phone_international_len`` cuts it back.
+# (``+44 (0) 20 7946 0958``) fits; ``_phone_international_end`` cuts it back.
 PHONE_INTERNATIONAL_RE = re.compile(
     rf"(?<![\w+])(?:\+|00)\d[\d .()\-{_PHONE_SEP_EXTRA}]{{6,20}}\d"
 )
 
 
-def _phone_international_len(value: str) -> int:
-    """Length of the longest prefix ending on a whole digit group with 8–15
-    digits (E.164), so a run into the next number (``… 0031 20 …``) stops at
-    the group boundary instead of leaking or swallowing its head."""
-    for end in range(len(value), 0, -1):
-        if not value[end - 1].isdigit() or (end < len(value) and value[end].isdigit()):
+_PHONE_INTERNATIONAL_SEPS = frozenset(
+    " .()-" + _GROUP_SPACES + "".join(map(chr, range(0x2010, 0x2016))) + "\u2212"
+)
+
+
+def _phone_international_end(text: str, start: int, _end: int) -> int:
+    """End of the phone number starting at ``start`` (``start`` rejects).
+
+    The run of digit groups is rescanned from ``start`` (40 chars at most) so
+    a group the regex span cut in half never counts, and a ``(0)`` trunk is
+    not counted toward E.164's 8–15 digits. A run within that range is taken
+    whole. A longer one holds a second number: cut at the last valid group
+    boundary followed by a ``(`` or ``0``-led group (``… 1234567 (06) …``,
+    ``… 0031 6 …``, ``… 020 …``), else at the last valid boundary, so the
+    next number's area code is not swallowed and its subscriber part leaked.
+    """
+    cuts: list[tuple[int, int, bool]] = []  # (end, digits so far, next is new)
+    digits = 0
+    whole = False
+    i = start + 1 if text[start] == "+" else start
+    limit = min(len(text), start + 40)
+    while i < limit:
+        ch = text[i]
+        if ch in _PHONE_INTERNATIONAL_SEPS:
+            i += 1
             continue
-        if 8 <= _digit_count(value[:end]) <= 15:
-            return end
-    return 0
+        if not ch.isdecimal():
+            break
+        if text[i - 1] == "(" and text.startswith("0)", i):
+            i += 1
+            continue
+        while i < len(text) and text[i].isdecimal() and digits <= 15:
+            digits += 1
+            i += 1
+        if digits > 15 or (i < len(text) and text[i].isdecimal()):
+            break
+        g = i
+        while g < limit and text[g] in _PHONE_INTERNATIONAL_SEPS:
+            g += 1
+        more = g < limit and text[g].isdecimal()
+        cuts.append((i, digits, more and ("(" in text[i:g] or text[g] == "0")))
+        if not more:
+            whole = True
+            break
+        i = g
+    if whole and 8 <= digits <= 15:
+        return cuts[-1][0]
+    valid = [cut for cut in cuts if 8 <= cut[1] <= 15]
+    marked = [cut for cut in valid if cut[2]]
+    return (marked or valid)[-1][0] if valid else start
 
 
 # Trailing (?!\d)(?![A-Fa-f]{2}) blocks longer digit runs and hex digest glue
@@ -956,7 +1010,7 @@ def _scrub_phone_international(text: str) -> tuple[str, int]:
         PHONE_INTERNATIONAL_RE,
         "[PHONE]",
         retry=True,
-        accept_len=_phone_international_len,
+        accept_end=_phone_international_end,
     )
 
 

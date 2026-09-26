@@ -327,6 +327,28 @@ describe("scrubText", () => {
     expect(scrubText("call +31 6 12345678 12345", { languages: ["en"] }).text).toBe(
       "call [PHONE] 12345",
     );
+    for (const text of [
+      "Tel +31 (20) 123 4567 (06) 12345678",
+      "Tel +31 20 1234567 0031 6 12345678",
+    ]) {
+      expect(scrubText(text, { languages: ["nl"] }).text).toBe("Tel [PHONE] [PHONE]");
+    }
+    expect(
+      scrubText("Tel +49 (0) 30 - 1234 - 5678901 x", { languages: ["de"] }).text,
+    ).toBe("Tel [PHONE] x");
+    expect(scrubText("tel +31 20\u22121234567", { languages: ["nl"] }).text).toBe(
+      "tel [PHONE]",
+    );
+    expect(scrubText("See (+33 1 35 39 12 00) x", { languages: ["en"] }).text).toBe(
+      "See ([PHONE]) x",
+    );
+    for (const [text, expected] of [
+      ["+31 20 1234567 020 7654321", "[PHONE] [PHONE]"],
+      ["+31 6 12345678 06-12345678", "[PHONE] [PHONE]"],
+      ["+31-20-1234567-0031-6-12345678", "[PHONE]-[PHONE]"],
+    ]) {
+      expect(scrubText(text!, { languages: ["nl"] }).text).toBe(expected);
+    }
   });
 
   it("masks degrees-minutes-seconds coordinate pairs", () => {

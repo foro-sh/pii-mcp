@@ -77,12 +77,35 @@ fn replace_matches<F>(
 where
     F: FnMut(&str, usize, usize) -> bool,
 {
+    replace_matches_end(
+        text,
+        pattern,
+        placeholder,
+        |s, e| if accept(&text[s..e], s, e) { e } else { s },
+        retry_on_reject,
+    )
+}
+
+/// Like ``replace_matches``, but ``accept_end(start, end)`` returns where the
+/// replacement ends (``start`` rejects), so a hit can be cut back or
+/// re-measured against the surrounding text.
+fn replace_matches_end<F>(
+    text: &str,
+    pattern: &Regex,
+    placeholder: &str,
+    mut accept_end: F,
+    retry_on_reject: bool,
+) -> (Option<String>, u32)
+where
+    F: FnMut(usize, usize) -> usize,
+{
     let mut count = 0u32;
     let mut out: Option<String> = None;
     let mut last = 0usize;
     let mut pos = 0usize;
     while let Some(m) = pattern.find_at(text, pos) {
-        if !accept(m.as_str(), m.start(), m.end()) {
+        let end = accept_end(m.start(), m.end());
+        if end == m.start() {
             // Lookaround-emulated patterns may need +1 to retry a longer match;
             // checksum rejects match Python ``re.sub`` and resume at ``m.end()``.
             pos = if retry_on_reject {
@@ -95,8 +118,8 @@ where
         let buf = out.get_or_insert_with(|| String::with_capacity(text.len()));
         buf.push_str(&text[last..m.start()]);
         buf.push_str(placeholder);
-        last = m.end();
-        pos = m.end();
+        last = end;
+        pos = end;
         count += 1;
     }
     match out {
@@ -1208,10 +1231,21 @@ fn scrub_ip(text: &str) -> (Option<String>, u32) {
     (second.or(first).or(mapped), count)
 }
 
-/// National-id group separators: word processors and PDFs turn the typed
-/// space / hyphen into nbsp, thin / narrow nbsp, or a unicode dash.
-const ID_SPACE: &str = r"[ \u{00a0}\u{2009}\u{202f}]";
-const ID_DASH: &str = r"[\-\u{2010}-\u{2015}\u{2212}]";
+/// Group separators word processors / PDFs substitute for a typed space or
+/// hyphen in ids and phone numbers: nbsp, thin / narrow nbsp, unicode dashes
+/// and the minus sign. Character-class fragments, shared by both.
+macro_rules! group_spaces {
+    () => {
+        r"\u{00a0}\u{2009}\u{202f}"
+    };
+}
+macro_rules! group_dashes {
+    () => {
+        r"\u{2010}-\u{2015}\u{2212}"
+    };
+}
+const ID_SPACE: &str = concat!("[ ", group_spaces!(), "]");
+const ID_DASH: &str = concat!(r"[\-", group_dashes!(), "]");
 
 fn bsn_res() -> &'static [Regex] {
     static RES: OnceLock<Vec<Regex>> = OnceLock::new();
@@ -1327,11 +1361,11 @@ fn phone_left_ok(text: &str, start: usize) -> bool {
 
 /// Rich text / PDFs put nbsp, thin / narrow nbsp, or a unicode dash between
 /// phone groups; every phone pattern accepts them alongside the ASCII seps.
-const PHONE_SEP_EXTRA: &str = r"\u{00a0}\u{2009}\u{202f}\u{2010}-\u{2015}";
+const PHONE_SEP_EXTRA: &str = concat!(group_spaces!(), group_dashes!());
 
 /// The span allows more than 15 digits so a ``(0)`` trunk between spaced
-/// groups (``+44 (0) 20 7946 0958``) fits; ``phone_international_len`` cuts it
-/// back.
+/// groups (``+44 (0) 20 7946 0958``) fits; ``phone_international_end`` cuts
+/// it back.
 fn phone_international_re() -> &'static Regex {
     static RE: OnceLock<Regex> = OnceLock::new();
     RE.get_or_init(|| {
@@ -1342,22 +1376,107 @@ fn phone_international_re() -> &'static Regex {
     })
 }
 
-/// Length of the longest prefix ending on a whole digit group with 8–15
-/// digits (E.164), so a run into the next number stops at the group
-/// boundary; 0 rejects.
-fn phone_international_len(value: &str) -> usize {
-    let chars: Vec<(usize, char)> = value.char_indices().collect();
-    for i in (0..chars.len()).rev() {
-        let (at, c) = chars[i];
-        if !c.is_ascii_digit() || chars.get(i + 1).is_some_and(|(_, n)| n.is_ascii_digit()) {
+fn is_phone_international_sep(c: char) -> bool {
+    matches!(
+        c,
+        ' ' | '.'
+            | '('
+            | ')'
+            | '-'
+            | '\u{00a0}'
+            | '\u{2009}'
+            | '\u{202f}'
+            | '\u{2010}'..='\u{2015}'
+            | '\u{2212}'
+    )
+}
+
+/// Unicode decimal digit (``\d`` / Python ``str.isdecimal``).
+fn is_decimal(c: char) -> bool {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    c.is_ascii_digit()
+        || (!c.is_ascii()
+            && RE
+                .get_or_init(|| Regex::new(r"^\d$").unwrap())
+                .is_match(c.encode_utf8(&mut [0u8; 4])))
+}
+
+/// End of the phone number starting at ``start`` (``start`` rejects).
+///
+/// The run of digit groups is rescanned from ``start`` (40 chars at most) so
+/// a group the regex span cut in half never counts, and a ``(0)`` trunk is
+/// not counted toward E.164's 8–15 digits. A run within that range is taken
+/// whole. A longer one holds a second number: cut at the last valid group
+/// boundary followed by a ``(`` or ``0``-led group (``… 1234567 (06) …``,
+/// ``… 0031 6 …``, ``… 020 …``), else at the last valid boundary, so the next
+/// number's area code is not swallowed and its subscriber part leaked.
+fn phone_international_end(text: &str, start: usize) -> usize {
+    // 40 scanned chars plus at most 16 digits of a trailing group, on the stack.
+    let mut chars = [(0usize, '\0'); 64];
+    let mut n = 0usize;
+    for (i, c) in text[start..].char_indices().take(chars.len()) {
+        chars[n] = (start + i, c);
+        n += 1;
+    }
+    let at = |k: usize| (k < n).then(|| chars[k].1);
+    let digit = |k: usize| at(k).is_some_and(is_decimal);
+    // The scan never reaches char 64 (40 + 16), so running off ``chars``
+    // means running off the text.
+    let end_of = |k: usize| if k < n { chars[k].0 } else { text.len() };
+    let limit = n.min(40);
+    // (end, digits so far, next group starts a new number)
+    let mut cuts = [(0usize, 0usize, false); 20];
+    let mut n_cuts = 0usize;
+    let mut digits = 0usize;
+    let mut whole = false;
+    let mut k = usize::from(at(0) == Some('+'));
+    while k < limit {
+        let c = chars[k].1;
+        if is_phone_international_sep(c) {
+            k += 1;
             continue;
         }
-        let end = at + c.len_utf8();
-        if (8..=15).contains(&digit_count(&value[..end])) {
-            return end;
+        if !is_decimal(c) {
+            break;
         }
+        if k > 0 && at(k - 1) == Some('(') && c == '0' && at(k + 1) == Some(')') {
+            k += 1;
+            continue;
+        }
+        while digit(k) && digits <= 15 {
+            digits += 1;
+            k += 1;
+        }
+        if digits > 15 || digit(k) {
+            break;
+        }
+        let mut g = k;
+        while g < limit && at(g).is_some_and(is_phone_international_sep) {
+            g += 1;
+        }
+        let more = g < limit && digit(g);
+        let new_number = more && ((k..g).any(|j| chars[j].1 == '(') || chars[g].1 == '0');
+        if n_cuts < cuts.len() {
+            cuts[n_cuts] = (end_of(k), digits, new_number);
+            n_cuts += 1;
+        }
+        if !more {
+            whole = true;
+            break;
+        }
+        k = g;
     }
-    0
+    let cuts = &cuts[..n_cuts];
+    if whole && (8..=15).contains(&digits) {
+        return cuts[n_cuts - 1].0;
+    }
+    let valid = |c: &&(usize, usize, bool)| (8..=15).contains(&c.1);
+    cuts.iter()
+        .filter(valid)
+        .filter(|c| c.2)
+        .last()
+        .or_else(|| cuts.iter().filter(valid).last())
+        .map_or(start, |c| c.0)
 }
 
 fn phone_nl_re() -> &'static Regex {
@@ -1435,37 +1554,19 @@ fn no_trailing_hex_letters(text: &str, end: usize) -> bool {
 }
 
 fn scrub_phone_international(text: &str) -> (Option<String>, u32) {
-    let mut count = 0u32;
-    let mut out: Option<String> = None;
-    let mut last = 0usize;
-    let mut pos = 0usize;
-    while let Some(m) = phone_international_re().find_at(text, pos) {
-        let start = m.start();
-        let len = if phone_left_ok(text, start) {
-            phone_international_len(m.as_str())
-        } else {
-            0
-        };
-        if len == 0 {
-            // The match starts on an ASCII ``+`` / ``0``.
-            pos = start + 1;
-            continue;
-        }
-        let end = start + len;
-        let buf = out.get_or_insert_with(|| String::with_capacity(text.len()));
-        buf.push_str(&text[last..start]);
-        buf.push_str("[PHONE]");
-        last = end;
-        pos = end;
-        count += 1;
-    }
-    match out {
-        None => (None, 0),
-        Some(mut buf) => {
-            buf.push_str(&text[last..]);
-            (Some(buf), count)
-        }
-    }
+    replace_matches_end(
+        text,
+        phone_international_re(),
+        "[PHONE]",
+        |s, _| {
+            if phone_left_ok(text, s) {
+                phone_international_end(text, s)
+            } else {
+                s
+            }
+        },
+        true,
+    )
 }
 
 /// National phone forms: emulate Python backtracking on the trailing

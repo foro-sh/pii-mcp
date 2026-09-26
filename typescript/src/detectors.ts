@@ -98,17 +98,18 @@ function replaceMatches(
   placeholder: string,
   isValid?: (value: string) => boolean,
   retry = false,
-  acceptLen?: (value: string) => number,
+  acceptLen?: (value: string, start: number, text: string) => number,
 ): { text: string; count: number } {
   let count = 0;
   const re = cloneRegExp(pattern);
   if (acceptLen !== undefined) {
     // Replace only the accepted prefix (0 rejects), so a grouped hit that
-    // swallowed a trailing word is cut back to the part that validates.
+    // swallowed a trailing word is cut back to the part that validates. The
+    // match start and text let a hit be re-measured against its context.
     let out = "";
     let last = 0;
     for (let m = re.exec(text); m !== null; m = re.exec(text)) {
-      const len = acceptLen(m[0]);
+      const len = acceptLen(m[0], m.index, text);
       if (len === 0) {
         if (retry || m[0].length === 0) {
           re.lastIndex = m.index + 1;
@@ -296,6 +297,11 @@ export const emailDetector: Detector = { type: "email", scrub: scrubEmail };
 // Unicode Zs separators commonly used in OCR / rich text (thin/figure/nbsp…).
 const SEP_SPACE = String.raw`[ \t\r\n\xa0\u2000-\u200a\u202f\u3000]`;
 const INVISIBLE = /[\u00ad\u200b\u200c\u200d\ufeff]/g;
+// Group separators word processors / PDFs substitute for a typed space or
+// hyphen in ids and phone numbers: nbsp, thin / narrow nbsp, unicode dashes
+// and the minus sign. Character-class fragments, shared by both.
+const GROUP_SPACES = String.raw`\xa0\u2009\u202f`;
+const GROUP_DASHES = String.raw`\u2010-\u2015\u2212`;
 
 const IBAN_RES = [
   // Allow after digits (card|IBAN glue); still reject mid-letter (xNL91…).
@@ -716,9 +722,9 @@ export const locationDetector: Detector = {
 
 // Group separators for national ids: word processors and PDFs turn the typed
 // space / hyphen into nbsp, thin / narrow nbsp, or a unicode dash.
-const ID_SPACE = String.raw`[ \xa0\u2009\u202f]`;
-const ID_DASH = String.raw`[\-\u2010-\u2015\u2212]`;
-const ID_SEPS = /[ .\-/\xa0\u2009\u202f\u2010-\u2015\u2212]/g;
+const ID_SPACE = `[ ${GROUP_SPACES}]`;
+const ID_DASH = String.raw`[\-${GROUP_DASHES}]`;
+const ID_SEPS = new RegExp(String.raw`[ .\-/${GROUP_SPACES}${GROUP_DASHES}]`, "g");
 
 // ``(?<!\d\.)``: the fractional part of a decimal (``0.12345678``) is not an id.
 const BSN_RES = [
@@ -906,30 +912,79 @@ function digitCount(text: string): number {
 
 // Rich text / PDFs put nbsp, thin / narrow nbsp, or a unicode dash between
 // phone groups; every phone pattern accepts them alongside the ASCII seps.
-const PHONE_SEP_EXTRA = String.raw`\xa0\u2009\u202f\u2010-\u2015`;
+const PHONE_SEP_EXTRA = GROUP_SPACES + GROUP_DASHES;
 
 // The span allows more than 15 digits so a ``(0)`` trunk between spaced groups
-// (``+44 (0) 20 7946 0958``) fits; ``phoneInternationalLen`` cuts it back.
+// (``+44 (0) 20 7946 0958``) fits; ``phoneInternationalEnd`` cuts it back.
 const PHONE_INTERNATIONAL_RE = new RegExp(
   String.raw`(?<![\w+])(?:\+|00)\d[\d .()\-${PHONE_SEP_EXTRA}]{6,20}\d`,
   "g",
 );
 
+const PHONE_INTERNATIONAL_SEP_RE = new RegExp(String.raw`[ .()\-${PHONE_SEP_EXTRA}]`);
+
+function isAsciiDigit(ch: string | undefined): boolean {
+  return ch !== undefined && ch >= "0" && ch <= "9";
+}
+
 /**
- * Length of the longest prefix ending on a whole digit group with 8–15 digits
- * (E.164), so a run into the next number stops at the group boundary.
+ * End of the phone number starting at ``start`` (``start`` rejects).
+ *
+ * The run of digit groups is rescanned from ``start`` (40 chars at most) so a
+ * group the regex span cut in half never counts, and a ``(0)`` trunk is not
+ * counted toward E.164's 8–15 digits. A run within that range is taken whole.
+ * A longer one holds a second number: cut at the last valid group boundary
+ * followed by a ``(`` or ``0``-led group (``… 1234567 (06) …``,
+ * ``… 0031 6 …``, ``… 020 …``), else at the last valid boundary, so the next
+ * number's area code is not swallowed and its subscriber part leaked. Digits
+ * are ASCII, as JS ``\d`` is.
  */
-function phoneInternationalLen(value: string): number {
-  for (let end = value.length; end > 0; end -= 1) {
-    if (!/\d/.test(value[end - 1]!) || (end < value.length && /\d/.test(value[end]!))) {
+function phoneInternationalEnd(text: string, start: number): number {
+  const isSep = (k: number) =>
+    k < text.length && PHONE_INTERNATIONAL_SEP_RE.test(text[k]!);
+  const cuts: [number, number, boolean][] = [];
+  let digits = 0;
+  let whole = false;
+  let i = text[start] === "+" ? start + 1 : start;
+  const limit = Math.min(text.length, start + 40);
+  while (i < limit) {
+    if (isSep(i)) {
+      i += 1;
       continue;
     }
-    const digits = digitCount(value.slice(0, end));
-    if (digits >= 8 && digits <= 15) {
-      return end;
+    if (!isAsciiDigit(text[i])) {
+      break;
     }
+    if (text[i - 1] === "(" && text.startsWith("0)", i)) {
+      i += 1;
+      continue;
+    }
+    while (isAsciiDigit(text[i]) && digits <= 15) {
+      digits += 1;
+      i += 1;
+    }
+    if (digits > 15 || isAsciiDigit(text[i])) {
+      break;
+    }
+    let g = i;
+    while (g < limit && isSep(g)) {
+      g += 1;
+    }
+    const more = g < limit && isAsciiDigit(text[g]);
+    cuts.push([i, digits, more && (text.slice(i, g).includes("(") || text[g] === "0")]);
+    if (!more) {
+      whole = true;
+      break;
+    }
+    i = g;
   }
-  return 0;
+  if (whole && digits >= 8 && digits <= 15) {
+    return cuts[cuts.length - 1]![0];
+  }
+  const valid = cuts.filter(([, n]) => n >= 8 && n <= 15);
+  const marked = valid.filter(([, , next]) => next);
+  const pick = marked.length > 0 ? marked : valid;
+  return pick.length > 0 ? pick[pick.length - 1]![0] : start;
 }
 
 const PHONE_NL_NATIONAL: readonly [RegExp, (value: string) => boolean] = [
@@ -1011,7 +1066,7 @@ export const phoneInternationalDetector: Detector = {
       "[PHONE]",
       undefined,
       true,
-      phoneInternationalLen,
+      (_, start, full) => phoneInternationalEnd(full, start) - start,
     );
   },
 };

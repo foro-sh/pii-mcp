@@ -560,6 +560,47 @@ class TestPhoneSeparatorsAndTrunk:
         assert result["text"] == "tel [PHONE]"
         assert result["counts"]["phone"] == 1
 
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "Tel +31 (20) 123 4567 (06) 12345678",
+            "Tel +31 20 1234567 0031 6 12345678",
+        ],
+    )
+    def test_next_number_area_code_not_swallowed(self, text: str) -> None:
+        result = scrub_text(text, languages=["nl"])
+        assert result["text"] == "Tel [PHONE] [PHONE]"
+
+    def test_span_cut_mid_group_does_not_leak_tail(self) -> None:
+        # 15 digits once the ``(0)`` trunk is left out; the regex span stops
+        # inside the last group, the rescan does not.
+        result = scrub_text("Tel +49 (0) 30 - 1234 - 5678901 x", languages=["de"])
+        assert result["text"] == "Tel [PHONE] x"
+
+    def test_french_pairs_ending_in_00(self) -> None:
+        result = scrub_text("See (+33 1 35 39 12 00) x", languages=["en"])
+        assert result["text"] == "See ([PHONE]) x"
+
+    @pytest.mark.parametrize(
+        ("text", "expected"),
+        [
+            ("+31 20 1234567 020 7654321", "[PHONE] [PHONE]"),
+            ("+31 6 12345678 06-12345678", "[PHONE] [PHONE]"),
+            ("+31-20-1234567-0031-6-12345678", "[PHONE]-[PHONE]"),
+        ],
+    )
+    def test_back_to_back_trunk_led_number(self, text: str, expected: str) -> None:
+        # Past 15 digits the run holds two numbers; cut before the 0-led one.
+        assert scrub_text(text, languages=["nl"])["text"] == expected
+
+    def test_non_ascii_digits(self) -> None:
+        text = "call +\u0663\u0661 \u0662\u0660 \u0661\u0662\u0663\u0664\u0665\u0666\u0667 now"
+        assert scrub_text(text, languages=["en"])["text"] == "call [PHONE] now"
+
+    def test_minus_sign_separator(self) -> None:
+        result = scrub_text("tel +31 20\u22121234567", languages=["nl"])
+        assert result["text"] == "tel [PHONE]"
+
     def test_back_to_back_numbers_split_at_group(self) -> None:
         result = scrub_text("0031 20 1234567 0031 20 7654321", languages=["nl"])
         assert result["text"] == "[PHONE] [PHONE]"
