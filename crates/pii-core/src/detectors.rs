@@ -132,16 +132,47 @@ where
     (current, count)
 }
 
+/// Scripts written without spaces (Thai, Lao, Myanmar, Khmer, kana, CJK,
+/// Hangul, fullwidth forms) glue prose straight onto an address
+/// (``请发送至ada@example.com以便``), so a local part or TLD is either all such
+/// script or free of it, and one such letter after the TLD ends the address.
+const UNSPACED_SCRIPTS: &str = r"[\u{0e00}-\u{0eff}\u{1000}-\u{109f}\u{1780}-\u{17ff}\u{3000}-\u{30ff}\u{3400}-\u{4dbf}\u{4e00}-\u{9fff}\u{ac00}-\u{d7af}\u{f900}-\u{faff}\u{ff00}-\u{ffef}]";
+/// Email local part (1–64 chars): wholly in an unspaced script, or free of
+/// one; letters / digits are Unicode, plus ``_.%+-``.
+fn email_local() -> String {
+    format!(
+        r"(?:(?:[[\p{{L}}\p{{N}}]&&{UNSPACED_SCRIPTS}]|[._%+\-]){{1,64}}|[[\p{{L}}\p{{N}}_.%+\-]--{UNSPACED_SCRIPTS}]{{1,64}})"
+    )
+}
+
+fn is_unspaced_script(c: char) -> bool {
+    matches!(
+        c,
+        '\u{0e00}'..='\u{0eff}'
+            | '\u{1000}'..='\u{109f}'
+            | '\u{1780}'..='\u{17ff}'
+            | '\u{3000}'..='\u{30ff}'
+            | '\u{3400}'..='\u{4dbf}'
+            | '\u{4e00}'..='\u{9fff}'
+            | '\u{ac00}'..='\u{d7af}'
+            | '\u{f900}'..='\u{faff}'
+            | '\u{ff00}'..='\u{ffef}'
+    )
+}
+
 fn email_re() -> &'static Regex {
     static RE: OnceLock<Regex> = OnceLock::new();
     RE.get_or_init(|| {
         // Letters and digits are Unicode (EAI / IDN: ``josé@example.com``,
-        // ``ada@münchen.de``), matching Python's ``\w`` / ``[^\W_]``. Bounded
-        // Unicode classes need a larger lazy-DFA cache than the 2 MiB default,
-        // or big inputs fall back to the ~30x slower NFA engine.
-        regex::RegexBuilder::new(
-            r"[\p{L}\p{N}_.%+-]{1,64}@[\p{L}\p{N}-]{1,63}(?:\.[\p{L}\p{N}-]{1,63})*\.\p{L}{2,24}",
-        )
+        // ``ada@münchen.de``), matching Python's ``\w`` / ``[^\W_]``, except
+        // that unspaced scripts may not form the local part or the TLD (see
+        // ``is_unspaced_script``). Bounded Unicode classes need a larger
+        // lazy-DFA cache than the 2 MiB default, or big inputs fall back to
+        // the ~30x slower NFA engine.
+        let local = email_local();
+        regex::RegexBuilder::new(&format!(
+            r"{local}@[\p{{L}}\p{{N}}-]{{1,63}}(?:\.[\p{{L}}\p{{N}}-]{{1,63}})*\.(?:[\p{{L}}--{UNSPACED_SCRIPTS}]{{2,24}}|[\p{{L}}&&{UNSPACED_SCRIPTS}]{{2,24}})"
+        ))
         .dfa_size_limit(16 << 20)
         .build()
         .unwrap()
@@ -154,9 +185,10 @@ fn email_re() -> &'static Regex {
 fn email_next_pii_re() -> &'static Regex {
     static RE: OnceLock<Regex> = OnceLock::new();
     RE.get_or_init(|| {
-        Regex::new(
-            r"^(?:[A-Za-z]{2}\d{2}[A-Za-z0-9]|\d{13,19}|\d{3}[- ./]?\d{2}[- ./]?\d{4}|\d{3}[ .]\d{3}[ .]\d{3}|(?:\d{1,3}\.){3}\d{1,3}|\d{1,3}\.\d{3,8}|[0-9A-Fa-f]{2}([-:/.])[0-9A-Fa-f]{2}|(?:[0-9A-Fa-f]{3,4}:|::)|[\p{L}\p{N}_.%+-]{1,64}@|[+0]\d)",
-        )
+        let local = email_local();
+        Regex::new(&format!(
+            r"^(?:[A-Za-z]{{2}}\d{{2}}[A-Za-z0-9]|\d{{13,19}}|\d{{3}}[- ./]?\d{{2}}[- ./]?\d{{4}}|\d{{3}}[ .]\d{{3}}[ .]\d{{3}}|(?:\d{{1,3}}\.){{3}}\d{{1,3}}|\d{{1,3}}\.\d{{3,8}}|[0-9A-Fa-f]{{2}}([-:/.])[0-9A-Fa-f]{{2}}|(?:[0-9A-Fa-f]{{3,4}}:|::)|{local}@|[+0]\d)",
+        ))
         .unwrap()
     })
 }
@@ -183,7 +215,7 @@ fn email_end_ok(text: &str, end: usize) -> bool {
     if next == '@' {
         return false;
     }
-    if !next.is_alphanumeric() {
+    if !next.is_alphanumeric() || is_unspaced_script(next) {
         return true;
     }
     email_next_pii(text, end)

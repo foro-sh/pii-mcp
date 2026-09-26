@@ -148,13 +148,26 @@ function replaceMatches(
   return { text: out, count };
 }
 
+// Scripts written without spaces (Thai, Lao, Myanmar, Khmer, kana, CJK,
+// Hangul, fullwidth forms) glue prose straight onto an address
+// (``请发送至ada@example.com以便``), so a local part or TLD is either all such
+// script or free of it, and one such letter after the TLD ends the address.
+const UNSPACED_SCRIPTS = String.raw`\u0e00-\u0eff\u1000-\u109f\u1780-\u17ff\u3000-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uac00-\ud7af\uf900-\ufaff\uff00-\uffef`;
+const UNSPACED_CHAR_RE = new RegExp(`[${UNSPACED_SCRIPTS}]`, "u");
+const EMAIL_LOCAL = String.raw`(?:(?:(?=[${UNSPACED_SCRIPTS}])[\p{L}\p{N}]|[._%+\-]){1,64}|(?:(?![${UNSPACED_SCRIPTS}])[\p{L}\p{N}_.%+\-]){1,64})`;
+const EMAIL_TLD = String.raw`(?:(?:(?![${UNSPACED_SCRIPTS}])\p{L}){2,24}|(?:(?=[${UNSPACED_SCRIPTS}])\p{L}){2,24})`;
+
 // Letters and digits are Unicode (EAI / IDN: ``josé@example.com``,
 // ``ada@münchen.de``), matching Python's ``\w`` / ``[^\W_]``.
-const EMAIL_RE =
-  /[\p{L}\p{N}_.%+-]{1,64}@[\p{L}\p{N}-]{1,63}(?:\.[\p{L}\p{N}-]{1,63})*\.\p{L}{2,24}(?!@)/gu;
+const EMAIL_RE = new RegExp(
+  String.raw`${EMAIL_LOCAL}@[\p{L}\p{N}\-]{1,63}(?:\.[\p{L}\p{N}\-]{1,63})*\.${EMAIL_TLD}(?!@)`,
+  "gu",
+);
 
-const EMAIL_NEXT_PII_RE =
-  /^(?:[A-Za-z]{2}\d{2}[A-Za-z0-9]|\d{13,19}|\d{3}[- ./]?\d{2}[- ./]?\d{4}|\d{3}[ .]\d{3}[ .]\d{3}|\d{8,9}(?!\d)|(?:\d{1,3}\.){3}\d{1,3}|\d{1,3}\.\d{3,8}|[0-9A-Fa-f]{2}([-:/.])[0-9A-Fa-f]{2}|(?:[0-9A-Fa-f]{3,4}:|::)|[\p{L}\p{N}_.%+-]{1,64}@|[+0]\d)/u;
+const EMAIL_NEXT_PII_RE = new RegExp(
+  String.raw`^(?:[A-Za-z]{2}\d{2}[A-Za-z0-9]|\d{13,19}|\d{3}[- ./]?\d{2}[- ./]?\d{4}|\d{3}[ .]\d{3}[ .]\d{3}|\d{8,9}(?!\d)|(?:\d{1,3}\.){3}\d{1,3}|\d{1,3}\.\d{3,8}|[0-9A-Fa-f]{2}([-:/.])[0-9A-Fa-f]{2}|(?:[0-9A-Fa-f]{3,4}:|::)|${EMAIL_LOCAL}@|[+0]\d)`,
+  "u",
+);
 
 function emailEndOk(text: string, end: number): boolean {
   if (end >= text.length) {
@@ -164,7 +177,7 @@ function emailEndOk(text: string, end: number): boolean {
   if (ch === "@") {
     return false;
   }
-  if (!/[\p{L}\p{N}]/u.test(ch)) {
+  if (!/[\p{L}\p{N}]/u.test(ch) || UNSPACED_CHAR_RE.test(ch)) {
     return true;
   }
   return EMAIL_NEXT_PII_RE.test(text.slice(end));
@@ -201,6 +214,7 @@ const EMAIL_DOMAIN_RUN_RE = /[\p{L}\p{N}.\-]*/uy;
  */
 function findEmail(text: string, pos: number): [number, number] | null {
   const re = cloneRegExp(EMAIL_RE);
+  let dot = -1;
   for (let at = text.indexOf("@", pos); at !== -1; at = text.indexOf("@", at + 1)) {
     let winStart = at;
     for (let n = 0; n < 64 && winStart > pos; n += 1) {
@@ -212,7 +226,19 @@ function findEmail(text: string, pos: number): [number, number] | null {
     }
     EMAIL_DOMAIN_RUN_RE.lastIndex = at + 1;
     EMAIL_DOMAIN_RUN_RE.exec(text);
-    const winEnd = Math.min(text.length, EMAIL_DOMAIN_RUN_RE.lastIndex + 1);
+    const runEnd = EMAIL_DOMAIN_RUN_RE.lastIndex;
+    // No dot in the domain run: no TLD, so no address at this ``@``. The next
+    // dot is cached so dot-free text with many ``@`` stays linear.
+    if (dot !== Infinity && dot <= at) {
+      dot = text.indexOf(".", at + 1);
+      if (dot === -1) {
+        dot = Infinity;
+      }
+    }
+    if (dot >= runEnd) {
+      continue;
+    }
+    const winEnd = Math.min(text.length, runEnd + 1);
     re.lastIndex = 0;
     const m = re.exec(text.slice(winStart, winEnd));
     if (m !== null) {
