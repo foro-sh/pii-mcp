@@ -7,6 +7,7 @@ numeric detectors run.
 Patterns:
 - Email uses bounded quantifiers (unbounded local-part ``+`` is ReDoS-prone)
   and ``(?!@)`` so glued addresses (``a@b.comc@d.com``) backtrack to two hits.
+  Local part, domain labels, and TLD accept Unicode letters (EAI / IDN).
   When a TLD absorbs a following IBAN/card/IP/MAC/location
   (``ada@example.comNL91…`` / ``…com192.0.2.1`` / ``…comaa:bb:…``), the match
   is shortened so both hits still redact.
@@ -140,9 +141,12 @@ def _replace_matches(
     return "".join(parts), count
 
 
+# Letters and digits are Unicode (``[^\W_]``): EAI / IDN addresses such as
+# ``josé@example.com`` or ``ada@münchen.de`` are as personal as ASCII ones.
+_EMAIL_ALNUM = r"[^\W_]"
 EMAIL_RE = re.compile(
-    r"[A-Za-z0-9._%+-]{1,64}@[A-Za-z0-9-]{1,63}"
-    r"(?:\.[A-Za-z0-9-]{1,63})*\.[A-Za-z]{2,24}(?!@)"
+    rf"[\w.%+-]{{1,64}}@(?:{_EMAIL_ALNUM}|-){{1,63}}"
+    rf"(?:\.(?:{_EMAIL_ALNUM}|-){{1,63}})*\.[^\W\d_]{{2,24}}(?!@)"
 )
 
 # After a shortened email, remainder may start a new structured hit.
@@ -157,7 +161,7 @@ _EMAIL_NEXT_PII_RE = re.compile(
     r"|\d{1,3}\.\d{3,8}"  # location lat
     r"|[0-9A-Fa-f]{2}([-:/.])[0-9A-Fa-f]{2}"  # MAC
     r"|(?:[0-9A-Fa-f]{3,4}:|::)"  # IPv6 (3–4 digit hextet or compressed)
-    r"|[A-Za-z0-9._%+-]{1,64}@"  # another email
+    r"|[\w.%+-]{1,64}@"  # another email
     r"|[+0]\d"  # phone-ish
     r")"
 )

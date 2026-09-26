@@ -602,3 +602,28 @@ class TestDmsLocation:
     )
     def test_non_coordinates_kept(self, text: str) -> None:
         assert scrub_text(text)["text"] == text
+
+
+class TestInternationalizedEmail:
+    """EAI local parts and IDN domains are as personal as ASCII addresses."""
+
+    @pytest.mark.parametrize(
+        "value",
+        [
+            "josé@example.com",
+            "ada@münchen.de",
+            "ада@пример.рф",
+            "zoë.müller@bücher.example.de",
+        ],
+    )
+    def test_unicode_address_masked(self, value: str) -> None:
+        result = scrub_text(f"mail {value} ok")
+        assert result["text"] == "mail [EMAIL] ok"
+        assert result["counts"]["email"] == 1
+
+    def test_unicode_domain_does_not_eat_following_iban(self) -> None:
+        result = scrub_text("ada@münchen.deNL91ABNA0417164300")
+        assert result["text"] == "[EMAIL][IBAN]"
+
+    def test_digit_tld_still_rejected(self) -> None:
+        assert scrub_text("x@y.c0m")["text"] == "x@y.c0m"

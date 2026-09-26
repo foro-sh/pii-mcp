@@ -8,6 +8,7 @@
  * Patterns:
  * - Email uses bounded quantifiers (unbounded local-part ``+`` is ReDoS-prone)
  *   and ``(?!@)`` so glued addresses (``a@b.comc@d.com``) backtrack to two hits.
+ *   Local part, domain labels, and TLD accept Unicode letters (EAI / IDN).
  *   When a TLD absorbs a following IBAN/card/IP/MAC/location, the match is
  *   shortened so both hits still redact.
  * - Spaced IBANs use separate upper- and lower-case optional-space patterns so a
@@ -146,11 +147,13 @@ function replaceMatches(
   return { text: out, count };
 }
 
+// Letters and digits are Unicode (EAI / IDN: ``josé@example.com``,
+// ``ada@münchen.de``), matching Python's ``\w`` / ``[^\W_]``.
 const EMAIL_RE =
-  /[A-Za-z0-9._%+-]{1,64}@[A-Za-z0-9-]{1,63}(?:\.[A-Za-z0-9-]{1,63})*\.[A-Za-z]{2,24}(?!@)/g;
+  /[\p{L}\p{N}_.%+-]{1,64}@[\p{L}\p{N}-]{1,63}(?:\.[\p{L}\p{N}-]{1,63})*\.\p{L}{2,24}(?!@)/gu;
 
 const EMAIL_NEXT_PII_RE =
-  /^(?:[A-Za-z]{2}\d{2}[A-Za-z0-9]|\d{13,19}|\d{3}[- ./]?\d{2}[- ./]?\d{4}|\d{3}[ .]\d{3}[ .]\d{3}|\d{8,9}(?!\d)|(?:\d{1,3}\.){3}\d{1,3}|\d{1,3}\.\d{3,8}|[0-9A-Fa-f]{2}([-:/.])[0-9A-Fa-f]{2}|(?:[0-9A-Fa-f]{3,4}:|::)|[A-Za-z0-9._%+-]{1,64}@|[+0]\d)/;
+  /^(?:[A-Za-z]{2}\d{2}[A-Za-z0-9]|\d{13,19}|\d{3}[- ./]?\d{2}[- ./]?\d{4}|\d{3}[ .]\d{3}[ .]\d{3}|\d{8,9}(?!\d)|(?:\d{1,3}\.){3}\d{1,3}|\d{1,3}\.\d{3,8}|[0-9A-Fa-f]{2}([-:/.])[0-9A-Fa-f]{2}|(?:[0-9A-Fa-f]{3,4}:|::)|[\p{L}\p{N}_.%+-]{1,64}@|[+0]\d)/u;
 
 function emailEndOk(text: string, end: number): boolean {
   if (end >= text.length) {
@@ -160,7 +163,7 @@ function emailEndOk(text: string, end: number): boolean {
   if (ch === "@") {
     return false;
   }
-  if (!/[A-Za-z0-9]/.test(ch)) {
+  if (!/[\p{L}\p{N}]/u.test(ch)) {
     return true;
   }
   return EMAIL_NEXT_PII_RE.test(text.slice(end));
@@ -168,7 +171,7 @@ function emailEndOk(text: string, end: number): boolean {
 
 function emailShouldPeel(text: string, start: number, end: number): boolean {
   for (let tryEnd = end - 1; tryEnd > start; tryEnd -= 1) {
-    if (!/[A-Za-z]/.test(text[tryEnd]!)) {
+    if (!/\p{L}/u.test(text[tryEnd]!)) {
       break;
     }
     const cand = text.slice(start, tryEnd);
@@ -185,17 +188,48 @@ function emailShouldPeel(text: string, start: number, end: number): boolean {
   return false;
 }
 
+const EMAIL_DOMAIN_RUN_RE = /[\p{L}\p{N}.\-]*/uy;
+
+/**
+ * Leftmost ``EMAIL_RE`` match at or after ``pos``. Unicode letter classes make
+ * every word of non-Latin prose a local-part candidate, so the regex runs only
+ * on a window around each ``@``: 64 code points back (the local-part bound)
+ * and forward over the domain run plus one char for ``(?!@)``. A match for one
+ * ``@`` always starts before any match for the next (local parts exclude
+ * ``@``), so taking the ``@``s in order keeps the whole-text result.
+ */
+function findEmail(text: string, pos: number): [number, number] | null {
+  const re = cloneRegExp(EMAIL_RE);
+  for (let at = text.indexOf("@", pos); at !== -1; at = text.indexOf("@", at + 1)) {
+    let winStart = at;
+    for (let n = 0; n < 64 && winStart > pos; n += 1) {
+      winStart -= 1;
+      const unit = text.charCodeAt(winStart);
+      if (unit >= 0xdc00 && unit <= 0xdfff && winStart > pos) {
+        winStart -= 1;
+      }
+    }
+    EMAIL_DOMAIN_RUN_RE.lastIndex = at + 1;
+    EMAIL_DOMAIN_RUN_RE.exec(text);
+    const winEnd = Math.min(text.length, EMAIL_DOMAIN_RUN_RE.lastIndex + 1);
+    re.lastIndex = 0;
+    const m = re.exec(text.slice(winStart, winEnd));
+    if (m !== null) {
+      return [winStart + m.index, winStart + m.index + m[0].length];
+    }
+  }
+  return null;
+}
+
 function scrubEmail(text: string): { text: string; count: number } {
   let count = 0;
   const parts: string[] = [];
   let last = 0;
   let pos = 0;
-  const re = cloneRegExp(EMAIL_RE);
-  re.lastIndex = 0;
-  let match: RegExpExecArray | null;
-  while ((match = re.exec(text)) !== null) {
-    let start = match.index;
-    let end = start + match[0].length;
+  let found: [number, number] | null;
+  while ((found = findEmail(text, pos)) !== null) {
+    const start = found[0];
+    let end = found[1];
     if (!emailEndOk(text, end) || emailShouldPeel(text, start, end)) {
       let shortened: number | null = null;
       for (let tryEnd = end - 1; tryEnd > start; tryEnd -= 1) {
@@ -212,7 +246,7 @@ function scrubEmail(text: string): { text: string; count: number } {
         }
       }
       if (shortened === null) {
-        re.lastIndex = start + 1;
+        pos = start + 1;
         continue;
       }
       end = shortened;
@@ -220,8 +254,8 @@ function scrubEmail(text: string): { text: string; count: number } {
     parts.push(text.slice(last, start));
     parts.push("[EMAIL]");
     last = end;
+    pos = end;
     count += 1;
-    re.lastIndex = end;
   }
   if (count === 0) {
     return { text, count: 0 };

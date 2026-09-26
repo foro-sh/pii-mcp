@@ -354,6 +354,23 @@ describe("scrubText", () => {
     }
   });
 
+  it("masks internationalized email addresses", () => {
+    for (const value of [
+      "josé@example.com",
+      "ada@münchen.de",
+      "ада@пример.рф",
+      "zoë.müller@bücher.example.de",
+    ]) {
+      const result = scrubText(`mail ${value} ok`);
+      expect(result.text).toBe("mail [EMAIL] ok");
+      expect(result.counts.email).toBe(1);
+    }
+    expect(scrubText("ada@münchen.deNL91ABNA0417164300").text).toBe(
+      "[EMAIL][IBAN]",
+    );
+    expect(scrubText("x@y.c0m").text).toBe("x@y.c0m");
+  });
+
   it("rejects unknown language", () => {
     expect(() => scrubText("hi", { languages: ["fr"] })).toThrow(
       /unknown language/,
