@@ -823,7 +823,7 @@ def _digit_count(text: str) -> int:
 
 # Rich text / PDFs put nbsp, thin / narrow nbsp, or a unicode dash between
 # phone groups; every phone pattern accepts them alongside the ASCII seps.
-_PHONE_SEP_EXTRA = r"\xa0  ‐-―"
+_PHONE_SEP_EXTRA = r"\xa0\u2009\u202f\u2010-\u2015"
 
 # The span allows more than 15 digits so a ``(0)`` trunk between spaced groups
 # (``+44 (0) 20 7946 0958``) fits; ``_phone_international_len`` cuts it back.

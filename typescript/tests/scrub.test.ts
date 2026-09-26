@@ -271,27 +271,27 @@ describe("scrubText", () => {
   });
 
   it("masks BSN and SSN groups split by nbsp or unicode dashes", () => {
-    for (const text of ["111 222 333", "111 222 333", "111–222–333"]) {
+    for (const text of ["111\xa0222\xa0333", "111\u202f222\u202f333", "111\u2013222\u2013333"]) {
       const result = scrubText(`BSN ${text}`, { languages: ["nl"] });
       expect(result.text).toBe("BSN [BSN]");
     }
     for (const text of [
-      "219–09–9999",
-      "219‑09‑9999",
-      "219−09−9999",
-      "219 09 9999",
-      "219 09 9999",
+      "219\u201309\u20139999",
+      "219\u201109\u20119999",
+      "219\u221209\u22129999",
+      "219\xa009\xa09999",
+      "219\u200909\u20099999",
     ]) {
       const result = scrubText(`SSN ${text}`, { languages: ["en"] });
       expect(result.text).toBe("SSN [SSN]");
     }
     expect(
-      scrubText("pages 219–09 9999", { languages: ["en"] }).counts.ssn,
+      scrubText("pages 219\u201309 9999", { languages: ["en"] }).counts.ssn,
     ).toBe(0);
   });
 
   it("masks grouped German tax ids ahead of a BSN-shaped tail", () => {
-    for (const text of ["86 095 742 719", "86 095 742 719"]) {
+    for (const text of ["86 095 742 719", "86\xa0095\xa0742\xa0719"]) {
       const result = scrubText(`IdNr ${text}`, { languages: ["de"] });
       expect(result.text).toBe("IdNr [TAX_ID]");
     }
@@ -305,14 +305,14 @@ describe("scrubText", () => {
 
   it("masks phones with unicode separators or a (0) trunk whole", () => {
     const cases: [string, string[]][] = [
-      ["+31 6 12345678", ["nl"]],
-      ["+31 6 1234‑5678", ["nl"]],
-      ["+31–6–12345678", ["nl"]],
-      ["06 12345678", ["nl"]],
-      ["020–123 4567", ["nl"]],
-      ["(555) 123–4567", ["en"]],
-      ["555 123 4567", ["en"]],
-      ["030 12345678", ["de"]],
+      ["+31\xa06\xa012345678", ["nl"]],
+      ["+31 6 1234\u20115678", ["nl"]],
+      ["+31\u20136\u201312345678", ["nl"]],
+      ["06\xa012345678", ["nl"]],
+      ["020\u2013123\xa04567", ["nl"]],
+      ["(555) 123\u20134567", ["en"]],
+      ["555\u2009123\u20094567", ["en"]],
+      ["030\xa012345678", ["de"]],
       ["+44 (0) 20 7946 0958", ["en"]],
       ["+49 (0) 30 1234 5678", ["de"]],
     ];

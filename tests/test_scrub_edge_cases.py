@@ -484,9 +484,9 @@ class TestNationalIdUnicodeSeparators:
     @pytest.mark.parametrize(
         "text",
         [
-            "BSN 111 222 333",
-            "BSN 111 222 333",
-            "BSN 111–222–333",
+            "BSN 111\xa0222\xa0333",
+            "BSN 111\u202f222\u202f333",
+            "BSN 111\u2013222\u2013333",
         ],
     )
     def test_bsn_unicode_separators(self, text: str) -> None:
@@ -497,11 +497,11 @@ class TestNationalIdUnicodeSeparators:
     @pytest.mark.parametrize(
         "text",
         [
-            "SSN 219–09–9999",
-            "SSN 219‑09‑9999",
-            "SSN 219−09−9999",
-            "SSN 219 09 9999",
-            "SSN 219 09 9999",
+            "SSN 219\u201309\u20139999",
+            "SSN 219\u201109\u20119999",
+            "SSN 219\u221209\u22129999",
+            "SSN 219\xa009\xa09999",
+            "SSN 219\u200909\u20099999",
         ],
     )
     def test_ssn_unicode_separators(self, text: str) -> None:
@@ -511,7 +511,7 @@ class TestNationalIdUnicodeSeparators:
 
     def test_mixed_dash_and_space_is_not_an_ssn(self) -> None:
         # A mixed dash / space shape is not one of the SSN groupings.
-        assert scrub_text("pages 219–09 9999", languages=["en"])["counts"]["ssn"] == 0
+        assert scrub_text("pages 219\u201309 9999", languages=["en"])["counts"]["ssn"] == 0
 
 
 class TestGroupedGermanTaxId:
@@ -519,7 +519,7 @@ class TestGroupedGermanTaxId:
 
     @pytest.mark.parametrize(
         "text",
-        ["IdNr 86 095 742 719", "IdNr 86 095 742 719", "IdNr 86095742719"],
+        ["IdNr 86 095 742 719", "IdNr 86\xa0095\xa0742\xa0719", "IdNr 86095742719"],
     )
     def test_grouped_tax_id(self, text: str) -> None:
         result = scrub_text(text, languages=["de"])
@@ -543,14 +543,14 @@ class TestPhoneSeparatorsAndTrunk:
     @pytest.mark.parametrize(
         ("text", "languages"),
         [
-            ("tel +31 6 12345678", ["nl"]),
-            ("tel +31 6 1234‑5678", ["nl"]),
-            ("tel +31–6–12345678", ["nl"]),
-            ("tel 06 12345678", ["nl"]),
-            ("tel 020–123 4567", ["nl"]),
-            ("tel (555) 123–4567", ["en"]),
-            ("tel 555 123 4567", ["en"]),
-            ("tel 030 12345678", ["de"]),
+            ("tel +31\xa06\xa012345678", ["nl"]),
+            ("tel +31 6 1234\u20115678", ["nl"]),
+            ("tel +31\u20136\u201312345678", ["nl"]),
+            ("tel 06\xa012345678", ["nl"]),
+            ("tel 020\u2013123\xa04567", ["nl"]),
+            ("tel (555) 123\u20134567", ["en"]),
+            ("tel 555\u2009123\u20094567", ["en"]),
+            ("tel 030\xa012345678", ["de"]),
             ("tel +44 (0) 20 7946 0958", ["en"]),
             ("tel +49 (0) 30 1234 5678", ["de"]),
         ],
