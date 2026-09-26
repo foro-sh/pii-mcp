@@ -155,18 +155,34 @@ pub fn nl_passport_valid(value: &str) -> bool {
     true
 }
 
-/// Dutch BSN 11-check (8–9 digits, zero-padded to 9). Accepts spaced/dotted/hyphen groups.
+/// Group separators the national-id patterns accept: space, dot, hyphen,
+/// slash, nbsp, thin / narrow nbsp, and unicode dashes / minus sign.
+fn is_id_sep(c: char) -> bool {
+    matches!(
+        c,
+        ' ' | '.'
+            | '-'
+            | '/'
+            | '\u{00a0}'
+            | '\u{2009}'
+            | '\u{202f}'
+            | '\u{2010}'..='\u{2015}'
+            | '\u{2212}'
+    )
+}
+
+/// Dutch BSN 11-check (8–9 digits, zero-padded to 9). Accepts grouped forms.
 pub fn bsn_valid(value: &str) -> bool {
     let mut digits = [0u8; 9];
     let mut len = 0usize;
-    for b in value.bytes() {
-        if b == b' ' || b == b'.' || b == b'-' {
+    for c in value.chars() {
+        if is_id_sep(c) {
             continue;
         }
-        if !b.is_ascii_digit() || len >= 9 {
+        if !c.is_ascii_digit() || len >= 9 {
             return false;
         }
-        digits[len] = b;
+        digits[len] = c as u8;
         len += 1;
     }
     if !(8..=9).contains(&len) {
@@ -191,14 +207,14 @@ pub fn bsn_valid(value: &str) -> bool {
 pub fn ssn_valid(value: &str) -> bool {
     let mut digits = [0u8; 9];
     let mut len = 0usize;
-    for b in value.bytes() {
-        if b == b'-' || b == b' ' || b == b'.' || b == b'/' {
+    for c in value.chars() {
+        if is_id_sep(c) {
             continue;
         }
-        if !b.is_ascii_digit() || len >= 9 {
+        if !c.is_ascii_digit() || len >= 9 {
             return false;
         }
-        digits[len] = b;
+        digits[len] = c as u8;
         len += 1;
     }
     if len != 9 {

@@ -1029,12 +1029,18 @@ fn scrub_ip(text: &str) -> (Option<String>, u32) {
     (second.or(first).or(mapped), count)
 }
 
+/// National-id group separators: word processors and PDFs turn the typed
+/// space / hyphen into nbsp, thin / narrow nbsp, or a unicode dash.
+const ID_SPACE: &str = r"[ \u{00a0}\u{2009}\u{202f}]";
+const ID_DASH: &str = r"[\-\u{2010}-\u{2015}\u{2212}]";
+
 fn bsn_res() -> &'static [Regex] {
     static RES: OnceLock<Vec<Regex>> = OnceLock::new();
     RES.get_or_init(|| {
+        let sep = format!(r"(?:{ID_SPACE}|{ID_DASH}|\.)");
         vec![
             Regex::new(r"\b\d{8,9}\b").unwrap(),
-            Regex::new(r"\b\d{3}[ .\-]\d{3}[ .\-]\d{3}\b").unwrap(),
+            Regex::new(&format!(r"\b\d{{3}}{sep}\d{{3}}{sep}\d{{3}}\b")).unwrap(),
         ]
     })
 }
@@ -1064,9 +1070,12 @@ fn ssn_res() -> &'static [Regex] {
     static RES: OnceLock<Vec<Regex>> = OnceLock::new();
     RES.get_or_init(|| {
         vec![
-            Regex::new(r"\b\d{3}-\d{2}-\d{4}\b").unwrap(),
+            Regex::new(&format!(r"\b\d{{3}}{ID_DASH}\d{{2}}{ID_DASH}\d{{4}}\b")).unwrap(),
             Regex::new(r"\b\d{3}/\d{2}/\d{4}\b").unwrap(),
-            Regex::new(r"\b\d{3}[ .]\d{2}[ .]\d{4}\b").unwrap(),
+            Regex::new(&format!(
+                r"\b\d{{3}}(?:{ID_SPACE}|\.)\d{{2}}(?:{ID_SPACE}|\.)\d{{4}}\b"
+            ))
+            .unwrap(),
             Regex::new(r"\b\d{9}\b").unwrap(),
         ]
     })
@@ -1224,7 +1233,8 @@ fn replace_national_phone(
     hex_guard: bool,
     valid: fn(&str) -> bool,
 ) -> (Option<String>, u32) {
-    let right_ok = |e: usize| no_trailing_digit(text, e) && (!hex_guard || no_trailing_hex_letters(text, e));
+    let right_ok =
+        |e: usize| no_trailing_digit(text, e) && (!hex_guard || no_trailing_hex_letters(text, e));
     let mut count = 0u32;
     let mut out: Option<String> = None;
     let mut last = 0usize;
@@ -1284,9 +1294,7 @@ fn scrub_phone_de(text: &str) -> (Option<String>, u32) {
 
 fn nl_postcode_re() -> &'static Regex {
     static RE: OnceLock<Regex> = OnceLock::new();
-    RE.get_or_init(|| {
-        Regex::new(r"\b[1-9]\d{3}\s+[A-Z]{2}\b|\b[1-9]\d{3}[A-Z]{2}\b").unwrap()
-    })
+    RE.get_or_init(|| Regex::new(r"\b[1-9]\d{3}\s+[A-Z]{2}\b|\b[1-9]\d{3}[A-Z]{2}\b").unwrap())
 }
 
 fn scrub_nl_postcode(text: &str) -> (Option<String>, u32) {

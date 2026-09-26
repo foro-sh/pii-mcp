@@ -37,7 +37,8 @@ Patterns:
   locatiegegevens as privacy-sensitive). Pairs with both |values| <= 1 are
   rejected (open ocean; embedding / weight vectors).
 - US SSN: hyphen/space/dot/slash or compact 9-digit with SSA area/group/serial
-  rejects, plus obvious fakes (all-same digit, 123456789 / 987654321).
+  rejects, plus obvious fakes (all-same digit, 123456789 / 987654321). Grouped
+  SSN / BSN forms also accept nbsp, thin / narrow nbsp, and unicode dashes.
 - German Steuer-IdNr (tax_id): 11 digits with structure + mod-11/10 check.
 - NL BTW-id (``vat_id``): ``NL`` + 9 digits + ``B`` + 2 digits with optional
   spaces/dots (format only — post-2020 sole-trader ids are not elfproef-gated).
@@ -590,15 +591,29 @@ def _scrub_location(text: str) -> tuple[str, int]:
 
 location_detector = Detector(type="location", scrub=_scrub_location)
 
+# Group separators for national ids: word processors and PDFs turn the
+# typed space / hyphen into nbsp, thin / narrow nbsp, or a unicode dash.
+_ID_SPACE = r"[ \xa0\u2009\u202f]"
+_ID_DASH = r"[\-\u2010-\u2015\u2212]"
+_ID_SEP_CHARS = " .-/\xa0\u2009\u202f\u2010\u2011\u2012\u2013\u2014\u2015\u2212"
+
+
+def _strip_id_seps(value: str) -> str:
+    """Drop the group separators national-id patterns accept, keeping digits."""
+    return value.translate({ord(ch): None for ch in _ID_SEP_CHARS})
+
+
 # ``(?<!\d\.)``: the fractional part of a decimal (``0.12345678``) is not an id.
 BSN_RES: tuple[re.Pattern[str], ...] = (
     re.compile(r"(?<!\d\.)\b\d{8,9}\b"),
-    re.compile(r"\b\d{3}[ .\-]\d{3}[ .\-]\d{3}\b"),
+    re.compile(
+        rf"\b\d{{3}}(?:{_ID_SPACE}|{_ID_DASH}|\.)\d{{3}}(?:{_ID_SPACE}|{_ID_DASH}|\.)\d{{3}}\b"
+    ),
 )
 
 
 def _bsn_valid(value: str) -> bool:
-    digits = re.sub(r"[ .\-]", "", value)
+    digits = _strip_id_seps(value)
     if len(digits) < 8 or len(digits) > 9 or not digits.isdigit():
         return False
     padded = digits.zfill(9)
@@ -621,9 +636,9 @@ def _scrub_bsn(text: str) -> tuple[str, int]:
 bsn_detector = Detector(type="bsn", scrub=_scrub_bsn)
 
 SSN_RES: tuple[re.Pattern[str], ...] = (
-    re.compile(r"\b\d{3}-\d{2}-\d{4}\b"),
+    re.compile(rf"\b\d{{3}}{_ID_DASH}\d{{2}}{_ID_DASH}\d{{4}}\b"),
     re.compile(r"\b\d{3}/\d{2}/\d{4}\b"),
-    re.compile(r"\b\d{3}[ .]\d{2}[ .]\d{4}\b"),
+    re.compile(rf"\b\d{{3}}(?:{_ID_SPACE}|\.)\d{{2}}(?:{_ID_SPACE}|\.)\d{{4}}\b"),
     re.compile(r"(?<!\d\.)\b\d{9}\b"),
 )
 
@@ -639,7 +654,7 @@ def _ssn_obviously_fake(digits: str) -> bool:
 
 def _ssn_valid(value: str) -> bool:
     """SSA rejects: area 000/666/9xx, group 00, serial 0000; drop obvious fakes."""
-    digits = re.sub(r"[ .\-/]", "", value)
+    digits = _strip_id_seps(value)
     if len(digits) != 9 or not digits.isdigit():
         return False
     if _ssn_obviously_fake(digits):

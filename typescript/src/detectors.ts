@@ -35,7 +35,8 @@
  *   locatiegegevens as privacy-sensitive). Pairs with both |values| <= 1 are
  *   rejected (open ocean; embedding / weight vectors).
  * - US SSN: hyphen/space/dot/slash or compact 9-digit with SSA area/group/serial
- *   rejects, plus obvious fakes (all-same digit, 123456789 / 987654321).
+ *   rejects, plus obvious fakes (all-same digit, 123456789 / 987654321). Grouped
+ *   SSN / BSN forms also accept nbsp, thin / narrow nbsp, and unicode dashes.
  * - German Steuer-IdNr (tax_id): 11 digits with structure + mod-11/10 check.
  * - NL BTW-id (``vat_id``): ``NL`` + 9 digits + ``B`` + 2 digits with optional
  *   spaces/dots (format only — post-2020 sole-trader ids are not elfproef-gated).
@@ -592,14 +593,23 @@ export const locationDetector: Detector = {
   scrub: scrubLocation,
 };
 
+// Group separators for national ids: word processors and PDFs turn the typed
+// space / hyphen into nbsp, thin / narrow nbsp, or a unicode dash.
+const ID_SPACE = String.raw`[ \xa0\u2009\u202f]`;
+const ID_DASH = String.raw`[\-\u2010-\u2015\u2212]`;
+const ID_SEPS = /[ .\-/\xa0\u2009\u202f\u2010-\u2015\u2212]/g;
+
 // ``(?<!\d\.)``: the fractional part of a decimal (``0.12345678``) is not an id.
 const BSN_RES = [
   /(?<!\d\.)\b\d{8,9}\b/g,
-  /\b\d{3}[ .\-]\d{3}[ .\-]\d{3}\b/g,
+  new RegExp(
+    String.raw`\b\d{3}(?:${ID_SPACE}|${ID_DASH}|\.)\d{3}(?:${ID_SPACE}|${ID_DASH}|\.)\d{3}\b`,
+    "g",
+  ),
 ] as const;
 
 function bsnValid(value: string): boolean {
-  const digits = value.replace(/[ .\-]/g, "");
+  const digits = value.replace(ID_SEPS, "");
   if (digits.length < 8 || digits.length > 9 || !/^\d+$/.test(digits)) {
     return false;
   }
@@ -629,9 +639,12 @@ function scrubBsn(text: string): { text: string; count: number } {
 export const bsnDetector: Detector = { type: "bsn", scrub: scrubBsn };
 
 const SSN_RES = [
-  /\b\d{3}-\d{2}-\d{4}\b/g,
+  new RegExp(String.raw`\b\d{3}${ID_DASH}\d{2}${ID_DASH}\d{4}\b`, "g"),
   /\b\d{3}\/\d{2}\/\d{4}\b/g,
-  /\b\d{3}[ .]\d{2}[ .]\d{4}\b/g,
+  new RegExp(
+    String.raw`\b\d{3}(?:${ID_SPACE}|\.)\d{2}(?:${ID_SPACE}|\.)\d{4}\b`,
+    "g",
+  ),
   /(?<!\d\.)\b\d{9}\b/g,
 ] as const;
 
@@ -643,7 +656,7 @@ function ssnObviouslyFake(digits: string): boolean {
 }
 
 function ssnValid(value: string): boolean {
-  const digits = value.replace(/[ .\-/]/g, "");
+  const digits = value.replace(ID_SEPS, "");
   if (digits.length !== 9 || !/^\d{9}$/.test(digits)) {
     return false;
   }

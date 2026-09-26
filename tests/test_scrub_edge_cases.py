@@ -475,3 +475,40 @@ class TestLocationSubUnitPairs:
 
     def test_hemisphere_letter_not_glued_to_following_word(self) -> None:
         assert scrub_text("at 52.3676, 4.9041 exactly")["text"] == "at [LOCATION] exactly"
+
+
+
+class TestNationalIdUnicodeSeparators:
+    """Word processors swap the typed space / hyphen for nbsp or a unicode dash."""
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "BSN 111 222 333",
+            "BSN 111 222 333",
+            "BSN 111–222–333",
+        ],
+    )
+    def test_bsn_unicode_separators(self, text: str) -> None:
+        result = scrub_text(text, languages=["nl"])
+        assert result["text"] == "BSN [BSN]"
+        assert result["counts"]["bsn"] == 1
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "SSN 219–09–9999",
+            "SSN 219‑09‑9999",
+            "SSN 219−09−9999",
+            "SSN 219 09 9999",
+            "SSN 219 09 9999",
+        ],
+    )
+    def test_ssn_unicode_separators(self, text: str) -> None:
+        result = scrub_text(text, languages=["en"])
+        assert result["text"] == "SSN [SSN]"
+        assert result["counts"]["ssn"] == 1
+
+    def test_mixed_dash_and_space_is_not_an_ssn(self) -> None:
+        # A mixed dash / space shape is not one of the SSN groupings.
+        assert scrub_text("pages 219–09 9999", languages=["en"])["counts"]["ssn"] == 0

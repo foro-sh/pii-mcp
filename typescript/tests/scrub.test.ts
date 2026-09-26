@@ -270,6 +270,26 @@ describe("scrubText", () => {
     expect(result.counts.passport).toBe(1);
   });
 
+  it("masks BSN and SSN groups split by nbsp or unicode dashes", () => {
+    for (const text of ["111 222 333", "111 222 333", "111–222–333"]) {
+      const result = scrubText(`BSN ${text}`, { languages: ["nl"] });
+      expect(result.text).toBe("BSN [BSN]");
+    }
+    for (const text of [
+      "219–09–9999",
+      "219‑09‑9999",
+      "219−09−9999",
+      "219 09 9999",
+      "219 09 9999",
+    ]) {
+      const result = scrubText(`SSN ${text}`, { languages: ["en"] });
+      expect(result.text).toBe("SSN [SSN]");
+    }
+    expect(
+      scrubText("pages 219–09 9999", { languages: ["en"] }).counts.ssn,
+    ).toBe(0);
+  });
+
   it("rejects unknown language", () => {
     expect(() => scrubText("hi", { languages: ["fr"] })).toThrow(
       /unknown language/,
