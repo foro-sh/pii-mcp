@@ -189,8 +189,8 @@ fn email_re() -> &'static Regex {
     RE.get_or_init(|| {
         // Letters and digits are Unicode (EAI / IDN: ``josé@example.com``,
         // ``ada@münchen.de``), matching Python's ``\w`` / ``[^\W_]``, except
-        // that unspaced scripts may not form the local part or the TLD (see
-        // ``is_unspaced_script``). Bounded Unicode classes need a larger
+        // that a TLD may not mix unspaced scripts with others (see
+        // ``UNSPACED_SCRIPTS``). Bounded Unicode classes need a larger
         // lazy-DFA cache than the 2 MiB default, or big inputs fall back to
         // the ~30x slower NFA engine.
         regex::RegexBuilder::new(&format!(
@@ -291,10 +291,14 @@ fn scrub_email(text: &str) -> (Option<String>, u32) {
             }
             match shortened {
                 Some(e) => end = e,
-                None => {
+                // Python's ``(?!@)`` never yields a match right before ``@``.
+                None if text[end..].starts_with('@') => {
                     pos = start + 1;
                     continue;
                 }
+                // No clean shorter end (letters glued after the TLD): mask the
+                // match as found rather than leak the address.
+                None => {}
             }
         }
         let buf = out.get_or_insert_with(|| String::with_capacity(text.len()));

@@ -394,6 +394,12 @@ describe("scrubText", () => {
       "[EMAIL][IBAN]",
     );
     expect(scrubText("x@y.c0m").text).toBe("x@y.c0m");
+    // Letters glued after the TLD: masked as found instead of dropped.
+    for (const glue of ["a".repeat(30), "\ua188".repeat(30), "\ua98f".repeat(30)]) {
+      const text = scrubText(`mail ada@example.com${glue}`).text;
+      expect(text.startsWith("mail [EMAIL]")).toBe(true);
+      expect(text).not.toContain("@");
+    }
     for (const [text, expected] of [
       [
         "\u8bf7\u53d1\u9001\u81f3ada@example.com\u4ee5\u4fbf\u56de\u590d",

@@ -257,10 +257,10 @@ def _scrub_email(text: str) -> tuple[str, int]:
                 if _email_end_ok(text, try_end):
                     shortened = try_end
                     break
-            if shortened is None:
-                pos = start + 1
-                continue
-            end = shortened
+            # No clean shorter end (letters glued after the TLD): mask the
+            # match as found rather than leak the address.
+            if shortened is not None:
+                end = shortened
         parts.append(text[last:start])
         parts.append("[EMAIL]")
         last = end

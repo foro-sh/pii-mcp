@@ -276,11 +276,11 @@ function scrubEmail(text: string): { text: string; count: number } {
           break;
         }
       }
-      if (shortened === null) {
-        pos = start + 1;
-        continue;
+      // No clean shorter end (letters glued after the TLD): mask the match as
+      // found rather than leak the address.
+      if (shortened !== null) {
+        end = shortened;
       }
-      end = shortened;
     }
     parts.push(text.slice(last, start));
     parts.push("[EMAIL]");

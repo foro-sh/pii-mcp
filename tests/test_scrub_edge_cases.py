@@ -717,6 +717,14 @@ class TestInternationalizedEmail:
         # Unspaced-script and mixed-script local parts are masked whole.
         assert scrub_text(f"mail {value} ok")["text"] == "mail [EMAIL] ok"
 
+    @pytest.mark.parametrize("glue", ["a" * 30, "\ua188" * 30, "\ua98f" * 30])
+    def test_letters_glued_after_tld_do_not_leak(self, glue: str) -> None:
+        # Latin, Yi, Javanese: no clean end exists, so the match is masked
+        # as found (with part of the glue) instead of dropped.
+        result = scrub_text(f"mail ada@example.com{glue}")
+        assert result["text"].startswith("mail [EMAIL]")
+        assert "@" not in result["text"]
+
     def test_digit_tld_still_rejected(self) -> None:
         assert scrub_text("x@y.c0m")["text"] == "x@y.c0m"
 
