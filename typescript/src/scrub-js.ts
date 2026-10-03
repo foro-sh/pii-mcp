@@ -3,7 +3,7 @@
  *
  * Universal detectors (email, IBAN, credit card, BIC, MAC, IMEI, IP, location)
  * always run. Locale packs add national IDs / phone shapes / NL and UK
- * postcodes / kentekens / BTW-ids / passport numbers. Counts always include
+ * postcodes / kentekens / VAT IDs / passport numbers. Counts always include
  * every ``PiiType`` key (0 when unused), including ``person`` (filled only by
  * the optional Rust NER pass). ``address`` counts street + house number hits
  * and NL / UK postcodes.
@@ -15,14 +15,15 @@
  * (when any pack is active, before national IDs so ``+31(0)6…`` is not eaten by
  * SSN) → locale phone forms (before BSN takes the subscriber part of
  * ``040 78703244``) → checksum/rule-backed national IDs (DE IdNr before BSN,
- * BSN before SSN when both packs are on, US ITIN before SSN; NL BTW before
- * BSN, passport after) → street + house number per pack (en, de, nl) →
+ * BSN before SSN when both packs are on, US ITIN before SSN; DE USt-IdNr and
+ * NL BTW before BSN, passport after) → street + house number per pack (en, de, nl) →
  * postcode per pack → kenteken when ``nl``.
  */
 
 import {
   UNIVERSAL_DETECTORS,
   bsnDetector,
+  deVatDetector,
   itinDetector,
   nlLicensePlateDetector,
   nlPassportDetector,
@@ -116,7 +117,7 @@ function detectorsFor(
   if (langs.includes("de")) {
     // Tax id before BSN: the last three groups of ``12 345 678 901`` are a
     // spaced 9-digit BSN candidate.
-    pack.push(phoneDeDetector, taxIdDetector);
+    pack.push(phoneDeDetector, taxIdDetector, deVatDetector);
   }
   if (langs.includes("nl")) {
     // BTW-id first: its 9-digit body can itself pass the BSN elfproef.

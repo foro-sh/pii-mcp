@@ -215,6 +215,20 @@ def vat_nl(r: R) -> str:
     return value if r.random() < 0.7 else f"NL {value[2:11]} B{value[12:]}"
 
 
+def vat_de(r: R) -> str:
+    body = str(r.randint(1, 9)) + _digits(r, 7)
+    product = 10
+    for digit in body:
+        total = (int(digit) + product) % 10 or 10
+        product = (2 * total) % 11
+    value = body + str((11 - product) % 10)
+    style = r.random()
+    if style < 0.5:
+        return f"DE{value}"
+    sep = " " if style < 0.85 else "."
+    return "DE" + sep + _group(value, (3, 3, 3), sep)
+
+
 def passport_nl(r: R) -> str:
     letters = string.ascii_uppercase.replace("O", "")
     alnum = letters + string.digits
@@ -382,6 +396,7 @@ PII: list[tuple[str, Callable[[R], str], tuple[str, ...]]] = [
     ("tax_id", tax_id_de, ("de",)),
     ("tax_id", itin, ("en",)),
     ("vat_id", vat_nl, ("nl",)),
+    ("vat_id", vat_de, ("de",)),
     ("passport", passport_nl, ("nl",)),
     ("phone", phone_nl, ("nl",)),
     ("phone", phone_en, ("en",)),
@@ -415,6 +430,8 @@ def _ean13(r: R) -> str:
 
 
 CLEAN: list[tuple[str, Callable[[R], str]]] = [
+    ("vat_de_bad_checksum", lambda r: "DE136695977"),
+    ("vat_de_leading_zero", lambda r: "DE036695976"),
     ("uuid", lambda r: str(uuid.UUID(int=r.getrandbits(128), version=4))),
     ("sha256", lambda r: f"{r.getrandbits(256):064x}"),
     ("git_sha", lambda r: f"commit {r.getrandbits(160):040x}"),

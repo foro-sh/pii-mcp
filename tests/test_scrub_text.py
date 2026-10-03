@@ -189,6 +189,38 @@ class TestBsn:
         assert result["counts"]["ssn"] == 0
 
 
+class TestDeVat:
+    @pytest.mark.parametrize("value", ["DE136695976", "DE 136 695 976", "DE.136.695.976"])
+    def test_masks_valid_id(self, value: str) -> None:
+        result = scrub_text(f"VAT {value} on file", languages=["de"])
+        assert result["text"] == "VAT [VAT_ID] on file"
+        assert result["counts"]["vat_id"] == 1
+
+    @pytest.mark.parametrize(
+        "value",
+        [
+            "DE136695977",
+            "DE036695976",
+            "de136695976",
+            "xDE136695976",
+            "DE136695976x",
+        ],
+    )
+    def test_rejects_invalid_id(self, value: str) -> None:
+        result = scrub_text(value, languages=["de"])
+        assert result["text"] == value
+        assert result["counts"]["vat_id"] == 0
+
+    def test_disabled_without_de(self) -> None:
+        result = scrub_text("DE136695976", languages=["en", "nl"])
+        assert result["text"] == "DE136695976"
+        assert result["counts"]["vat_id"] == 0
+
+    def test_masks_in_json(self) -> None:
+        result = scrub_text('{"vat":"DE136695976"}', languages=["de"])
+        assert result["text"] == '{"vat":"[VAT_ID]"}'
+
+
 class TestNlVat:
     def test_masks_btw_id(self) -> None:
         result = scrub_text("factuur NL000099998B57", languages=["nl"])

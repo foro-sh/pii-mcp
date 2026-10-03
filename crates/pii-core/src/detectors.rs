@@ -2,6 +2,8 @@
 //!
 //! Patterns mirror `pii_mcp.detectors`. Python lookarounds are enforced with
 //! explicit boundary checks so matching stays on the linear-time `regex` crate.
+//! German USt-IdNr (`vat_id`) accepts uppercase `DE` and nine digits, compact
+//! or in three groups, with an ISO 7064 MOD 11,10 check digit.
 
 use crate::checksum::{
     bsn_valid_grouped, iban_valid, imei_valid, is_group_sep, itin_valid_grouped, luhn_valid,
@@ -67,6 +69,10 @@ pub struct Detector {
 
 fn is_word_char(c: char) -> bool {
     c.is_ascii_alphanumeric() || c == '_'
+}
+
+fn is_ip_word_char(c: char) -> bool {
+    c.is_alphanumeric() || c == '_'
 }
 
 /// Replace accepted matches. Allocates only when at least one match is kept.
@@ -1182,13 +1188,13 @@ fn ipv4_boundary_ok(text: &str, start: usize, end: usize) -> bool {
     // (?<![\w.]) ... (?![\w.]) — IPv6-embedded forms are consumed first.
     if start > 0 {
         let prev = text[..start].chars().next_back().unwrap();
-        if is_word_char(prev) || prev == '.' {
+        if is_ip_word_char(prev) || prev == '.' {
             return false;
         }
     }
     if end < text.len() {
         let next = text[end..].chars().next().unwrap();
-        if is_word_char(next) || next == '.' {
+        if is_ip_word_char(next) || next == '.' {
             return false;
         }
     }
@@ -1199,13 +1205,13 @@ fn ipv6_v4_boundary_ok(text: &str, start: usize, end: usize) -> bool {
     // (?<![\w.]) ... (?![\w.]); a label colon is left to ``colon_label_ok``.
     if start > 0 {
         let prev = text[..start].chars().next_back().unwrap();
-        if is_word_char(prev) || prev == '.' || !colon_label_ok(text, start) {
+        if is_ip_word_char(prev) || prev == '.' || !colon_label_ok(text, start) {
             return false;
         }
     }
     if end < text.len() {
         let next = text[end..].chars().next().unwrap();
-        if is_word_char(next) || next == '.' {
+        if is_ip_word_char(next) || next == '.' {
             return false;
         }
     }
@@ -1217,13 +1223,13 @@ fn ipv6_boundary_ok(text: &str, start: usize, end: usize) -> bool {
     // ``colon_label_ok``.
     if start > 0 {
         let prev = text[..start].chars().next_back().unwrap();
-        if is_word_char(prev) || !colon_label_ok(text, start) {
+        if is_ip_word_char(prev) || !colon_label_ok(text, start) {
             return false;
         }
     }
     if end < text.len() {
         let next = text[end..].chars().next().unwrap();
-        if is_word_char(next) || next == ':' {
+        if is_ip_word_char(next) || next == ':' {
             return false;
         }
     }
@@ -1845,6 +1851,31 @@ fn nl_vat_re() -> &'static Regex {
     RE.get_or_init(|| Regex::new(r"\b[Nn][Ll][.\s]*\d{9}[.\s]*[Bb][.\s]*\d{2}\b").unwrap())
 }
 
+fn de_vat_re() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| Regex::new(r"\bDE[.\s]*[1-9][0-9]{2}[.\s]*[0-9]{3}[.\s]*[0-9]{3}\b").unwrap())
+}
+
+fn de_vat_valid(value: &str) -> bool {
+    let digits: Vec<u8> = value.bytes().filter(|b| b.is_ascii_digit()).collect();
+    let mut product = 10u32;
+    for digit in digits.iter().take(8) {
+        let total = (u32::from(*digit - b'0') + product) % 10;
+        product = (2 * if total == 0 { 10 } else { total }) % 11;
+    }
+    (11 - product) % 10 == u32::from(digits[8] - b'0')
+}
+
+fn scrub_de_vat(text: &str) -> (Option<String>, u32) {
+    replace_matches(
+        text,
+        de_vat_re(),
+        "[VAT_ID]",
+        |v, _, _| de_vat_valid(v),
+        false,
+    )
+}
+
 fn scrub_nl_vat(text: &str) -> (Option<String>, u32) {
     replace_matches(text, nl_vat_re(), "[VAT_ID]", |_, _, _| true, false)
 }
@@ -1996,6 +2027,10 @@ fn build_detectors(mask: u8) -> Vec<Detector> {
         pack.push(Detector {
             category: PiiCategory::TaxId,
             scrub: scrub_tax_id,
+        });
+        pack.push(Detector {
+            category: PiiCategory::VatId,
+            scrub: scrub_de_vat,
         });
     }
     if has_nl {

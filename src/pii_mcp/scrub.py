@@ -2,7 +2,7 @@
 
 Universal detectors (email, IBAN, credit card, BIC, MAC, IMEI, IP, location)
 always run. Locale packs add national IDs / phone shapes / NL and UK postcodes /
-kentekens / BTW-ids / passport numbers. Counts always include every
+kentekens / VAT IDs / passport numbers. Counts always include every
 ``PiiType`` key (0 when unused). ``person`` is filled only by ``ner=True``,
 which runs a person-name NER pass after the pattern detectors and needs the
 native extension built with the ``ner`` feature (see the README).
@@ -15,8 +15,8 @@ Detector pack order (see ``_detectors_for``): universal → international phone
 (when any pack is active, before national IDs so ``+31(0)6…`` is not eaten by
 SSN) → locale phone forms (before BSN takes the subscriber part of
 ``040 78703244``) → checksum/rule-backed national IDs (DE IdNr before BSN,
-BSN before SSN when both packs are on, US ITIN before SSN; NL BTW before
-BSN, passport after) → street + house number per pack (en, de, nl) →
+BSN before SSN when both packs are on, US ITIN before SSN; DE USt-IdNr and
+NL BTW before BSN, passport after) → street + house number per pack (en, de, nl) →
 postcode per pack → kenteken when ``nl``.
 
 Optional Rust acceleration: when ``pii_mcp._native`` is importable (shipped in
@@ -37,6 +37,7 @@ from pii_mcp.detectors import (
     UNIVERSAL_DETECTORS,
     Detector,
     bsn_detector,
+    de_vat_detector,
     itin_detector,
     nl_license_plate_detector,
     nl_passport_detector,
@@ -201,6 +202,7 @@ def _detectors_for(languages: Sequence[str] | None) -> tuple[Detector, ...]:
         # Before BSN: the last three groups of ``12 345 678 901`` are a
         # spaced 9-digit BSN candidate.
         pack.append(tax_id_detector)
+        pack.append(de_vat_detector)
     if "nl" in langs:
         # BTW-id first: its 9-digit body can itself pass the BSN elfproef.
         pack.append(nl_vat_detector)
