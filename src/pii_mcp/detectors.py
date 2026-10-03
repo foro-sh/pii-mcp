@@ -51,6 +51,8 @@ Patterns:
   with structure + mod-11/10 check.
 - NL BTW-id (``vat_id``): ``NL`` + 9 digits + ``B`` + 2 digits with optional
   spaces/dots (format only — post-2020 sole-trader ids are not elfproef-gated).
+- German USt-IdNr (``vat_id``): ``DE`` + 9 digits (first not ``0``), compact or
+  groups separated by spaces/dots; MOD 11,10 check digit is validated.
 - NL passport / ID-card number (``passport``): 9-char RvIG document number
   (``[A-Za-z]{2}[0-9A-Za-z]{6}[0-9]``, letter O forbidden after uppercasing)
   — national identificatienummer alongside BSN; format only, no check digit.
@@ -762,6 +764,8 @@ location_detector = Detector(type="location", scrub=_scrub_location)
 # typed space / hyphen into nbsp, thin / narrow nbsp, or a unicode dash.
 _ID_SPACE = f"[ {_GROUP_SPACES}]"
 _ID_DASH = f"[\\-{_GROUP_DASHES}]"
+# Class form of the same separators for inline use in f-string patterns.
+_ID_SEP_CLASS = f"[ .{_GROUP_SPACES}{_GROUP_DASHES}\\-]"
 # Everything the id patterns accept between groups.
 _ID_SEP_TABLE = str.maketrans(
     "", "", " ./-" + _GROUP_SPACES + _GROUP_DASHES
@@ -933,6 +937,50 @@ def _scrub_nl_vat(text: str) -> tuple[str, int]:
 
 
 nl_vat_detector = Detector(type="vat_id", scrub=_scrub_nl_vat)
+
+# German USt-IdNr: ``DE`` + 9 digits, the first never ``0``; groups separated
+# by spaces or dots (``DE 136 695 976`` / ``DE 136.695.976``), compact after
+# the prefix (``DE136695976``). The 9th digit is a MOD 11,10 check digit, so
+# unlike the NL BTW-id a wrong one is rejected instead of masked (BZSt).
+DE_VAT_RES: tuple[re.Pattern[str], ...] = (
+    re.compile(r"\b[Dd][Ee][1-9]\d{8}\b"),
+    re.compile(
+        rf"\b[Dd][Ee]{_ID_SEP_CLASS}*[1-9]\d{{2}}"
+        rf"(?:{_ID_SEP_CLASS})?\d{{3}}(?:{_ID_SEP_CLASS})?\d{{3}}\b"
+    ),
+)
+
+
+def _de_vat_valid(value: str) -> bool:
+    compact = _strip_id_seps(value)
+    prefix, body = compact[:2], compact[2:]
+    if prefix.upper() != "DE":
+        return False
+    if len(body) != 9 or not body.isdigit() or body[0] == "0":
+        return False
+    # MOD 11,10 (ISO 7064), same recursion as the Steuer-IdNr check digit.
+    product = 10
+    for ch in body[:8]:
+        total = (int(ch) + product) % 10
+        if total == 0:
+            total = 10
+        product = (2 * total) % 11
+    check = 11 - product
+    if check == 10:
+        check = 0
+    return check == int(body[8])
+
+
+def _scrub_de_vat(text: str) -> tuple[str, int]:
+    out = text
+    count = 0
+    for pattern in DE_VAT_RES:
+        out, n = _replace_matches(out, pattern, "[VAT_ID]", _de_vat_valid)
+        count += n
+    return out, count
+
+
+de_vat_detector = Detector(type="vat_id", scrub=_scrub_de_vat)
 
 # RvIG document number (passport / NIK): positions 1–2 letters, 3–8 alnum,
 # 9 digit; letter O never used (RvIG kenmerkenbrochure). Case-insensitive —

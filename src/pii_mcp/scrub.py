@@ -41,6 +41,7 @@ from pii_mcp.detectors import (
     nl_license_plate_detector,
     nl_passport_detector,
     nl_postcode_detector,
+    de_vat_detector,
     nl_vat_detector,
     phone_de_detector,
     phone_en_detector,
@@ -198,6 +199,8 @@ def _detectors_for(languages: Sequence[str] | None) -> tuple[Detector, ...]:
         pack.append(phone_en_detector)
     if "de" in langs:
         pack.append(phone_de_detector)
+        # USt-IdNr first: its compact 9-digit body is a spaced-BSN shape.
+        pack.append(de_vat_detector)
         # Before BSN: the last three groups of ``12 345 678 901`` are a
         # spaced 9-digit BSN candidate.
         pack.append(tax_id_detector)
