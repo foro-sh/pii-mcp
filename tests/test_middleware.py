@@ -6,9 +6,8 @@ from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
-from mcp.types import TextContent
-
 from fastmcp.tools import ToolResult
+from mcp.types import TextContent
 
 from pii_mcp.fastmcp import WITHHELD_TEXT, PiiScrubMiddleware
 from pii_mcp.scrub import ScrubReport
