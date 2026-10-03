@@ -310,6 +310,29 @@ mod tests {
     use super::*;
 
     #[test]
+    fn masks_only_valid_german_vat_ids_in_de_pack() {
+        let de = [LanguageCode::De];
+        for value in ["DE136695976", "DE 136 695 976", "DE.136.695.976"] {
+            let r = scrub_text_langs(&format!("VAT {value} on file"), &de, true, false).unwrap();
+            assert_eq!(r.text, "VAT [VAT_ID] on file");
+            assert_eq!(r.counts["vat_id"], 1);
+        }
+        for value in [
+            "DE136695977",
+            "DE036695976",
+            "de136695976",
+            "xDE136695976",
+            "DE136695976x",
+        ] {
+            let r = scrub_text_langs(value, &de, true, false).unwrap();
+            assert_eq!(r.text, value);
+            assert_eq!(r.counts["vat_id"], 0);
+        }
+        let r = scrub_text("DE136695976", None, true, false).unwrap();
+        assert_eq!(r.text, "DE136695976");
+    }
+
+    #[test]
     fn ipv6_embedded_in_unicode_word_stays_outside_the_word() {
         let text = "Hauptstraße64:ff9b::142.227.134.185";
         let r = scrub_text(text, None, true, false).unwrap();

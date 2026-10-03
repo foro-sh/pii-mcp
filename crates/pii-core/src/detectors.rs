@@ -2,6 +2,8 @@
 //!
 //! Patterns mirror `pii_mcp.detectors`. Python lookarounds are enforced with
 //! explicit boundary checks so matching stays on the linear-time `regex` crate.
+//! German USt-IdNr (`vat_id`) accepts uppercase `DE` and nine digits, compact
+//! or in three groups, with an ISO 7064 MOD 11,10 check digit.
 
 use crate::checksum::{
     bsn_valid_grouped, iban_valid, imei_valid, is_group_sep, itin_valid_grouped, luhn_valid,
@@ -1849,6 +1851,31 @@ fn nl_vat_re() -> &'static Regex {
     RE.get_or_init(|| Regex::new(r"\b[Nn][Ll][.\s]*\d{9}[.\s]*[Bb][.\s]*\d{2}\b").unwrap())
 }
 
+fn de_vat_re() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| Regex::new(r"\bDE[.\s]*[1-9][0-9]{2}[.\s]*[0-9]{3}[.\s]*[0-9]{3}\b").unwrap())
+}
+
+fn de_vat_valid(value: &str) -> bool {
+    let digits: Vec<u8> = value.bytes().filter(|b| b.is_ascii_digit()).collect();
+    let mut product = 10u32;
+    for digit in digits.iter().take(8) {
+        let total = (u32::from(*digit - b'0') + product) % 10;
+        product = (2 * if total == 0 { 10 } else { total }) % 11;
+    }
+    (11 - product) % 10 == u32::from(digits[8] - b'0')
+}
+
+fn scrub_de_vat(text: &str) -> (Option<String>, u32) {
+    replace_matches(
+        text,
+        de_vat_re(),
+        "[VAT_ID]",
+        |v, _, _| de_vat_valid(v),
+        false,
+    )
+}
+
 fn scrub_nl_vat(text: &str) -> (Option<String>, u32) {
     replace_matches(text, nl_vat_re(), "[VAT_ID]", |_, _, _| true, false)
 }
@@ -2000,6 +2027,10 @@ fn build_detectors(mask: u8) -> Vec<Detector> {
         pack.push(Detector {
             category: PiiCategory::TaxId,
             scrub: scrub_tax_id,
+        });
+        pack.push(Detector {
+            category: PiiCategory::VatId,
+            scrub: scrub_de_vat,
         });
     }
     if has_nl {
