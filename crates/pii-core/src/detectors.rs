@@ -69,6 +69,10 @@ fn is_word_char(c: char) -> bool {
     c.is_ascii_alphanumeric() || c == '_'
 }
 
+fn is_ip_word_char(c: char) -> bool {
+    c.is_alphanumeric() || c == '_'
+}
+
 /// Replace accepted matches. Allocates only when at least one match is kept.
 fn replace_matches<F>(
     text: &str,
@@ -1182,13 +1186,13 @@ fn ipv4_boundary_ok(text: &str, start: usize, end: usize) -> bool {
     // (?<![\w.]) ... (?![\w.]) — IPv6-embedded forms are consumed first.
     if start > 0 {
         let prev = text[..start].chars().next_back().unwrap();
-        if is_word_char(prev) || prev == '.' {
+        if is_ip_word_char(prev) || prev == '.' {
             return false;
         }
     }
     if end < text.len() {
         let next = text[end..].chars().next().unwrap();
-        if is_word_char(next) || next == '.' {
+        if is_ip_word_char(next) || next == '.' {
             return false;
         }
     }
@@ -1199,13 +1203,13 @@ fn ipv6_v4_boundary_ok(text: &str, start: usize, end: usize) -> bool {
     // (?<![\w.]) ... (?![\w.]); a label colon is left to ``colon_label_ok``.
     if start > 0 {
         let prev = text[..start].chars().next_back().unwrap();
-        if is_word_char(prev) || prev == '.' || !colon_label_ok(text, start) {
+        if is_ip_word_char(prev) || prev == '.' || !colon_label_ok(text, start) {
             return false;
         }
     }
     if end < text.len() {
         let next = text[end..].chars().next().unwrap();
-        if is_word_char(next) || next == '.' {
+        if is_ip_word_char(next) || next == '.' {
             return false;
         }
     }
@@ -1217,13 +1221,13 @@ fn ipv6_boundary_ok(text: &str, start: usize, end: usize) -> bool {
     // ``colon_label_ok``.
     if start > 0 {
         let prev = text[..start].chars().next_back().unwrap();
-        if is_word_char(prev) || !colon_label_ok(text, start) {
+        if is_ip_word_char(prev) || !colon_label_ok(text, start) {
             return false;
         }
     }
     if end < text.len() {
         let next = text[end..].chars().next().unwrap();
-        if is_word_char(next) || next == ':' {
+        if is_ip_word_char(next) || next == ':' {
             return false;
         }
     }
