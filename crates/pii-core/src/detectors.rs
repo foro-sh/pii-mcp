@@ -5,7 +5,8 @@
 
 use crate::checksum::{
     bsn_valid_grouped, iban_valid, imei_valid, is_group_sep, itin_valid_grouped, luhn_valid,
-    nl_passport_valid, nl_postcode_valid, ssn_valid_grouped, tax_id_valid_grouped,
+    de_vat_valid_grouped, nl_passport_valid, nl_postcode_valid, ssn_valid_grouped,
+    tax_id_valid_grouped,
     uk_postcode_valid, GROUP_DASHES, GROUP_SPACES,
 };
 use regex::Regex;
@@ -1849,6 +1850,26 @@ fn scrub_nl_vat(text: &str) -> (Option<String>, u32) {
     replace_matches(text, nl_vat_re(), "[VAT_ID]", |_, _, _| true, false)
 }
 
+fn de_vat_res() -> &'static [Regex] {
+    static RES: OnceLock<Vec<Regex>> = OnceLock::new();
+    RES.get_or_init(|| {
+        vec![
+            Regex::new(r"\b[Dd][Ee][1-9]\d{8}\b").unwrap(),
+            Regex::new(r"\b[Dd][Ee][ .\u{00a0}\u{2009}\u{202f}\u{2010}-\u{2015}\u{2212}\-]*[1-9]\d{2}(?:[ .\u{00a0}\u{2009}\u{202f}\u{2010}-\u{2015}\u{2212}\-])?\d{3}(?:[ .\u{00a0}\u{2009}\u{202f}\u{2010}-\u{2015}\u{2212}\-])?\d{3}\b").unwrap(),
+        ]
+    })
+}
+
+fn scrub_de_vat(text: &str) -> (Option<String>, u32) {
+    scrub_patterns(
+        text,
+        de_vat_res(),
+        "[VAT_ID]",
+        |v, _, _| de_vat_valid_grouped(v),
+        false,
+    )
+}
+
 fn nl_passport_re() -> &'static Regex {
     static RE: OnceLock<Regex> = OnceLock::new();
     RE.get_or_init(|| Regex::new(r"(?i)\b[A-Z]{2}[0-9A-Z]{6}\d\b").unwrap())
@@ -1990,6 +2011,10 @@ fn build_detectors(mask: u8) -> Vec<Detector> {
         pack.push(Detector {
             category: PiiCategory::Phone,
             scrub: scrub_phone_de,
+        });
+        pack.push(Detector {
+            category: PiiCategory::VatId,
+            scrub: scrub_de_vat,
         });
         // Before BSN: the last three groups of ``12 345 678 901`` are a
         // spaced 9-digit BSN candidate.

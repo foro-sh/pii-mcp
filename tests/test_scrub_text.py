@@ -206,6 +206,53 @@ class TestNlVat:
         assert result["counts"]["vat_id"] == 0
 
 
+class TestDeVat:
+    def test_masks_compact(self) -> None:
+        result = scrub_text("USt-IdNr. DE136695976", languages=["de"])
+        assert result["text"] == "USt-IdNr. [VAT_ID]"
+        assert result["counts"]["vat_id"] == 1
+
+    def test_masks_grouped_spaces(self) -> None:
+        result = scrub_text("USt-IdNr. DE 136 695 976", languages=["de"])
+        assert result["text"] == "USt-IdNr. [VAT_ID]"
+        assert result["counts"]["vat_id"] == 1
+
+    def test_masks_grouped_dots(self) -> None:
+        result = scrub_text("DE 136.695.976 on the invoice", languages=["de"])
+        assert result["text"] == "[VAT_ID] on the invoice"
+        assert result["counts"]["vat_id"] == 1
+
+    def test_masks_lowercased(self) -> None:
+        result = scrub_text("vat de 136 695 976", languages=["de"])
+        assert result["text"] == "vat [VAT_ID]"
+        assert result["counts"]["vat_id"] == 1
+
+    def test_rejects_wrong_check_digit(self) -> None:
+        result = scrub_text("DE136695977 is not issued", languages=["de"])
+        assert result["text"] == "DE136695977 is not issued"
+        assert result["counts"]["vat_id"] == 0
+
+    def test_rejects_leading_zero(self) -> None:
+        result = scrub_text("DE036695976 is not issued", languages=["de"])
+        assert result["text"] == "DE036695976 is not issued"
+        assert result["counts"]["vat_id"] == 0
+
+    def test_masks_inside_json(self) -> None:
+        result = scrub_text('{"vat": "DE136695976"}', languages=["de"])
+        assert result["text"] == '{"vat": "[VAT_ID]"}'
+        assert result["counts"]["vat_id"] == 1
+
+    def test_masks_inside_csv(self) -> None:
+        result = scrub_text("name,vat\nAcme,DE 136 695 976", languages=["de"])
+        assert result["text"] == "name,vat\nAcme,[VAT_ID]"
+        assert result["counts"]["vat_id"] == 1
+
+    def test_disabled_without_de(self) -> None:
+        result = scrub_text("USt-IdNr. DE136695976", languages=["en"])
+        assert result["text"] == "USt-IdNr. DE136695976"
+        assert result["counts"]["vat_id"] == 0
+
+
 class TestNlPassport:
     def test_masks_document_number(self) -> None:
         result = scrub_text("paspoort XR1001R58 geldig", languages=["nl"])

@@ -47,6 +47,8 @@
  *   with structure + mod-11/10 check.
  * - NL BTW-id (``vat_id``): ``NL`` + 9 digits + ``B`` + 2 digits with optional
  *   spaces/dots (format only — post-2020 sole-trader ids are not elfproef-gated).
+ * - German USt-IdNr (``vat_id``): ``DE`` + 9 digits (first not ``0``), compact
+ *   or groups separated by spaces/dots; MOD 11,10 check digit is validated.
  * - NL passport / ID-card number (``passport``): 9-char RvIG document number
  *   (``[A-Za-z]{2}[0-9A-Za-z]{6}[0-9]``, letter O forbidden after uppercasing)
  *   — national identificatienummer alongside BSN; format only, no check digit.
@@ -974,6 +976,53 @@ function scrubNlVat(text: string): { text: string; count: number } {
 }
 
 export const nlVatDetector: Detector = { type: "vat_id", scrub: scrubNlVat };
+
+// German USt-IdNr: DE + 9 digits (first never 0), compact or groups separated
+// by spaces/dots; MOD 11,10 check digit is validated (unlike the NL BTW-id).
+const DE_VAT_RES = [
+  new RegExp("\\b[Dd][Ee][1-9]\\d{8}\\b", "g"),
+  new RegExp(
+    "\\b[Dd][Ee][ .\\u00a0\\u2009\\u202f\\u2010-\\u2015\\u2212\\-]*[1-9]\\d{2}(?:[ .\\u00a0\\u2009\\u202f\\u2010-\\u2015\\u2212\\-])?\\d{3}(?:[ .\\u00a0\\u2009\\u202f\\u2010-\\u2015\\u2212\\-])?\\d{3}\\b",
+    "g",
+  ),
+] as const;
+
+function deVatValid(value: string): boolean {
+  const compact = value.replace(ID_SEPS, "");
+  const body = compact.slice(2);
+  if (compact.slice(0, 2).toUpperCase() !== "DE") {
+    return false;
+  }
+  if (body.length !== 9 || !/^\d{9}$/.test(body) || body[0] === "0") {
+    return false;
+  }
+  let product = 10;
+  for (let i = 0; i < 8; i++) {
+    let total = (body.charCodeAt(i) - 48 + product) % 10;
+    if (total === 0) {
+      total = 10;
+    }
+    product = (2 * total) % 11;
+  }
+  let check = 11 - product;
+  if (check === 10) {
+    check = 0;
+  }
+  return check === body.charCodeAt(8) - 48;
+}
+
+function scrubDeVat(text: string): { text: string; count: number } {
+  let out = text;
+  let count = 0;
+  for (const pattern of DE_VAT_RES) {
+    const result = replaceMatches(out, pattern, "[VAT_ID]", deVatValid);
+    out = result.text;
+    count += result.count;
+  }
+  return { text: out, count };
+}
+
+export const deVatDetector: Detector = { type: "vat_id", scrub: scrubDeVat };
 
 const NL_PASSPORT_RE = /\b[A-Za-z]{2}[0-9A-Za-z]{6}\d\b/g;
 

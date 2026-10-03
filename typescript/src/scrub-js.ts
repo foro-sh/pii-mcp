@@ -27,6 +27,7 @@ import {
   nlLicensePlateDetector,
   nlPassportDetector,
   nlPostcodeDetector,
+  deVatDetector,
   nlVatDetector,
   phoneDeDetector,
   phoneEnDetector,
@@ -114,9 +115,10 @@ function detectorsFor(
     pack.push(phoneEnDetector);
   }
   if (langs.includes("de")) {
+    // USt-IdNr first: its compact 9-digit body is a spaced-BSN shape.
     // Tax id before BSN: the last three groups of ``12 345 678 901`` are a
     // spaced 9-digit BSN candidate.
-    pack.push(phoneDeDetector, taxIdDetector);
+    pack.push(phoneDeDetector, deVatDetector, taxIdDetector);
   }
   if (langs.includes("nl")) {
     // BTW-id first: its 9-digit body can itself pass the BSN elfproef.
