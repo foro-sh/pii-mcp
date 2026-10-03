@@ -399,6 +399,45 @@ pub fn uk_postcode_valid(value: &str) -> bool {
         .any(|a| a == area)
 }
 
+/// German USt-IdNr for scrub hits: ``DE`` prefix (either case) + 9 digits
+/// (first not ``0``), group separators skipped, MOD 11,10 check digit.
+pub(crate) fn de_vat_valid_grouped(value: &str) -> bool {
+    let mut buf = [0u8; 11];
+    let mut len = 0usize;
+    let mut prefix = [0u8; 2];
+    for c in value.chars() {
+        if is_id_sep(c) {
+            continue;
+        }
+        if len < 2 {
+            prefix[len] = c.to_ascii_uppercase() as u8;
+        }
+        if !c.is_ascii_digit() || len >= 11 {
+            return false;
+        }
+        buf[len] = c as u8;
+        len += 1;
+    }
+    if len != 11 || prefix != *b"DE" || buf[2] == b'0' {
+        return false;
+    }
+    // buf holds ``D``, ``E`` then the 9 digits; the first 8 feed the recursion.
+    let body = &buf[2..];
+    let mut product: u32 = 10;
+    for &b in &body[..8] {
+        let mut total = ((b - b'0') as u32 + product) % 10;
+        if total == 0 {
+            total = 10;
+        }
+        product = (2 * total) % 11;
+    }
+    let mut check = 11 - product;
+    if check == 10 {
+        check = 0;
+    }
+    check == (body[8] - b'0') as u32
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -512,5 +551,16 @@ mod tests {
     #[test]
     fn iban_unicode_space() {
         assert!(iban_valid("NL91\u{00a0}ABNA0417164300"));
+    }
+
+    #[test]
+    fn de_vat_valid() {
+        assert!(de_vat_valid_grouped("DE136695976"));
+        assert!(de_vat_valid_grouped("DE 136 695 976"));
+        assert!(de_vat_valid_grouped("DE 136.695.976"));
+        assert!(de_vat_valid_grouped("de 136 695 976"));
+        assert!(!de_vat_valid_grouped("DE136695977"));
+        assert!(!de_vat_valid_grouped("DE036695976"));
+        assert!(!de_vat_valid_grouped("ATU136695976"));
     }
 }
