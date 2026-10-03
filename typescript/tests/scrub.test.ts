@@ -734,6 +734,47 @@ describe("scrubText", () => {
   });
 });
 
+describe("German USt-IdNr (de vat)", () => {
+  it("masks compact and grouped forms", () => {
+    expect(scrubText("USt-IdNr. DE136695976", { languages: ["de"] }).text).toBe(
+      "USt-IdNr. [VAT_ID]",
+    );
+    expect(scrubText("DE 136 695 976 on the invoice", { languages: ["de"] }).text).toBe(
+      "[VAT_ID] on the invoice",
+    );
+    expect(scrubText("DE 136.695.976 on the invoice", { languages: ["de"] }).text).toBe(
+      "[VAT_ID] on the invoice",
+    );
+    expect(scrubText("vat de 136 695 976", { languages: ["de"] }).text).toBe(
+      "vat [VAT_ID]",
+    );
+  });
+
+  it("rejects a wrong check digit or a leading zero", () => {
+    expect(scrubText("DE136695977 is not issued", { languages: ["de"] }).text).toBe(
+      "DE136695977 is not issued",
+    );
+    expect(scrubText("DE036695976 is not issued", { languages: ["de"] }).text).toBe(
+      "DE036695976 is not issued",
+    );
+  });
+
+  it("masks inside JSON and CSV", () => {
+    expect(scrubText('{"vat": "DE136695976"}', { languages: ["de"] }).text).toBe(
+      '{"vat": "[VAT_ID]"}',
+    );
+    expect(scrubText("name,vat\nAcme,DE 136 695 976", { languages: ["de"] }).text).toBe(
+      "name,vat\nAcme,[VAT_ID]",
+    );
+  });
+
+  it("is disabled without the de pack", () => {
+    expect(scrubText("USt-IdNr. DE136695976", { languages: ["en"] }).text).toBe(
+      "USt-IdNr. DE136695976",
+    );
+  });
+});
+
 describe("scrubPayload", () => {
   it("walks nested payloads", () => {
     const result = scrubPayload({
