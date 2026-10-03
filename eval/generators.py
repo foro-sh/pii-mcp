@@ -210,6 +210,25 @@ def tax_id_de(r: R) -> str:
         return "".join(body) + str(0 if check == 10 else check)
 
 
+def vat_de(r: R) -> str:
+    body = _digits(r, 8)
+    if body[0] == "0":
+        body = "1" + body[1:]
+    product = 10
+    for ch in body:
+        total = (int(ch) + product) % 10 or 10
+        product = (2 * total) % 11
+    check = 11 - product
+    digits9 = body + str(0 if check == 10 else check)
+    return r.choice(
+        [
+            f"DE{digits9}",
+            f"DE {digits9[:3]} {digits9[3:6]} {digits9[6:]}",
+            f"DE {digits9[:3]}.{digits9[3:6]}.{digits9[6:]}",
+        ]
+    )
+
+
 def vat_nl(r: R) -> str:
     value = f"NL{_digits(r, 9)}B{_digits(r, 2)}"
     return value if r.random() < 0.7 else f"NL {value[2:11]} B{value[12:]}"
@@ -382,6 +401,7 @@ PII: list[tuple[str, Callable[[R], str], tuple[str, ...]]] = [
     ("tax_id", tax_id_de, ("de",)),
     ("tax_id", itin, ("en",)),
     ("vat_id", vat_nl, ("nl",)),
+    ("vat_id", vat_de, ("de",)),
     ("passport", passport_nl, ("nl",)),
     ("phone", phone_nl, ("nl",)),
     ("phone", phone_en, ("en",)),
@@ -453,6 +473,10 @@ CLEAN: list[tuple[str, Callable[[R], str]]] = [
 # these trades recall for precision.
 AMBIGUOUS: list[tuple[str, Callable[[R], str]]] = [
     ("nine_digit_id", lambda r: f"invoice {r.randint(100_000_000, 999_999_999)}"),
+    # USt-IdNr-shaped, but the MOD 11,10 check digit is wrong.
+    ("de_vat_bad_check", lambda r: f"USt-IdNr. DE{r.randint(100_000_000, 999_999_998)}"),
+    # ``DE`` + digits, but the body starts with ``0`` (never issued).
+    ("de_vat_leading_zero", lambda r: f"DE0{r.randint(10_000_000, 99_999_999)}"),
     ("semver4", lambda r: f"{r.randint(1, 9)}.{r.randint(0, 9)}.{r.randint(0, 9)}.{r.randint(0, 9)}"),
     ("suffix_word", lambda r: r.choice(["Use the Keypad 3 times", "Open Notepad 2 now", "Supermarkt 24 uur open", "Gerechtshof 2 oordeelde", "Der Käufer 2 zahlt"])),
     ("street_word_phrase", lambda r: r.choice(["Chapter 12 Main Street", "In 2024 Times Square was busy", "I bought 2 Hard Drive units", "Parkplatz 12 ist frei"])),
