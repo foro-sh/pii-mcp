@@ -31,7 +31,7 @@ from __future__ import annotations
 import os
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
-from typing import Any, Literal
+from typing import Any, Literal, TypedDict
 
 from pii_mcp.detectors import (
     UNIVERSAL_DETECTORS,
@@ -95,6 +95,18 @@ PII_TYPES: tuple[PiiType, ...] = (
 )
 
 PiiCounts = dict[PiiType, int]
+
+
+class ScrubTextResult(TypedDict):
+    text: str
+    found: bool
+    counts: PiiCounts
+
+
+class ScrubPayloadResult(TypedDict):
+    payload: Any
+    found: bool
+    counts: PiiCounts
 
 LanguageCode = Literal["en", "nl", "de"]
 DEFAULT_LANGUAGES: tuple[LanguageCode, ...] = ("en", "nl")
@@ -249,7 +261,7 @@ def scrub_text(
     languages: Sequence[str] | None = None,
     ner: bool = False,
     _check_size: bool = True,
-) -> dict[str, Any]:
+) -> ScrubTextResult:
     """Mask pattern-detectable PII in a string. Returns ``{text, found, counts}``.
 
     ``ner=True`` adds the person-name pass (native ``ner`` build only).
@@ -321,7 +333,7 @@ def scrub_payload(
     *,
     languages: Sequence[str] | None = None,
     ner: bool = False,
-) -> dict[str, Any]:
+) -> ScrubPayloadResult:
     """Walk a JSON-like payload and mask string leaves. Fails closed on errors.
 
     ``ner=True`` adds the person-name pass (native ``ner`` build only).
