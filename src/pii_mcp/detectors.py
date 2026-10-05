@@ -49,6 +49,8 @@ Patterns:
   compact form collides with BSNs and 9-digit invoice numbers.
 - German Steuer-IdNr (tax_id): 11 digits, compact or grouped ``12 345 678 901``,
   with structure + mod-11/10 check.
+- German USt-IdNr (``vat_id``): uppercase ``DE`` + 9 digits, compact or
+  grouped ``DE 136 695 976``, with ISO 7064 MOD 11,10 check.
 - NL BTW-id (``vat_id``): ``NL`` + 9 digits + ``B`` + 2 digits with optional
   spaces/dots (format only — post-2020 sole-trader ids are not elfproef-gated).
 - NL passport / ID-card number (``passport``): 9-char RvIG document number
@@ -930,6 +932,24 @@ def _scrub_tax_id(text: str) -> tuple[str, int]:
 
 
 tax_id_detector = Detector(type="tax_id", scrub=_scrub_tax_id)
+
+DE_VAT_RE = re.compile(r"\bDE[.\s]*[1-9][0-9]{2}[.\s]*[0-9]{3}[.\s]*[0-9]{3}\b")
+
+
+def _de_vat_valid(value: str) -> bool:
+    digits = re.sub(r"[^0-9]", "", value)
+    product = 10
+    for digit in digits[:8]:
+        total = (int(digit) + product) % 10 or 10
+        product = (2 * total) % 11
+    return (11 - product) % 10 == int(digits[8])
+
+
+def _scrub_de_vat(text: str) -> tuple[str, int]:
+    return _replace_matches(text, DE_VAT_RE, "[VAT_ID]", _de_vat_valid)
+
+
+de_vat_detector = Detector(type="vat_id", scrub=_scrub_de_vat)
 
 NL_VAT_RE = re.compile(r"\b[Nn][Ll][.\s]*\d{9}[.\s]*[Bb][.\s]*\d{2}\b")
 

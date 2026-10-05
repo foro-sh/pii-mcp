@@ -45,6 +45,8 @@
  *   compact form collides with BSNs and 9-digit invoice numbers.
  * - German Steuer-IdNr (tax_id): 11 digits, compact or grouped ``12 345 678 901``,
  *   with structure + mod-11/10 check.
+ * - German USt-IdNr (``vat_id``): uppercase ``DE`` + 9 digits, compact or
+ *   grouped ``DE 136 695 976``, with ISO 7064 MOD 11,10 check.
  * - NL BTW-id (``vat_id``): ``NL`` + 9 digits + ``B`` + 2 digits with optional
  *   spaces/dots (format only — post-2020 sole-trader ids are not elfproef-gated).
  * - NL passport / ID-card number (``passport``): 9-char RvIG document number
@@ -973,6 +975,24 @@ function scrubTaxId(text: string): { text: string; count: number } {
 }
 
 export const taxIdDetector: Detector = { type: "tax_id", scrub: scrubTaxId };
+
+const DE_VAT_RE = /(?<![\p{L}\p{N}_])DE[.\s]*[1-9][0-9]{2}[.\s]*[0-9]{3}[.\s]*[0-9]{3}(?![\p{L}\p{N}_])/gu;
+
+function deVatValid(value: string): boolean {
+  const digits = value.replace(/[^0-9]/g, "");
+  let product = 10;
+  for (const digit of digits.slice(0, 8)) {
+    const total = (Number(digit) + product) % 10 || 10;
+    product = (2 * total) % 11;
+  }
+  return (11 - product) % 10 === Number(digits[8]);
+}
+
+function scrubDeVat(text: string): { text: string; count: number } {
+  return replaceMatches(text, DE_VAT_RE, "[VAT_ID]", deVatValid);
+}
+
+export const deVatDetector: Detector = { type: "vat_id", scrub: scrubDeVat };
 
 const NL_VAT_RE = /\b[Nn][Ll][.\s]*\d{9}[.\s]*[Bb][.\s]*\d{2}\b/g;
 

@@ -78,7 +78,7 @@ stay out of scope.
 | e-mail / contact                              | `email`, `phone`                       | Incl. Unicode (EAI/IDN) email   |
 | IP-adres                                      | `ip`                                   | Indirect identifier             |
 | Locatiegegevens                               | `location`                             | Decimal and DMS lat/lon         |
-| Financiële gegevens                           | `iban`, `credit_card`, `bic`, `vat_id` |                                 |
+| Financiële gegevens                           | `iban`, `credit_card`, `bic`, `vat_id` | NL BTW / DE USt-IdNr            |
 | BSN / nationaal ID                            | `bsn`, `passport`                      | Passport/NIK format (nl pack)   |
 | Online / device IDs                           | `mac`, `imei`                          | IMEI: grouped forms + Luhn      |
 | Adres                                         | `address`                              | Street + number; NL/UK postcode |

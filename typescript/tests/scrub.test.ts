@@ -96,6 +96,37 @@ describe("scrubText", () => {
     );
   });
 
+  it("masks valid German VAT IDs in the de pack", () => {
+    for (const value of ["DE136695976", "DE 136 695 976", "DE.136.695.976"]) {
+      const result = scrubText(`VAT ${value} on file`, { languages: ["de"] });
+      expect(result.text).toBe("VAT [VAT_ID] on file");
+      expect(result.counts.vat_id).toBe(1);
+    }
+  });
+
+  it("rejects malformed German VAT IDs and leaves them outside the de pack", () => {
+    for (const value of [
+      "DE136695977",
+      "DE036695976",
+      "de136695976",
+      "xDE136695976",
+      "DE136695976x",
+    ]) {
+      const result = scrubText(value, { languages: ["de"] });
+      expect(result.text).toBe(value);
+      expect(result.counts.vat_id).toBe(0);
+    }
+    expect(scrubText("DE136695976", { languages: ["en", "nl"] }).text).toBe(
+      "DE136695976",
+    );
+  });
+
+  it("masks a German VAT ID in CSV", () => {
+    expect(scrubText("vendor,DE136695976,active", { languages: ["de"] }).text).toBe(
+      "vendor,[VAT_ID],active",
+    );
+  });
+
   it("masks dotted IBAN, email+IBAN glue, spaced SSN/BSN, and dotted IMEI", () => {
     expect(scrubText("NL91.ABNA.0417.1643.00").text).toBe("[IBAN]");
     expect(scrubText("ada@example.comNL91ABNA0417164300").text).toBe(
