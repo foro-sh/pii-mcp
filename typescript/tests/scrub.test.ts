@@ -331,11 +331,36 @@ describe("scrubText", () => {
     ["5 Elm Ct.", "en", "[ADDRESS]"],
     ["12 Park Row", "en", "[ADDRESS]"],
     ["lives at 221B Baker Street.", "en", "lives at [ADDRESS]."],
+    ["Birkhahnstraße, 676", "de", "[ADDRESS]"],
+    ["Adresse: Kerkstraat, 12", "nl", "Adresse: [ADDRESS]"],
+    ["518, Hollywater Road, Liphook", "en", "[ADDRESS], Liphook"],
+    ["474, Lexington Drive, Colorado Springs", "en", "[ADDRESS], Colorado Springs"],
+    ["Kerkstraat,\u00a012", "nl", "[ADDRESS]"],
+    ["Kerkstraat,  12", "nl", "[ADDRESS]"],
+    ["Hauptstr., 12", "de", "[ADDRESS]"],
+    ["Berliner Straße, 17", "de", "[ADDRESS]"],
+    ["Laan van Meerdervoort, 52", "nl", "[ADDRESS]"],
+    ["Kerkstraat, nr. 12", "nl", "[ADDRESS]"],
+    ["221B, Baker Street", "en", "[ADDRESS]"],
   ])("masks street address %j (%s)", (text, lang, expected) => {
     const result = scrubText(text, { languages: [lang] });
     expect(result.text).toBe(expected);
     expect(result.counts.address).toBe(expected.split("[ADDRESS]").length - 1);
   });
+
+  it.each([
+    ["Chapter 12, Main Street", "en", "Chapter [ADDRESS]"],
+    ["Sections 3, Park Lane and 4", "en", "Sections [ADDRESS] and 4"],
+    ["Kerkstraat, 2024", "nl", "[ADDRESS]"],
+  ])(
+    "street comma over-masks like the comma-less form %j (%s)",
+    (text, lang, expected) => {
+      expect(
+        scrubText(text.replaceAll(",", ""), { languages: [lang] }).counts.address,
+      ).toBe(1);
+      expect(scrubText(text, { languages: [lang] }).text).toBe(expected);
+    },
+  );
 
   it.each([
     ["de Kerkstraat is afgesloten", "nl"],
@@ -352,6 +377,14 @@ describe("scrubText", () => {
     ["Auf Platz 3 landete", "de"],
     ["Spring 2024", "de"],
     ["3 new road maps", "en"],
+    ["Foo, 12", "nl"],
+    ["Foo, 12", "de"],
+    ["12, Foo", "en"],
+    ["de Kerkstraat, afgesloten", "nl"],
+    ["id,Kerkstraat,2024-01-15,active", "nl"],
+    ["Kerkstraat,12", "nl"],
+    ["Birkhahnstraße,676", "de"],
+    ["id,518,Hollywater Road,x", "en"],
   ])("leaves street lookalike %j (%s)", (text, lang) => {
     const result = scrubText(text, { languages: [lang] });
     expect(result.text).toBe(text);

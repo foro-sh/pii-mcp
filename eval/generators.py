@@ -329,25 +329,35 @@ def _house_number(r: R) -> str:
     return number + r.choice(["", "", "", "a", "B", "-2", "/1"])
 
 
+def _number_gap(r: R) -> str:
+    """Separator between a street and its house number.
+
+    A comma carries at least one space: a comma with none behind it is a CSV
+    field separator, not address punctuation.
+    """
+    return r.choice([" ", " ", " ", ", ", ",  ", ",\u00a0"])
+
+
 def street_nl(r: R) -> str:
     name = r.choice(["Kerk", "Molen", "Dorps", "Stations", "Van Baerle", "Prinsen", "Keizers", "Hoofd", "Sint-Jans", "Oranje"])
     kind = r.choice(["straat", "laan", "weg", "gracht", "plein", "kade", "singel", "dijk", "steeg", "markt", "hof", "pad"])
     glued = f"{name}{kind}"
     spaced = f"{r.choice(['Grote', 'Oude', 'Nieuwe', 'Korte'])} {r.choice(['Markt', 'Gracht', 'Kade', 'Haven'])}"
     prefixed = f"{r.choice(['Laan', 'Weg', 'Plein'])} {r.choice(['van', 'van de', 'op'])} {r.choice(['Meerdervoort', 'Nieuw Oost-Indië', 'Zuid'])}"
-    return f"{r.choice([glued, glued, glued, spaced, prefixed])} {_house_number(r)}"
+    return f"{r.choice([glued, glued, glued, spaced, prefixed])}{_number_gap(r)}{_house_number(r)}"
 
 
 def street_de(r: R) -> str:
     glued = f"{r.choice(['Haupt', 'Bahnhof', 'Schiller', 'Goethe', 'Garten', 'Linden', 'Kirch'])}{r.choice(['straße', 'strasse', 'str.', 'weg', 'allee', 'platz', 'gasse', 'ufer', 'ring'])}"
     spaced = f"{r.choice(['Berliner', 'Frankfurter', 'Kölner', 'Neuer', 'Alter'])} {r.choice(['Straße', 'Str.', 'Allee', 'Weg', 'Ring'])}"
-    return f"{r.choice([glued, glued, spaced])} {_house_number(r)}"
+    return f"{r.choice([glued, glued, spaced])}{_number_gap(r)}{_house_number(r)}"
 
 
 def street_en(r: R) -> str:
     name = r.choice(["Baker", "High", "Church", "Station", "Oxford", "Victoria", "Old Kent", "Mill", "Pennsylvania", "Park"])
     kind = r.choice(["Street", "Road", "Lane", "Avenue", "Drive", "Close", "Way", "St", "Rd.", "Ave"])
-    return f"{r.randint(1, 9999)}{r.choice(['', '', 'B'])} {name} {kind}"
+    number = f"{r.randint(1, 9999)}{r.choice(['', '', 'B'])}"
+    return f"{number}{_number_gap(r)}{name} {kind}"
 
 
 _NAMES = {
@@ -459,6 +469,9 @@ AMBIGUOUS: list[tuple[str, Callable[[R], str]]] = [
     ("decimal_pair", lambda r: f"{r.uniform(2, 80):.4f}, {r.uniform(2, 80):.4f}"),
     # SSD sizes that are also valid postcodes; masked.
     ("uk_postcode_ambiguous", lambda r: r.choice(["M2 1TB", "M2 2TB", "M1 1TB"])),
+    # A comma before the house number masks like the comma-less form already
+    # does: a chapter, a section, a year, or a version next to a street word.
+    ("street_word_comma", lambda r: r.choice(["Chapter 12, Main Street", "Sections 3, Park Lane and 4", "Kerkstraat, 2024", "v1.2, Park Lane"])),
 ]
 
 

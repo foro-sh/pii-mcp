@@ -616,6 +616,73 @@ mod tests {
         }
     }
 
+    #[test]
+    fn masks_street_with_a_comma_before_the_house_number() {
+        for (text, lang, expected) in [
+            ("Birkhahnstraße, 676", "de", "[ADDRESS]"),
+            ("Adresse: Kerkstraat, 12", "nl", "Adresse: [ADDRESS]"),
+            ("518, Hollywater Road, Liphook", "en", "[ADDRESS], Liphook"),
+            (
+                "474, Lexington Drive, Colorado Springs",
+                "en",
+                "[ADDRESS], Colorado Springs",
+            ),
+            ("Kerkstraat,\u{a0}12", "nl", "[ADDRESS]"),
+            ("Kerkstraat,  12", "nl", "[ADDRESS]"),
+            ("Hauptstr., 12", "de", "[ADDRESS]"),
+            ("Berliner Straße, 17", "de", "[ADDRESS]"),
+            ("Laan van Meerdervoort, 52", "nl", "[ADDRESS]"),
+            ("Kerkstraat, nr. 12", "nl", "[ADDRESS]"),
+            ("221B, Baker Street", "en", "[ADDRESS]"),
+        ] {
+            let langs = vec![lang.to_string()];
+            let r = scrub_text(text, Some(&langs), true, false).unwrap();
+            assert_eq!(r.text, expected, "{text:?}");
+            assert_eq!(r.counts["address"], 1, "{text:?}");
+        }
+    }
+
+    #[test]
+    fn street_comma_needs_a_street_word() {
+        for (text, lang) in [("Foo, 12", "nl"), ("Foo, 12", "de"), ("12, Foo", "en")] {
+            let langs = vec![lang.to_string()];
+            let r = scrub_text(text, Some(&langs), true, false).unwrap();
+            assert_eq!(r.text, text, "{text:?}");
+            assert_eq!(r.counts["address"], 0, "{text:?}");
+        }
+    }
+
+    /// A comma needs a space behind it, so CSV columns are not house numbers.
+    #[test]
+    fn csv_comma_is_a_field_separator() {
+        for (text, lang) in [
+            ("id,Kerkstraat,2024-01-15,active", "nl"),
+            ("Kerkstraat,12", "nl"),
+            ("Birkhahnstraße,676", "de"),
+            ("id,518,Hollywater Road,x", "en"),
+        ] {
+            let langs = vec![lang.to_string()];
+            let r = scrub_text(text, Some(&langs), true, false).unwrap();
+            assert_eq!(r.text, text, "{text:?}");
+            assert_eq!(r.counts["address"], 0, "{text:?}");
+        }
+    }
+
+    #[test]
+    fn street_comma_over_masks_like_the_comma_less_form() {
+        for (text, lang, expected) in [
+            ("Chapter 12, Main Street", "en", "Chapter [ADDRESS]"),
+            ("Sections 3, Park Lane and 4", "en", "Sections [ADDRESS] and 4"),
+            ("Kerkstraat, 2024", "nl", "[ADDRESS]"),
+        ] {
+            let langs = vec![lang.to_string()];
+            let without = scrub_text(&text.replace(',', ""), Some(&langs), true, false).unwrap();
+            assert_eq!(without.counts["address"], 1, "{text:?}");
+            let r = scrub_text(text, Some(&langs), true, false).unwrap();
+            assert_eq!(r.text, expected, "{text:?}");
+        }
+    }
+
     #[cfg(not(feature = "ner"))]
     #[test]
     fn ner_without_feature_is_an_error() {
