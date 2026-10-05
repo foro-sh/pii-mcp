@@ -6,15 +6,13 @@ import zipfile
 from pathlib import Path
 
 
-def test_pure_python_wheel_contains_typing_markers() -> None:
+def test_pure_python_wheel_contains_typing_markers(tmp_path: Path) -> None:
     root = Path(__file__).resolve().parents[1]
-    dist_dir = root / "dist-test"
     subprocess.run(
-        [sys.executable, "-m", "build", "--wheel", "--outdir", str(dist_dir)],
-        cwd=root,
+        [sys.executable, "-m", "pip", "wheel", "--no-deps", "-w", str(tmp_path), str(root)],
         check=True,
     )
-    wheels = sorted(dist_dir.glob("pii_mcp-*.whl"))
+    wheels = sorted(tmp_path.glob("pii_mcp-*.whl"))
     assert wheels, "expected a wheel build artifact"
 
     with zipfile.ZipFile(wheels[-1]) as wheel:
