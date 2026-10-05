@@ -310,6 +310,36 @@ mod tests {
     use super::*;
 
     #[test]
+    fn masks_only_valid_german_vat_ids_in_de_pack() {
+        let de = [LanguageCode::De];
+        for value in ["DE136695976", "DE 136 695 976", "DE.136.695.976"] {
+            let r = scrub_text_langs(&format!("VAT {value} on file"), &de, true, false).unwrap();
+            assert_eq!(r.text, "VAT [VAT_ID] on file");
+            assert_eq!(r.counts["vat_id"], 1);
+        }
+        for value in [
+            "DE136695977",
+            "DE036695976",
+            "de136695976",
+            "xDE136695976",
+            "DE136695976x",
+        ] {
+            let r = scrub_text_langs(value, &de, true, false).unwrap();
+            assert_eq!(r.text, value);
+            assert_eq!(r.counts["vat_id"], 0);
+        }
+        let r = scrub_text("DE136695976", None, true, false).unwrap();
+        assert_eq!(r.text, "DE136695976");
+    }
+
+    #[test]
+    fn ipv6_embedded_in_unicode_word_stays_outside_the_word() {
+        let text = "Hauptstraße64:ff9b::142.227.134.185";
+        let r = scrub_text(text, None, true, false).unwrap();
+        assert_eq!(r.text, "Hauptstraße64:ff9b::[IP]");
+    }
+
+    #[test]
     fn decimal_location_backtracks_its_optional_tails() {
         // Python's order: drop the E/W group, then the degree sign.
         let r = scrub_text("52.3676, 4.9041°Ex", None, true, false).unwrap();
@@ -611,6 +641,73 @@ mod tests {
             ("1NW1 6XE", "1NW1 6XE"),
             ("NW1 6XEa", "NW1 6XEa"),
         ] {
+            let r = scrub_text(text, Some(&langs), true, false).unwrap();
+            assert_eq!(r.text, expected, "{text:?}");
+        }
+    }
+
+    #[test]
+    fn masks_street_with_a_comma_before_the_house_number() {
+        for (text, lang, expected) in [
+            ("Birkhahnstraße, 676", "de", "[ADDRESS]"),
+            ("Adresse: Kerkstraat, 12", "nl", "Adresse: [ADDRESS]"),
+            ("518, Hollywater Road, Liphook", "en", "[ADDRESS], Liphook"),
+            (
+                "474, Lexington Drive, Colorado Springs",
+                "en",
+                "[ADDRESS], Colorado Springs",
+            ),
+            ("Kerkstraat,\u{a0}12", "nl", "[ADDRESS]"),
+            ("Kerkstraat,  12", "nl", "[ADDRESS]"),
+            ("Hauptstr., 12", "de", "[ADDRESS]"),
+            ("Berliner Straße, 17", "de", "[ADDRESS]"),
+            ("Laan van Meerdervoort, 52", "nl", "[ADDRESS]"),
+            ("Kerkstraat, nr. 12", "nl", "[ADDRESS]"),
+            ("221B, Baker Street", "en", "[ADDRESS]"),
+        ] {
+            let langs = vec![lang.to_string()];
+            let r = scrub_text(text, Some(&langs), true, false).unwrap();
+            assert_eq!(r.text, expected, "{text:?}");
+            assert_eq!(r.counts["address"], 1, "{text:?}");
+        }
+    }
+
+    #[test]
+    fn street_comma_needs_a_street_word() {
+        for (text, lang) in [("Foo, 12", "nl"), ("Foo, 12", "de"), ("12, Foo", "en")] {
+            let langs = vec![lang.to_string()];
+            let r = scrub_text(text, Some(&langs), true, false).unwrap();
+            assert_eq!(r.text, text, "{text:?}");
+            assert_eq!(r.counts["address"], 0, "{text:?}");
+        }
+    }
+
+    /// A comma needs a space behind it, so CSV columns are not house numbers.
+    #[test]
+    fn csv_comma_is_a_field_separator() {
+        for (text, lang) in [
+            ("id,Kerkstraat,2024-01-15,active", "nl"),
+            ("Kerkstraat,12", "nl"),
+            ("Birkhahnstraße,676", "de"),
+            ("id,518,Hollywater Road,x", "en"),
+        ] {
+            let langs = vec![lang.to_string()];
+            let r = scrub_text(text, Some(&langs), true, false).unwrap();
+            assert_eq!(r.text, text, "{text:?}");
+            assert_eq!(r.counts["address"], 0, "{text:?}");
+        }
+    }
+
+    #[test]
+    fn street_comma_over_masks_like_the_comma_less_form() {
+        for (text, lang, expected) in [
+            ("Chapter 12, Main Street", "en", "Chapter [ADDRESS]"),
+            ("Sections 3, Park Lane and 4", "en", "Sections [ADDRESS] and 4"),
+            ("Kerkstraat, 2024", "nl", "[ADDRESS]"),
+        ] {
+            let langs = vec![lang.to_string()];
+            let without = scrub_text(&text.replace(',', ""), Some(&langs), true, false).unwrap();
+            assert_eq!(without.counts["address"], 1, "{text:?}");
             let r = scrub_text(text, Some(&langs), true, false).unwrap();
             assert_eq!(r.text, expected, "{text:?}");
         }

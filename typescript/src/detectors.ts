@@ -45,6 +45,8 @@
  *   compact form collides with BSNs and 9-digit invoice numbers.
  * - German Steuer-IdNr (tax_id): 11 digits, compact or grouped ``12 345 678 901``,
  *   with structure + mod-11/10 check.
+ * - German USt-IdNr (``vat_id``): uppercase ``DE`` + 9 digits, compact or
+ *   grouped ``DE 136 695 976``, with ISO 7064 MOD 11,10 check.
  * - NL BTW-id (``vat_id``): ``NL`` + 9 digits + ``B`` + 2 digits with optional
  *   spaces/dots (format only — post-2020 sole-trader ids are not elfproef-gated).
  * - NL passport / ID-card number (``passport``): 9-char RvIG document number
@@ -69,7 +71,14 @@
  *   name without a number is not flagged. Recall comes first: a word that ends
  *   in a street suffix is masked with its number (``Keypad 3``, ``Supermarkt
  *   24``). Up to three spaces, tabs, or no-break spaces separate street and
- *   number. German function words that end in ``-er`` (``Der``, ``Hier``,
+ *   number, or a comma plus one to three of them (``Birkhahnstraße, 676``,
+ *   ``518, Hollywater Road``). A comma with no space after it is a CSV field
+ *   separator, so ``id,Kerkstraat,2024-01-15`` keeps the bare street name
+ *   clean. The comma form inherits that same over-masking rather than a
+ *   separate rule, so ``Chapter 12, Main Street`` and ``Kerkstraat, 2024``
+ *   mask exactly as their comma-less twins already do; a year reject would
+ *   have to drop the comma-less form too and would leak four-digit house
+ *   numbers. German function words that end in ``-er`` (``Der``, ``Hier``,
  *   ``Oder``, …) do not start a DE match. House numbers may carry up to three
  *   letters and a range (``12bis``, ``221-223``), after an optional
  *   ``Nr.``/``no`` in ``nl`` and ``de``. ``\b`` is ASCII in every backend.
@@ -967,6 +976,24 @@ function scrubTaxId(text: string): { text: string; count: number } {
 
 export const taxIdDetector: Detector = { type: "tax_id", scrub: scrubTaxId };
 
+const DE_VAT_RE = /(?<![\p{L}\p{N}_])DE[.\s]*[1-9][0-9]{2}[.\s]*[0-9]{3}[.\s]*[0-9]{3}(?![\p{L}\p{N}_])/gu;
+
+function deVatValid(value: string): boolean {
+  const digits = value.replace(/[^0-9]/g, "");
+  let product = 10;
+  for (const digit of digits.slice(0, 8)) {
+    const total = (Number(digit) + product) % 10 || 10;
+    product = (2 * total) % 11;
+  }
+  return (11 - product) % 10 === Number(digits[8]);
+}
+
+function scrubDeVat(text: string): { text: string; count: number } {
+  return replaceMatches(text, DE_VAT_RE, "[VAT_ID]", deVatValid);
+}
+
+export const deVatDetector: Detector = { type: "vat_id", scrub: scrubDeVat };
+
 const NL_VAT_RE = /\b[Nn][Ll][.\s]*\d{9}[.\s]*[Bb][.\s]*\d{2}\b/g;
 
 function scrubNlVat(text: string): { text: string; count: number } {
@@ -1203,8 +1230,10 @@ export const ukPostcodeDetector: Detector = {
 const STREET_UP = String.raw`A-Z\u00c0-\u00d6\u00d8-\u00de`;
 const STREET_LOW = String.raw`a-z\u00df-\u00f6\u00f8-\u017f`;
 const STREET_WORD = `[${STREET_UP}][${STREET_LOW}]+`;
-const STREET_SEP = String.raw`[ \t\u00a0\u202f]{1,3}`;
+const STREET_SEP_CHARS = String.raw` \t\u00a0\u202f`;
+const STREET_SEP = `[${STREET_SEP_CHARS}]{1,3}`;
 const STREET_GAP = `(?:${STREET_SEP}|-)`;
+const STREET_NR_SEP = `(?:,[${STREET_SEP_CHARS}]{1,3}|${STREET_SEP})`;
 const HOUSE_NUMBER = String.raw`[1-9][0-9]{0,4}[A-Za-z]{0,3}(?:[-/][0-9]{1,4}[A-Za-z]?)?\b`;
 const HOUSE_NR = String.raw`(?:(?:[Nn]r|[Nn]o)\.?` + `${STREET_SEP})?${HOUSE_NUMBER}`;
 const DE_STREET_WORDS = String.raw`(?:Straße|Strasse|Str\b\.?|Weg|Allee|Platz|Gasse|Damm|Ufer|Ring)`;
@@ -1221,7 +1250,7 @@ const STREET_NL_RE = new RegExp(
     `|${NL_ADJECTIVES}${STREET_SEP}${NL_STREET_WORDS}` +
     `|${NL_STREET_WORDS}(?:${STREET_SEP}${NL_PARTICLE}){1,2}${STREET_SEP}` +
     `${STREET_WORD}(?:${STREET_GAP}${STREET_WORD}){0,3}` +
-    `)${STREET_SEP}${HOUSE_NR}`,
+    `)${STREET_NR_SEP}${HOUSE_NR}`,
   "g",
 );
 const STREET_DE_RE = new RegExp(
@@ -1230,12 +1259,12 @@ const STREET_DE_RE = new RegExp(
     `|[${STREET_UP}][${STREET_LOW}]{2,}ring` +
     `|[${STREET_UP}][${STREET_LOW}]*er${STREET_SEP}${DE_STREET_WORDS}` +
     `|[${STREET_UP}][${STREET_LOW}]+-${DE_STREET_WORDS}` +
-    `)${STREET_SEP}|[${STREET_UP}][${STREET_LOW}]*str\\.)${HOUSE_NR}`,
+    `)${STREET_NR_SEP}|[${STREET_UP}][${STREET_LOW}]*str\\.)${HOUSE_NR}`,
   "g",
 );
 const STREET_EN_RE = new RegExp(
   String.raw`\b[1-9][0-9]{0,4}(?:[-/][0-9]{1,4})?[A-Za-z]?` +
-    `${STREET_SEP}(?:${STREET_WORD}${STREET_SEP}){1,3}` +
+    `${STREET_NR_SEP}(?:${STREET_WORD}${STREET_SEP}){1,3}` +
     String.raw`(?:(?:Street|Road|Avenue|Lane|Drive|Boulevard|Court|Place|Way|Close|Crescent|Terrace|Square|Highway|Parkway|Row|Loop)\b|(?:St|Rd|Ave|Ln|Blvd|Dr|Ct|Pl|Hwy|Pkwy)\b\.?)`,
   "g",
 );

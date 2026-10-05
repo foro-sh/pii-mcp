@@ -12,6 +12,9 @@ Language packs: `en`, `nl`, and opt-in `de`.
 [![npm](https://img.shields.io/npm/v/pii-mcp.svg)](https://www.npmjs.com/package/pii-mcp)
 [![CI](https://github.com/foro-sh/pii-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/foro-sh/pii-mcp/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
+[![GitHub stars](https://img.shields.io/github/stars/foro-sh/pii-mcp?style=social)](https://github.com/foro-sh/pii-mcp)
+
+If pii-mcp saves you time, a ⭐ helps others find it.
 
 ## Example
 
@@ -75,7 +78,7 @@ stay out of scope.
 | e-mail / contact                              | `email`, `phone`                       | Incl. Unicode (EAI/IDN) email   |
 | IP-adres                                      | `ip`                                   | Indirect identifier             |
 | Locatiegegevens                               | `location`                             | Decimal and DMS lat/lon         |
-| Financiële gegevens                           | `iban`, `credit_card`, `bic`, `vat_id` |                                 |
+| Financiële gegevens                           | `iban`, `credit_card`, `bic`, `vat_id` | NL BTW / DE USt-IdNr            |
 | BSN / nationaal ID                            | `bsn`, `passport`                      | Passport/NIK format (nl pack)   |
 | Online / device IDs                           | `mac`, `imei`                          | IMEI: grouped forms + Luhn      |
 | Adres                                         | `address`                              | Street + number; NL/UK postcode |

@@ -49,6 +49,8 @@ Patterns:
   compact form collides with BSNs and 9-digit invoice numbers.
 - German Steuer-IdNr (tax_id): 11 digits, compact or grouped ``12 345 678 901``,
   with structure + mod-11/10 check.
+- German USt-IdNr (``vat_id``): uppercase ``DE`` + 9 digits, compact or
+  grouped ``DE 136 695 976``, with ISO 7064 MOD 11,10 check.
 - NL BTW-id (``vat_id``): ``NL`` + 9 digits + ``B`` + 2 digits with optional
   spaces/dots (format only — post-2020 sole-trader ids are not elfproef-gated).
 - NL passport / ID-card number (``passport``): 9-char RvIG document number
@@ -72,10 +74,17 @@ Patterns:
   words before the street word are taken with it. A bare street name without a
   number is not flagged. Recall comes first: a word that ends in a street
   suffix is masked with its number (``Keypad 3``, ``Supermarkt 24``). Up to
-  three spaces, tabs, or no-break spaces separate street and number. German
-  function words that end in ``-er`` (``Der``, ``Hier``, ``Oder``, …) do not
-  start a DE match. House numbers may carry up to three letters and a range
-  (``12bis``, ``221-223``), after an optional ``Nr.``/``no`` in ``nl`` and
+  three spaces, tabs, or no-break spaces separate street and number, or a
+  comma plus one to three of them (``Birkhahnstraße, 676``, ``518, Hollywater
+  Road``). A comma with no space after it is a CSV field separator, so
+  ``id,Kerkstraat,2024-01-15`` keeps the bare street name clean. The comma
+  form inherits the same over-masking as the comma-less one rather than a
+  separate rule, so ``Chapter 12, Main Street`` and ``Kerkstraat, 2024`` mask
+  exactly as their comma-less twins already do; a year reject would have to
+  drop the comma-less form too and would leak four-digit house numbers.
+  German function words that end in ``-er`` (``Der``, ``Hier``, ``Oder``, …)
+  do not start a DE match. House numbers may carry up to three letters and a
+  range (``12bis``, ``221-223``), after an optional ``Nr.``/``no`` in ``nl`` and
   ``de``. ``\b`` is ASCII in every backend.
 - NL kenteken (``license_plate``): hyphenated RDW sidecodes 1–14 (case-
   insensitive), with SA/SD/SS letter-pair rejects.
@@ -924,6 +933,24 @@ def _scrub_tax_id(text: str) -> tuple[str, int]:
 
 tax_id_detector = Detector(type="tax_id", scrub=_scrub_tax_id)
 
+DE_VAT_RE = re.compile(r"\bDE[.\s]*[1-9][0-9]{2}[.\s]*[0-9]{3}[.\s]*[0-9]{3}\b")
+
+
+def _de_vat_valid(value: str) -> bool:
+    digits = re.sub(r"[^0-9]", "", value)
+    product = 10
+    for digit in digits[:8]:
+        total = (int(digit) + product) % 10 or 10
+        product = (2 * total) % 11
+    return (11 - product) % 10 == int(digits[8])
+
+
+def _scrub_de_vat(text: str) -> tuple[str, int]:
+    return _replace_matches(text, DE_VAT_RE, "[VAT_ID]", _de_vat_valid)
+
+
+de_vat_detector = Detector(type="vat_id", scrub=_scrub_de_vat)
+
 NL_VAT_RE = re.compile(r"\b[Nn][Ll][.\s]*\d{9}[.\s]*[Bb][.\s]*\d{2}\b")
 
 
@@ -1136,8 +1163,10 @@ uk_postcode_detector = Detector(type="address", scrub=_scrub_uk_postcode)
 _STREET_UP = r"A-Z\u00c0-\u00d6\u00d8-\u00de"
 _STREET_LOW = r"a-z\u00df-\u00f6\u00f8-\u017f"
 _STREET_WORD = f"[{_STREET_UP}][{_STREET_LOW}]+"
-_STREET_SEP = r"[ \t\u00a0\u202f]{1,3}"
+_STREET_SEP_CHARS = r" \t\u00a0\u202f"
+_STREET_SEP = rf"[{_STREET_SEP_CHARS}]{{1,3}}"
 _STREET_GAP = rf"(?:{_STREET_SEP}|-)"
+_STREET_NR_SEP = rf"(?:,[{_STREET_SEP_CHARS}]{{1,3}}|{_STREET_SEP})"
 _HOUSE_NUMBER = r"[1-9][0-9]{0,4}[A-Za-z]{0,3}(?:[-/][0-9]{1,4}[A-Za-z]?)?\b"
 _HOUSE_NR = rf"(?:(?:[Nn]r|[Nn]o)\.?{_STREET_SEP})?{_HOUSE_NUMBER}"
 _DE_STREET_WORDS = r"(?:Straße|Strasse|Str\b\.?|Weg|Allee|Platz|Gasse|Damm|Ufer|Ring)"
@@ -1156,7 +1185,7 @@ STREET_NL_RE = re.compile(
     rf"|{_NL_ADJECTIVES}{_STREET_SEP}{_NL_STREET_WORDS}"
     rf"|{_NL_STREET_WORDS}(?:{_STREET_SEP}{_NL_PARTICLE}){{1,2}}{_STREET_SEP}"
     rf"{_STREET_WORD}(?:{_STREET_GAP}{_STREET_WORD}){{0,3}}"
-    rf"){_STREET_SEP}{_HOUSE_NR}",
+    rf"){_STREET_NR_SEP}{_HOUSE_NR}",
     re.ASCII,
 )
 STREET_DE_RE = re.compile(
@@ -1165,11 +1194,11 @@ STREET_DE_RE = re.compile(
     rf"|[{_STREET_UP}][{_STREET_LOW}]{{2,}}ring"
     rf"|[{_STREET_UP}][{_STREET_LOW}]*er{_STREET_SEP}{_DE_STREET_WORDS}"
     rf"|[{_STREET_UP}][{_STREET_LOW}]+-{_DE_STREET_WORDS}"
-    rf"){_STREET_SEP}|[{_STREET_UP}][{_STREET_LOW}]*str\.){_HOUSE_NR}",
+    rf"){_STREET_NR_SEP}|[{_STREET_UP}][{_STREET_LOW}]*str\.){_HOUSE_NR}",
     re.ASCII,
 )
 STREET_EN_RE = re.compile(
-    rf"\b[1-9][0-9]{{0,4}}(?:[-/][0-9]{{1,4}})?[A-Za-z]?{_STREET_SEP}"
+    rf"\b[1-9][0-9]{{0,4}}(?:[-/][0-9]{{1,4}})?[A-Za-z]?{_STREET_NR_SEP}"
     rf"(?:{_STREET_WORD}{_STREET_SEP}){{1,3}}"
     r"(?:(?:Street|Road|Avenue|Lane|Drive|Boulevard|Court|Place|Way|Close|Crescent"
     r"|Terrace|Square|Highway|Parkway|Row|Loop)\b"

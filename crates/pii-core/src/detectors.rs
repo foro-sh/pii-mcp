@@ -2,6 +2,8 @@
 //!
 //! Patterns mirror `pii_mcp.detectors`. Python lookarounds are enforced with
 //! explicit boundary checks so matching stays on the linear-time `regex` crate.
+//! German USt-IdNr (`vat_id`) accepts uppercase `DE` and nine digits, compact
+//! or in three groups, with an ISO 7064 MOD 11,10 check digit.
 
 use crate::checksum::{
     bsn_valid_grouped, iban_valid, imei_valid, is_group_sep, itin_valid_grouped, luhn_valid,
@@ -67,6 +69,10 @@ pub struct Detector {
 
 fn is_word_char(c: char) -> bool {
     c.is_ascii_alphanumeric() || c == '_'
+}
+
+fn is_ip_word_char(c: char) -> bool {
+    c.is_alphanumeric() || c == '_'
 }
 
 /// Replace accepted matches. Allocates only when at least one match is kept.
@@ -1182,13 +1188,13 @@ fn ipv4_boundary_ok(text: &str, start: usize, end: usize) -> bool {
     // (?<![\w.]) ... (?![\w.]) — IPv6-embedded forms are consumed first.
     if start > 0 {
         let prev = text[..start].chars().next_back().unwrap();
-        if is_word_char(prev) || prev == '.' {
+        if is_ip_word_char(prev) || prev == '.' {
             return false;
         }
     }
     if end < text.len() {
         let next = text[end..].chars().next().unwrap();
-        if is_word_char(next) || next == '.' {
+        if is_ip_word_char(next) || next == '.' {
             return false;
         }
     }
@@ -1199,13 +1205,13 @@ fn ipv6_v4_boundary_ok(text: &str, start: usize, end: usize) -> bool {
     // (?<![\w.]) ... (?![\w.]); a label colon is left to ``colon_label_ok``.
     if start > 0 {
         let prev = text[..start].chars().next_back().unwrap();
-        if is_word_char(prev) || prev == '.' || !colon_label_ok(text, start) {
+        if is_ip_word_char(prev) || prev == '.' || !colon_label_ok(text, start) {
             return false;
         }
     }
     if end < text.len() {
         let next = text[end..].chars().next().unwrap();
-        if is_word_char(next) || next == '.' {
+        if is_ip_word_char(next) || next == '.' {
             return false;
         }
     }
@@ -1217,13 +1223,13 @@ fn ipv6_boundary_ok(text: &str, start: usize, end: usize) -> bool {
     // ``colon_label_ok``.
     if start > 0 {
         let prev = text[..start].chars().next_back().unwrap();
-        if is_word_char(prev) || !colon_label_ok(text, start) {
+        if is_ip_word_char(prev) || !colon_label_ok(text, start) {
             return false;
         }
     }
     if end < text.len() {
         let next = text[end..].chars().next().unwrap();
-        if is_word_char(next) || next == ':' {
+        if is_ip_word_char(next) || next == ':' {
             return false;
         }
     }
@@ -1782,24 +1788,34 @@ const DE_STREET_WORDS: &str =
 
 /// Street + house number, mirroring Python ``STREET_*_RE``. ``\b`` is ASCII
 /// there (``re.ASCII``) and in JS, so it is ``(?-u:\b)`` here.
+///
+/// `nr_sep` joins the street and the number: up to three spaces, tabs, or
+/// no-break spaces, or a comma plus one to three of them
+/// (`Birkhahnstraße, 676`, `518, Hollywater Road`). A comma with no space
+/// after it is a CSV field separator, so `id,Kerkstraat,2024-01-15` keeps the
+/// bare street name clean. The comma form inherits the same recall-first
+/// over-masking as the comma-less one, so `Chapter 12, Main Street` masks
+/// exactly as `Chapter 12 Main Street` already does.
 fn street_res() -> &'static [Regex; 3] {
     static RES: OnceLock<[Regex; 3]> = OnceLock::new();
     RES.get_or_init(|| {
         let word = format!("[{STREET_UP}][{STREET_LOW}]+");
-        let sep = r"[ \t\u00a0\u202f]{1,3}";
+        let sep_chars = r" \t\u00a0\u202f";
+        let sep = format!("[{sep_chars}]{{1,3}}");
         let gap = format!("(?:{sep}|-)");
+        let nr_sep = format!("(?:,[{sep_chars}]{{1,3}}|{sep})");
         let house = format!(r"(?:(?:[Nn]r|[Nn]o)\.?{sep})?{HOUSE_NUMBER}");
         let nl_words =
             "(?:Straat|Laan|Weg|Plein|Gracht|Kade|Singel|Dijk|Dreef|Steeg|Hof|Markt|Wal|Haven|Park)";
         let particle = "(?:van|der|de|den|het|ten|ter|op|aan)";
         let nl = format!(
-            r"(?:{word}{gap}){{0,3}}(?:[{STREET_UP}][{STREET_LOW}]*(?:straat|str(?-u:\b)\.?|laan|weg|plein|gracht|kade|singel|dijk|dreef|steeg|pad|hof|markt|plantsoen|wal)|{NL_ADJECTIVES}{sep}{nl_words}|{nl_words}(?:{sep}{particle}){{1,2}}{sep}{word}(?:{gap}{word}){{0,3}}){sep}{house}"
+            r"(?:{word}{gap}){{0,3}}(?:[{STREET_UP}][{STREET_LOW}]*(?:straat|str(?-u:\b)\.?|laan|weg|plein|gracht|kade|singel|dijk|dreef|steeg|pad|hof|markt|plantsoen|wal)|{NL_ADJECTIVES}{sep}{nl_words}|{nl_words}(?:{sep}{particle}){{1,2}}{sep}{word}(?:{gap}{word}){{0,3}}){nr_sep}{house}"
         );
         let de = format!(
-            r"(?:{word}{gap}){{0,3}}(?:(?:[{STREET_UP}][{STREET_LOW}]*(?:straße|strasse|str(?-u:\b)\.?|weg|allee|platz|gasse|damm|ufer)|[{STREET_UP}][{STREET_LOW}]{{2,}}ring|[{STREET_UP}][{STREET_LOW}]*er{sep}{DE_STREET_WORDS}|[{STREET_UP}][{STREET_LOW}]+-{DE_STREET_WORDS}){sep}|[{STREET_UP}][{STREET_LOW}]*str\.){house}"
+            r"(?:{word}{gap}){{0,3}}(?:(?:[{STREET_UP}][{STREET_LOW}]*(?:straße|strasse|str(?-u:\b)\.?|weg|allee|platz|gasse|damm|ufer)|[{STREET_UP}][{STREET_LOW}]{{2,}}ring|[{STREET_UP}][{STREET_LOW}]*er{sep}{DE_STREET_WORDS}|[{STREET_UP}][{STREET_LOW}]+-{DE_STREET_WORDS}){nr_sep}|[{STREET_UP}][{STREET_LOW}]*str\.){house}"
         );
         let en = format!(
-            r"(?-u:\b)[1-9][0-9]{{0,4}}(?:[-/][0-9]{{1,4}})?[A-Za-z]?{sep}(?:{word}{sep}){{1,3}}(?:(?:Street|Road|Avenue|Lane|Drive|Boulevard|Court|Place|Way|Close|Crescent|Terrace|Square|Highway|Parkway|Row|Loop)(?-u:\b)|(?:St|Rd|Ave|Ln|Blvd|Dr|Ct|Pl|Hwy|Pkwy)(?-u:\b)\.?)"
+            r"(?-u:\b)[1-9][0-9]{{0,4}}(?:[-/][0-9]{{1,4}})?[A-Za-z]?{nr_sep}(?:{word}{sep}){{1,3}}(?:(?:Street|Road|Avenue|Lane|Drive|Boulevard|Court|Place|Way|Close|Crescent|Terrace|Square|Highway|Parkway|Row|Loop)(?-u:\b)|(?:St|Rd|Ave|Ln|Blvd|Dr|Ct|Pl|Hwy|Pkwy)(?-u:\b)\.?)"
         );
         [nl, de, en].map(|p| Regex::new(&p).unwrap())
     })
@@ -1843,6 +1859,31 @@ fn scrub_street_en(text: &str) -> (Option<String>, u32) {
 fn nl_vat_re() -> &'static Regex {
     static RE: OnceLock<Regex> = OnceLock::new();
     RE.get_or_init(|| Regex::new(r"\b[Nn][Ll][.\s]*\d{9}[.\s]*[Bb][.\s]*\d{2}\b").unwrap())
+}
+
+fn de_vat_re() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| Regex::new(r"\bDE[.\s]*[1-9][0-9]{2}[.\s]*[0-9]{3}[.\s]*[0-9]{3}\b").unwrap())
+}
+
+fn de_vat_valid(value: &str) -> bool {
+    let digits: Vec<u8> = value.bytes().filter(|b| b.is_ascii_digit()).collect();
+    let mut product = 10u32;
+    for digit in digits.iter().take(8) {
+        let total = (u32::from(*digit - b'0') + product) % 10;
+        product = (2 * if total == 0 { 10 } else { total }) % 11;
+    }
+    (11 - product) % 10 == u32::from(digits[8] - b'0')
+}
+
+fn scrub_de_vat(text: &str) -> (Option<String>, u32) {
+    replace_matches(
+        text,
+        de_vat_re(),
+        "[VAT_ID]",
+        |v, _, _| de_vat_valid(v),
+        false,
+    )
 }
 
 fn scrub_nl_vat(text: &str) -> (Option<String>, u32) {
@@ -1996,6 +2037,10 @@ fn build_detectors(mask: u8) -> Vec<Detector> {
         pack.push(Detector {
             category: PiiCategory::TaxId,
             scrub: scrub_tax_id,
+        });
+        pack.push(Detector {
+            category: PiiCategory::VatId,
+            scrub: scrub_de_vat,
         });
     }
     if has_nl {

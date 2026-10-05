@@ -189,6 +189,38 @@ class TestBsn:
         assert result["counts"]["ssn"] == 0
 
 
+class TestDeVat:
+    @pytest.mark.parametrize("value", ["DE136695976", "DE 136 695 976", "DE.136.695.976"])
+    def test_masks_valid_id(self, value: str) -> None:
+        result = scrub_text(f"VAT {value} on file", languages=["de"])
+        assert result["text"] == "VAT [VAT_ID] on file"
+        assert result["counts"]["vat_id"] == 1
+
+    @pytest.mark.parametrize(
+        "value",
+        [
+            "DE136695977",
+            "DE036695976",
+            "de136695976",
+            "xDE136695976",
+            "DE136695976x",
+        ],
+    )
+    def test_rejects_invalid_id(self, value: str) -> None:
+        result = scrub_text(value, languages=["de"])
+        assert result["text"] == value
+        assert result["counts"]["vat_id"] == 0
+
+    def test_disabled_without_de(self) -> None:
+        result = scrub_text("DE136695976", languages=["en", "nl"])
+        assert result["text"] == "DE136695976"
+        assert result["counts"]["vat_id"] == 0
+
+    def test_masks_in_json(self) -> None:
+        result = scrub_text('{"vat":"DE136695976"}', languages=["de"])
+        assert result["text"] == '{"vat":"[VAT_ID]"}'
+
+
 class TestNlVat:
     def test_masks_btw_id(self) -> None:
         result = scrub_text("factuur NL000099998B57", languages=["nl"])
@@ -655,12 +687,53 @@ class TestStreetAddress:
             ("5 Elm Ct.", "en", "[ADDRESS]"),
             ("12 Park Row", "en", "[ADDRESS]"),
             ("lives at 221B Baker Street.", "en", "lives at [ADDRESS]."),
+            ("Birkhahnstraße, 676", "de", "[ADDRESS]"),
+            ("Adresse: Kerkstraat, 12", "nl", "Adresse: [ADDRESS]"),
+            ("518, Hollywater Road, Liphook", "en", "[ADDRESS], Liphook"),
+            ("474, Lexington Drive, Colorado Springs", "en", "[ADDRESS], Colorado Springs"),
+            ("Kerkstraat,\u00a012", "nl", "[ADDRESS]"),
+            ("Kerkstraat,  12", "nl", "[ADDRESS]"),
+            ("Hauptstr., 12", "de", "[ADDRESS]"),
+            ("Berliner Straße, 17", "de", "[ADDRESS]"),
+            ("Laan van Meerdervoort, 52", "nl", "[ADDRESS]"),
+            ("Kerkstraat, nr. 12", "nl", "[ADDRESS]"),
+            ("221B, Baker Street", "en", "[ADDRESS]"),
         ],
     )
     def test_masks_street_and_house_number(self, text: str, lang: str, expected: str) -> None:
         result = scrub_text(text, languages=[lang])
         assert result["text"] == expected
         assert result["counts"]["address"] == expected.count("[ADDRESS]")
+
+    @pytest.mark.parametrize(
+        ("text", "lang", "expected"),
+        [
+            ("Chapter 12, Main Street", "en", "Chapter [ADDRESS]"),
+            ("Sections 3, Park Lane and 4", "en", "Sections [ADDRESS] and 4"),
+            ("Kerkstraat, 2024", "nl", "[ADDRESS]"),
+        ],
+    )
+    def test_comma_form_over_masks_like_the_comma_less_form(
+        self, text: str, lang: str, expected: str
+    ) -> None:
+        """A street word plus a number is masked whichever separator joins them.
+
+        Rejecting a year here would have to reject ``Kerkstraat 2024`` too,
+        which leaks four-digit house numbers. Recall comes first.
+        """
+        assert scrub_text(text.replace(",", ""), languages=[lang])["counts"]["address"] == 1
+        assert scrub_text(text, languages=[lang])["text"] == expected
+
+    def test_csv_comma_is_a_field_separator(self) -> None:
+        """A comma needs a space behind it, so CSV columns are not house numbers.
+
+        Without the space rule, a bare street name in one column takes the next
+        column's date as its number (``id,Kerkstraat,2024-01-15`` ->
+        ``id,[ADDRESS]-15``), which the ``street_name`` clean samples forbid.
+        """
+        csv = "id,Kerkstraat,2024-01-15,active"
+        assert scrub_text(csv, languages=["nl"])["text"] == csv
+        assert scrub_text("Kerkstraat, 12", languages=["nl"])["counts"]["address"] == 1
 
     @pytest.mark.parametrize(
         ("text", "lang"),
@@ -679,6 +752,13 @@ class TestStreetAddress:
             ("Auf Platz 3 landete", "de"),
             ("Spring 2024", "de"),
             ("3 new road maps", "en"),
+            ("Foo, 12", "nl"),
+            ("Foo, 12", "de"),
+            ("12, Foo", "en"),
+            ("de Kerkstraat, afgesloten", "nl"),
+            ("Kerkstraat,12", "nl"),
+            ("Birkhahnstraße,676", "de"),
+            ("id,518,Hollywater Road,x", "en"),
         ],
     )
     def test_ignores_bare_names_and_lookalikes(self, text: str, lang: str) -> None:
