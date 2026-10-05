@@ -12,6 +12,9 @@ Language packs: `en`, `nl`, and opt-in `de`.
 [![npm](https://img.shields.io/npm/v/pii-mcp.svg)](https://www.npmjs.com/package/pii-mcp)
 [![CI](https://github.com/foro-sh/pii-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/foro-sh/pii-mcp/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
+[![GitHub stars](https://img.shields.io/github/stars/foro-sh/pii-mcp?style=social)](https://github.com/foro-sh/pii-mcp)
+
+If pii-mcp saves you time, a ⭐ helps others find it.
 
 ## Example
 
