@@ -1,0 +1,27 @@
+name: Thank contributor
+
+# pull_request_target so the token can comment on PRs from forks. Safe here:
+# nothing from the PR is checked out or executed.
+on:
+  pull_request_target:
+    types: [closed]
+
+permissions:
+  pull-requests: write
+
+jobs:
+  thank:
+    if: >-
+      github.event.pull_request.merged &&
+      github.event.pull_request.user.type != 'Bot' &&
+      !contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.pull_request.author_association)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Comment
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+          AUTHOR: ${{ github.event.pull_request.user.login }}
+        run: |
+          gh pr comment "$PR" --body "Thanks @$AUTHOR, merged! 🎉 If pii-mcp is useful to you, a ⭐ on the repo helps others find it."
