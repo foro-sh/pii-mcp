@@ -244,6 +244,70 @@ describe("scrubText", () => {
     }
   });
 
+  it("masks grouped UK NHS numbers as ssn with en pack", () => {
+    for (const value of [
+      "943 476 5919",
+      "943-476-5919",
+      "943\u00a0476\u00a05919",
+      "943\u2013476\u20135919",
+    ]) {
+      const result = scrubText(`NHS ${value} on file`, { languages: ["en"] });
+      expect(result.text).toBe("NHS [SSN] on file");
+      expect(result.counts.ssn).toBe(1);
+      expect(result.counts.phone).toBe(0);
+    }
+    expect(
+      scrubText('{"nhs": "943-476-5919"}', { languages: ["en"] }).text,
+    ).toBe('{"nhs": "[SSN]"}');
+    expect(scrubText("a,943 476 5919,b", { languages: ["en"] }).text).toBe(
+      "a,[SSN],b",
+    );
+  });
+
+  it("masks NHS numbers next to other digits", () => {
+    for (const [text, expected] of [
+      ["943 476 5919 943 476 5919", "[SSN] [SSN]"],
+      ["401-023-2137 401-023-2137", "[SSN] [SSN]"],
+      ["Patient 2 943 476 5919", "Patient 2 [SSN]"],
+      ["NHS 401 023 2137 2 visits", "NHS [SSN] 2 visits"],
+      ["ward 11 943 476 5919", "ward 11 [SSN]"],
+    ] as const) {
+      const result = scrubText(text, { languages: ["en"] });
+      expect(result.text).toBe(expected);
+      expect(result.counts.phone).toBe(0);
+    }
+  });
+
+  it("masks NHS numbers with the default packs", () => {
+    for (const [text, expected] of [
+      ["401-023-2137 401-023-2137", "[SSN] [SSN]"],
+      ["401 023 2137 943 476 5919", "[SSN] [SSN]"],
+      ["NHS 401 023 2137 049", "NHS [SSN] 049"],
+    ] as const) {
+      expect(scrubText(text).text).toBe(expected);
+    }
+    const nlPhone = scrubText("bel 020 794 6095");
+    expect(nlPhone.text).toBe("bel [PHONE]");
+    expect(nlPhone.counts.ssn).toBe(0);
+  });
+
+  it("leaves invalid NHS numbers and NANP numbers with country code to phone", () => {
+    for (const value of [
+      "943 476 5918",
+      "111 111 1111",
+      "123 456 7890",
+      "943-476 5919",
+      "1-943-476-5919",
+      "1 943 476 5919",
+    ]) {
+      const result = scrubText(value, { languages: ["en"] });
+      expect(result.text).toBe("[PHONE]");
+      expect(result.counts.ssn).toBe(0);
+    }
+    const compact = "ts 9434765919";
+    expect(scrubText(compact, { languages: ["en"] }).text).toBe(compact);
+  });
+
   it("masks German tax id with de pack", () => {
     const result = scrubText("IdNr 36574261809 gespeichert", {
       languages: ["de"],

@@ -310,6 +310,54 @@ mod tests {
     use super::*;
 
     #[test]
+    fn masks_grouped_nhs_numbers_as_ssn_in_en_pack() {
+        let en = [LanguageCode::En];
+        for value in ["943 476 5919", "943-476-5919", "943\u{a0}476\u{a0}5919"] {
+            let r = scrub_text_langs(&format!("NHS {value} on file"), &en, true, false).unwrap();
+            assert_eq!(r.text, "NHS [SSN] on file");
+            assert_eq!(r.counts["ssn"], 1);
+            assert_eq!(r.counts["phone"], 0);
+        }
+        let r = scrub_text_langs(r#"{"nhs": "943-476-5919"}"#, &en, true, false).unwrap();
+        assert_eq!(r.text, r#"{"nhs": "[SSN]"}"#);
+        for value in [
+            "943 476 5918",
+            "111 111 1111",
+            "1-943-476-5919",
+            "1 943 476 5919",
+            "943-476 5919",
+        ] {
+            let r = scrub_text_langs(value, &en, true, false).unwrap();
+            assert_eq!(r.text, "[PHONE]", "{value}");
+            assert_eq!(r.counts["ssn"], 0, "{value}");
+        }
+        let r = scrub_text_langs("ts 9434765919", &en, true, false).unwrap();
+        assert_eq!(r.text, "ts 9434765919");
+        for (text, expected) in [
+            ("943 476 5919 943 476 5919", "[SSN] [SSN]"),
+            ("401-023-2137 401-023-2137", "[SSN] [SSN]"),
+            ("Patient 2 943 476 5919", "Patient 2 [SSN]"),
+            ("NHS 401 023 2137 2 visits", "NHS [SSN] 2 visits"),
+            ("ward 11 943 476 5919", "ward 11 [SSN]"),
+        ] {
+            let r = scrub_text_langs(text, &en, true, false).unwrap();
+            assert_eq!(r.text, expected, "{text}");
+            assert_eq!(r.counts["phone"], 0, "{text}");
+        }
+        for (text, expected) in [
+            ("401-023-2137 401-023-2137", "[SSN] [SSN]"),
+            ("401 023 2137 943 476 5919", "[SSN] [SSN]"),
+            ("NHS 401 023 2137 049", "NHS [SSN] 049"),
+        ] {
+            let r = scrub_text(text, None, true, false).unwrap();
+            assert_eq!(r.text, expected, "{text}");
+        }
+        let r = scrub_text("bel 020 794 6095", None, true, false).unwrap();
+        assert_eq!(r.text, "bel [PHONE]");
+        assert_eq!(r.counts["ssn"], 0);
+    }
+
+    #[test]
     fn masks_only_valid_german_vat_ids_in_de_pack() {
         let de = [LanguageCode::De];
         for value in ["DE136695976", "DE 136 695 976", "DE.136.695.976"] {

@@ -318,6 +318,75 @@ class TestItin:
         assert result["counts"]["tax_id"] == 0
 
 
+class TestNhsNumber:
+    def test_masks_grouped_as_ssn(self) -> None:
+        for value in (
+            "943 476 5919",
+            "943-476-5919",
+            "943\xa0476\xa05919",
+            "943\u2013476\u20135919",
+        ):
+            result = scrub_text(f"NHS {value} on file", languages=["en"])
+            assert result["text"] == "NHS [SSN] on file", value
+            assert result["counts"]["ssn"] == 1
+            assert result["counts"]["phone"] == 0
+
+    def test_masks_inside_json_and_csv(self) -> None:
+        assert scrub_text('{"nhs": "943-476-5919"}', languages=["en"])["text"] == (
+            '{"nhs": "[SSN]"}'
+        )
+        assert scrub_text("a,943 476 5919,b", languages=["en"])["text"] == "a,[SSN],b"
+
+    def test_masks_numbers_next_to_other_digits(self) -> None:
+        for text, expected in (
+            ("943 476 5919 943 476 5919", "[SSN] [SSN]"),
+            ("401-023-2137 401-023-2137", "[SSN] [SSN]"),
+            ("Patient 2 943 476 5919", "Patient 2 [SSN]"),
+            ("NHS 401 023 2137 2 visits", "NHS [SSN] 2 visits"),
+            ("ward 11 943 476 5919", "ward 11 [SSN]"),
+        ):
+            result = scrub_text(text, languages=["en"])
+            assert result["text"] == expected, text
+            assert result["counts"]["phone"] == 0, text
+
+    def test_masks_with_default_packs(self) -> None:
+        for text, expected in (
+            ("401-023-2137 401-023-2137", "[SSN] [SSN]"),
+            ("401 023 2137 943 476 5919", "[SSN] [SSN]"),
+            ("NHS 401 023 2137 049", "NHS [SSN] 049"),
+        ):
+            assert scrub_text(text)["text"] == expected, text
+
+    def test_leaves_leading_zero_to_nl_phone(self) -> None:
+        result = scrub_text("bel 020 794 6095")
+        assert result["text"] == "bel [PHONE]"
+        assert result["counts"]["ssn"] == 0
+
+    def test_leaves_failing_check_digit_to_phone(self) -> None:
+        for bad in ("943 476 5918", "111 111 1111", "943-476 5919"):
+            result = scrub_text(bad, languages=["en"])
+            assert result["counts"]["ssn"] == 0, bad
+            assert result["text"] == "[PHONE]", bad
+
+    def test_leaves_check_digit_ten_unmasked_as_nhs(self) -> None:
+        result = scrub_text("123 456 7890", languages=["en"])
+        assert result["counts"]["ssn"] == 0
+
+    def test_leaves_nanp_with_country_code_to_phone(self) -> None:
+        for value in ("1-943-476-5919", "1 943 476 5919"):
+            result = scrub_text(value, languages=["en"])
+            assert result["text"] == "[PHONE]", value
+            assert result["counts"]["ssn"] == 0, value
+
+    def test_ignores_compact(self) -> None:
+        result = scrub_text("ts 9434765919", languages=["en"])
+        assert result["text"] == "ts 9434765919"
+
+    def test_disabled_without_en(self) -> None:
+        result = scrub_text("NHS 943 476 5919", languages=["nl"])
+        assert result["counts"]["ssn"] == 0
+
+
 class TestTaxId:
     def test_masks_valid_idnr(self) -> None:
         result = scrub_text("IdNr 36574261809 gespeichert", languages=["de"])

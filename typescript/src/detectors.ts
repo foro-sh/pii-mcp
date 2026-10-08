@@ -43,6 +43,12 @@
  * - US ITIN (``tax_id``): grouped ``9XX-XX-XXXX`` only (hyphen, space, nbsp, or
  *   unicode dash), first digit 9 and 4th–5th digits in the IRS ITIN ranges. The
  *   compact form collides with BSNs and 9-digit invoice numbers.
+ * - UK NHS number (``ssn``): grouped ``943 476 5919`` / ``943-476-5919`` only
+ *   (space, nbsp, hyphen or unicode dash) with the mod-11 check digit. No NHS
+ *   number starts with 0, so NL trunk-``0`` phone numbers are not taken. The
+ *   compact form collides with Unix timestamps. After a lone ``1`` and a
+ *   separator it is a NANP number with country code (``1-943-476-5919``) and is
+ *   left to the phone detector.
  * - German Steuer-IdNr (tax_id): 11 digits, compact or grouped ``12 345 678 901``,
  *   with structure + mod-11/10 check.
  * - German USt-IdNr (``vat_id``): uppercase ``DE`` + 9 digits, compact or
@@ -920,6 +926,47 @@ function scrubItin(text: string): { text: string; count: number } {
 }
 
 export const itinDetector: Detector = { type: "tax_id", scrub: scrubItin };
+
+const NHS_GROUP_SEP = String.raw`[ \-${GROUP_SPACES}${GROUP_DASHES}]`;
+const NHS_RES = [ID_SPACE, ID_DASH].map(
+  (sep) =>
+    new RegExp(
+      String.raw`(?<!(?<![0-9])1${NHS_GROUP_SEP})(?<![\p{L}\p{N}_])[1-9][0-9]{2}${sep}[0-9]{3}${sep}[0-9]{4}(?![\p{L}\p{N}_])`,
+      "gu",
+    ),
+);
+
+/**
+ * Mod-11 check digit over weights 10..2; a remainder giving 10 is invalid.
+ *
+ * Repeated digits (``111 111 1111``) pass the checksum and are rejected.
+ * NHS Data Dictionary: https://www.datadictionary.nhs.uk/attributes/nhs_number.html
+ */
+function nhsValid(value: string): boolean {
+  const digits = value.replace(ID_SEPS, "");
+  if (/^(\d)\1*$/.test(digits)) {
+    return false;
+  }
+  let total = 0;
+  for (let i = 0; i < 9; i++) {
+    total += Number(digits[i]) * (10 - i);
+  }
+  const check = (11 - (total % 11)) % 11;
+  return check === Number(digits[9]);
+}
+
+function scrubNhs(text: string): { text: string; count: number } {
+  let out = text;
+  let count = 0;
+  for (const pattern of NHS_RES) {
+    const result = replaceMatches(out, pattern, "[SSN]", nhsValid);
+    out = result.text;
+    count += result.count;
+  }
+  return { text: out, count };
+}
+
+export const nhsDetector: Detector = { type: "ssn", scrub: scrubNhs };
 
 // Compact, or the ``12 345 678 901`` grouping printed on Steuerbescheide and
 // payslips (single space / nbsp between groups).

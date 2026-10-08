@@ -47,6 +47,12 @@ Patterns:
 - US ITIN (``tax_id``): grouped ``9XX-XX-XXXX`` only (hyphen, space, nbsp, or
   unicode dash), first digit 9 and 4th–5th digits in the IRS ITIN ranges. The
   compact form collides with BSNs and 9-digit invoice numbers.
+- UK NHS number (``ssn``): grouped ``943 476 5919`` / ``943-476-5919`` only
+  (space, nbsp, hyphen or unicode dash) with the mod-11 check digit. No NHS
+  number starts with 0, so NL trunk-``0`` phone numbers are not taken. The
+  compact form collides with Unix timestamps. After a lone ``1`` and a
+  separator it is a NANP number with country code (``1-943-476-5919``) and is
+  left to the phone detector.
 - German Steuer-IdNr (tax_id): 11 digits, compact or grouped ``12 345 678 901``,
   with structure + mod-11/10 check.
 - German USt-IdNr (``vat_id``): uppercase ``DE`` + 9 digits, compact or
@@ -887,6 +893,41 @@ def _scrub_itin(text: str) -> tuple[str, int]:
 
 
 itin_detector = Detector(type="tax_id", scrub=_scrub_itin)
+
+_NHS_GROUP_SEP = f"[ \\-{_GROUP_SPACES}{_GROUP_DASHES}]"
+NHS_RES: tuple[re.Pattern[str], ...] = tuple(
+    re.compile(
+        rf"(?<!^1{_NHS_GROUP_SEP})(?<![^0-9]1{_NHS_GROUP_SEP})"
+        rf"\b[1-9][0-9]{{2}}{sep}[0-9]{{3}}{sep}[0-9]{{4}}\b"
+    )
+    for sep in (_ID_SPACE, _ID_DASH)
+)
+
+
+def _nhs_valid(value: str) -> bool:
+    """Mod-11 check digit over weights 10..2; a remainder giving 10 is invalid.
+
+    Repeated digits (``111 111 1111``) pass the checksum and are rejected.
+    NHS Data Dictionary: https://www.datadictionary.nhs.uk/attributes/nhs_number.html
+    """
+    digits = _strip_id_seps(value)
+    if len(set(digits)) == 1:
+        return False
+    total = sum(int(d) * (10 - i) for i, d in enumerate(digits[:9]))
+    check = (11 - total % 11) % 11
+    return check == int(digits[9])
+
+
+def _scrub_nhs(text: str) -> tuple[str, int]:
+    out = text
+    count = 0
+    for pattern in NHS_RES:
+        out, n = _replace_matches(out, pattern, "[SSN]", _nhs_valid)
+        count += n
+    return out, count
+
+
+nhs_detector = Detector(type="ssn", scrub=_scrub_nhs)
 
 # Compact, or the ``12 345 678 901`` grouping printed on Steuerbescheide and
 # payslips (single space / nbsp between groups).

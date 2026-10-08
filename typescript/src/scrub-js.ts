@@ -13,11 +13,13 @@
  *
  * Detector pack order (see ``detectorsFor``): universal → international phone
  * (when any pack is active, before national IDs so ``+31(0)6…`` is not eaten by
- * SSN) → locale phone forms (before BSN takes the subscriber part of
- * ``040 78703244``) → checksum/rule-backed national IDs (DE IdNr before BSN,
- * BSN before SSN when both packs are on, US ITIN before SSN; DE USt-IdNr and
- * NL BTW before BSN, passport after) → street + house number per pack (en, de, nl) →
- * postcode per pack → kenteken when ``nl``.
+ * SSN) → UK NHS number when ``en`` (its ``3-3-4`` shape is a NANP number, and
+ * an NL trunk-``0`` phone match can start in its middle group) → locale phone
+ * forms (before BSN takes the subscriber part of ``040 78703244``) →
+ * checksum/rule-backed national IDs (DE IdNr before BSN, BSN before SSN when
+ * both packs are on, US ITIN before SSN; DE USt-IdNr and NL BTW before BSN,
+ * passport after) → street + house number per pack (en, de, nl) → postcode
+ * per pack → kenteken when ``nl``.
  */
 
 import {
@@ -25,6 +27,7 @@ import {
   bsnDetector,
   deVatDetector,
   itinDetector,
+  nhsDetector,
   nlLicensePlateDetector,
   nlPassportDetector,
   nlPostcodeDetector,
@@ -105,6 +108,9 @@ function detectorsFor(
   const pack: Detector[] = [...UNIVERSAL_DETECTORS];
   if (langs.length > 0) {
     pack.push(phoneInternationalDetector);
+  }
+  if (langs.includes("en")) {
+    pack.push(nhsDetector);
   }
   // National phone forms (trunk ``0`` + area code) before bare-digit IDs, so
   // BSN does not take the subscriber part of ``040 78703244``.
