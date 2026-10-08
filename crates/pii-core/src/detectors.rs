@@ -4,11 +4,17 @@
 //! explicit boundary checks so matching stays on the linear-time `regex` crate.
 //! German USt-IdNr (`vat_id`) accepts uppercase `DE` and nine digits, compact
 //! or in three groups, with an ISO 7064 MOD 11,10 check digit.
+//! UK NHS numbers (`ssn`, en pack) match only the grouped `3-3-4` form with a
+//! space, hyphen, nbsp or unicode dash between groups and a mod-11 check digit.
+//! No NHS number starts with 0, so NL trunk-`0` phone numbers are not taken.
+//! The NHS detector runs before the national phone forms.
+//! After a lone `1` and a separator the value is a NANP number with country
+//! code and is left to the phone detector.
 
 use crate::checksum::{
     bsn_valid_grouped, iban_valid, imei_valid, is_group_sep, itin_valid_grouped, luhn_valid,
-    nl_passport_valid, nl_postcode_valid, ssn_valid_grouped, tax_id_valid_grouped,
-    uk_postcode_valid, GROUP_DASHES, GROUP_SPACES,
+    nhs_valid_grouped, nl_passport_valid, nl_postcode_valid, ssn_valid_grouped,
+    tax_id_valid_grouped, uk_postcode_valid, GROUP_DASHES, GROUP_SPACES,
 };
 use regex::Regex;
 use std::sync::OnceLock;
@@ -1396,6 +1402,53 @@ fn scrub_itin(text: &str) -> (Option<String>, u32) {
     scrub_patterns(text, itin_res(), "[TAX_ID]", |v, _, _| itin_valid_grouped(v), false)
 }
 
+fn nhs_res() -> &'static [Regex] {
+    static RES: OnceLock<Vec<Regex>> = OnceLock::new();
+    RES.get_or_init(|| {
+        [id_space(), id_dash()]
+            .iter()
+            .map(|sep| {
+                Regex::new(&format!(r"\b[1-9][0-9]{{2}}{sep}[0-9]{{3}}{sep}[0-9]{{4}}\b")).unwrap()
+            })
+            .collect()
+    })
+}
+
+fn is_nhs_group_sep(c: char) -> bool {
+    c == ' ' || c == '-' || is_group_sep(c)
+}
+
+/// ``(?<!(?<![0-9])1<sep>)``: after a lone ``1`` and a separator the hit is a
+/// NANP number with country code (``1-943-476-5919``), left to the phone detector.
+fn nhs_not_after_country_code(text: &str, start: usize) -> bool {
+    let mut before = text[..start].chars().rev();
+    !matches!(
+        (before.next(), before.next(), before.next()),
+        (Some(sep), Some('1'), prev)
+            if is_nhs_group_sep(sep) && !prev.is_some_and(|c| c.is_ascii_digit())
+    )
+}
+
+fn scrub_nhs(text: &str) -> (Option<String>, u32) {
+    let mut current: Option<String> = None;
+    let mut count = 0u32;
+    for pattern in nhs_res() {
+        let src = current.as_deref().unwrap_or(text);
+        let (next, n) = replace_matches(
+            src,
+            pattern,
+            "[SSN]",
+            |v, s, _| nhs_not_after_country_code(src, s) && nhs_valid_grouped(v),
+            false,
+        );
+        count += n;
+        if let Some(s) = next {
+            current = Some(s);
+        }
+    }
+    (current, count)
+}
+
 fn ssn_res() -> &'static [Regex] {
     static RES: OnceLock<Vec<Regex>> = OnceLock::new();
     RES.get_or_init(|| {
@@ -2011,6 +2064,12 @@ fn build_detectors(mask: u8) -> Vec<Detector> {
         pack.push(Detector {
             category: PiiCategory::Phone,
             scrub: scrub_phone_international,
+        });
+    }
+    if has_en {
+        pack.push(Detector {
+            category: PiiCategory::Ssn,
+            scrub: scrub_nhs,
         });
     }
     // National phone forms (trunk ``0`` + area code) before bare-digit IDs, so

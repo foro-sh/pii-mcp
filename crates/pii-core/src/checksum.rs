@@ -287,6 +287,36 @@ pub(crate) fn itin_valid_grouped(value: &str) -> bool {
     matches!(group, 50..=65 | 70..=88 | 90..=92 | 94..=99)
 }
 
+/// UK NHS number for scrub hits: 10 digits, mod-11 check digit over weights
+/// 10..2, where a remainder giving 10 is invalid. Repeated digits pass the
+/// checksum and are rejected. Group separators (see ``is_id_sep``) are skipped.
+///
+/// NHS Data Dictionary: <https://www.datadictionary.nhs.uk/attributes/nhs_number.html>
+pub(crate) fn nhs_valid_grouped(value: &str) -> bool {
+    let mut digits = [0u32; 10];
+    let mut len = 0usize;
+    for c in value.chars() {
+        if is_id_sep(c) {
+            continue;
+        }
+        if !c.is_ascii_digit() || len >= 10 {
+            return false;
+        }
+        digits[len] = c as u32 - u32::from(b'0');
+        len += 1;
+    }
+    if len != 10 || digits.iter().all(|&d| d == digits[0]) {
+        return false;
+    }
+    let total: u32 = digits[..9]
+        .iter()
+        .zip((2..=10u32).rev())
+        .map(|(d, w)| d * w)
+        .sum();
+    let check = (11 - total % 11) % 11;
+    check == digits[9]
+}
+
 fn ssn_obviously_fake(digits: &[u8; 9]) -> bool {
     if digits.iter().all(|&b| b == digits[0]) {
         return true;

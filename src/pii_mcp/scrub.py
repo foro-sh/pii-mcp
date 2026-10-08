@@ -13,11 +13,13 @@ native extension built with the ``ner`` feature (see the README).
 
 Detector pack order (see ``_detectors_for``): universal → international phone
 (when any pack is active, before national IDs so ``+31(0)6…`` is not eaten by
-SSN) → locale phone forms (before BSN takes the subscriber part of
-``040 78703244``) → checksum/rule-backed national IDs (DE IdNr before BSN,
-BSN before SSN when both packs are on, US ITIN before SSN; DE USt-IdNr and
-NL BTW before BSN, passport after) → street + house number per pack (en, de, nl) →
-postcode per pack → kenteken when ``nl``.
+SSN) → UK NHS number when ``en`` (its ``3-3-4`` shape is a NANP number, and
+an NL trunk-``0`` phone match can start in its middle group) → locale phone
+forms (before BSN takes the subscriber part of ``040 78703244``) →
+checksum/rule-backed national IDs (DE IdNr before BSN, BSN before SSN when
+both packs are on, US ITIN before SSN; DE USt-IdNr and NL BTW before BSN,
+passport after) → street + house number per pack (en, de, nl) → postcode
+per pack → kenteken when ``nl``.
 
 Optional Rust acceleration: when ``pii_mcp._native`` is importable (shipped in
 platform wheels, or built via maturin), ``scrub_text`` / ``scrub_payload``
@@ -39,6 +41,7 @@ from pii_mcp.detectors import (
     bsn_detector,
     de_vat_detector,
     itin_detector,
+    nhs_detector,
     nl_license_plate_detector,
     nl_passport_detector,
     nl_postcode_detector,
@@ -203,6 +206,8 @@ def _detectors_for(languages: Sequence[str] | None) -> tuple[Detector, ...]:
     pack: list[Detector] = list(UNIVERSAL_DETECTORS)
     if langs:
         pack.append(phone_international_detector)
+    if "en" in langs:
+        pack.append(nhs_detector)
     # National phone forms (trunk ``0`` + area code) before bare-digit IDs, so
     # BSN does not take the subscriber part of ``040 78703244``.
     if "nl" in langs:
