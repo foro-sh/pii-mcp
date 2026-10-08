@@ -194,6 +194,27 @@ def itin(r: R) -> str:
     return _group(number, (3, 2, 4), r.choice(["-", " "]))
 
 
+def _nhs_check(body: str) -> int:
+    total = sum(int(d) * (10 - i) for i, d in enumerate(body))
+    return (11 - total % 11) % 11
+
+
+def nhs(r: R) -> str:
+    """A grouped UK NHS number: ``3-3-4``, no leading 0, valid mod-11 check digit."""
+    while True:
+        body = str(r.randint(1, 9)) + _digits(r, 8)
+        check = _nhs_check(body)
+        if check != 10 and len(set(body + str(check))) > 1:
+            break
+    sep = r.choice([" ", " ", "-", "\xa0"])
+    return _group(body + str(check), (3, 3, 4), sep)
+
+
+def _nhs_compact(r: R) -> str:
+    """A valid NHS number without separators, which the detector leaves alone."""
+    return "".join(ch for ch in nhs(r) if ch.isdigit())
+
+
 def tax_id_de(r: R) -> str:
     while True:
         pool = list(string.digits)
@@ -405,6 +426,7 @@ PII: list[tuple[str, Callable[[R], str], tuple[str, ...]]] = [
     ("ssn", ssn, ("en",)),
     ("tax_id", tax_id_de, ("de",)),
     ("tax_id", itin, ("en",)),
+    ("ssn", nhs, ("en",)),
     ("vat_id", vat_nl, ("nl",)),
     ("vat_id", vat_de, ("de",)),
     ("passport", passport_nl, ("nl",)),
@@ -440,6 +462,7 @@ def _ean13(r: R) -> str:
 
 
 CLEAN: list[tuple[str, Callable[[R], str]]] = [
+    ("nhs_compact", _nhs_compact),
     ("vat_de_bad_checksum", lambda r: "DE136695977"),
     ("vat_de_leading_zero", lambda r: "DE036695976"),
     ("uuid", lambda r: str(uuid.UUID(int=r.getrandbits(128), version=4))),
