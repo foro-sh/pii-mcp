@@ -387,6 +387,112 @@ class TestNhsNumber:
         assert result["counts"]["ssn"] == 0
 
 
+class TestNino:
+    def test_masks_compact_spaced_and_lowercase(self) -> None:
+        for value in (
+            "AB123456C",
+            "AB 12 34 56 C",
+            "ab 12 34 56 d",
+            "jg103759a",
+            "AB 12 34 56",
+            "AB 123456 C",
+            "AB123456 C",
+            "AB 12 34 56C",
+            "AB\xa012\xa034\xa056\xa0C",
+        ):
+            result = scrub_text(f"NINO {value} on file", languages=["en"])
+            assert result["text"] == "NINO [SSN] on file", value
+            assert result["counts"]["ssn"] == 1
+
+    def test_masks_inside_json_and_csv(self) -> None:
+        assert scrub_text('{"ni": "JG103759A"}', languages=["en"])["text"] == (
+            '{"ni": "[SSN]"}'
+        )
+        assert scrub_text("a,JG 10 37 59 A,b", languages=["en"])["text"] == "a,[SSN],b"
+
+    def test_rejects_unissued_prefixes_and_suffixes(self) -> None:
+        for bad in (
+            "QQ123456C",
+            "QQ 12 34 56 C",
+            "GB123456A",
+            "ZZ 12 34 56 A",
+            "DA123456A",
+            "AO123456A",
+            "AB123456E",
+        ):
+            result = scrub_text(f"ref {bad}", languages=["en"])
+            assert result["text"] == f"ref {bad}", bad
+
+    def test_rejects_every_unissued_prefix_letter_and_pair(self) -> None:
+        bad = [f"{c}A" for c in "DFIQUV"] + [f"A{c}" for c in "DFIOQUV"]
+        bad += ["BG", "GB", "KN", "NK", "NT", "TN", "ZZ"]
+        for prefix in bad:
+            value = f"{prefix}123456A"
+            assert scrub_text(value, languages=["en"])["text"] == value, prefix
+
+    def test_masks_thin_and_narrow_nbsp_and_glued_prefix(self) -> None:
+        for value in (
+            "AB\u200912\u200934\u200956\u2009C",
+            "AB\u202f12\u202f34\u202f56",
+            "AB12 34 56 C",
+        ):
+            assert scrub_text(value, languages=["en"])["text"] == "[SSN]", value
+
+    def test_ignores_suffixless_forms_other_than_upper_spaced(self) -> None:
+        for value in (
+            "AB123456",
+            "AB 123456",
+            "ab 12 34 56",
+            "meet at 10 15 20",
+            "rose by 100000 a year",
+            "at 123456 b",
+        ):
+            result = scrub_text(f"ref {value}", languages=["en"])
+            assert result["text"] == f"ref {value}", value
+
+    def test_ignores_glued_tokens_base64_and_order_refs(self) -> None:
+        for value in (
+            "xAB123456C",
+            "AB123456Cx",
+            "sku_AB123456C",
+            "ORD-AB123456C",
+            "AB123456C-2",
+            "aGVsbG8AB123456Cd29ybGQ=",
+            "AB123456C=",
+        ):
+            result = scrub_text(f"ref {value}", languages=["en"])
+            assert result["text"] == f"ref {value}", value
+
+    def test_masks_url_path_segments(self) -> None:
+        for text, expected in (
+            ("GET /api/claimants/AB123456C HTTP/1.1", "GET /api/claimants/[SSN] HTTP/1.1"),
+            ("https://x.gov.uk/ni/AB123456C", "https://x.gov.uk/ni/[SSN]"),
+            ("NINO:AB123456C/2", "NINO:[SSN]/2"),
+        ):
+            assert scrub_text(text, languages=["en"])["text"] == expected, text
+
+    def test_masks_spaced_numbers_glued_to_punctuation(self) -> None:
+        assert scrub_text("NINO AB 12 34 56 C/JG 10 37 59 A", languages=["en"])["text"] == (
+            "NINO [SSN]/[SSN]"
+        )
+        assert scrub_text("AB 12 34 56 C-2024", languages=["en"])["text"] == "[SSN]-2024"
+
+    def test_suffixless_hit_does_not_head_a_longer_digit_run(self) -> None:
+        assert scrub_text("AB 12 34 56 78", languages=["en"])["text"] == "AB 12 34 56 78"
+        assert scrub_text("AB 12 34 56 C 7 days", languages=["en"])["text"] == (
+            "[SSN] 7 days"
+        )
+
+    def test_leaves_following_word_out(self) -> None:
+        result = scrub_text("AB 12 34 56 Cat", languages=["en"])
+        assert result["text"] == "[SSN] Cat"
+        assert scrub_text("nino=AB123456C", languages=["en"])["text"] == "nino=[SSN]"
+
+    def test_disabled_without_en(self) -> None:
+        result = scrub_text("NINO AB123456C", languages=["nl"])
+        assert result["counts"]["ssn"] == 0
+
+
 class TestTaxId:
     def test_masks_valid_idnr(self) -> None:
         result = scrub_text("IdNr 36574261809 gespeichert", languages=["de"])

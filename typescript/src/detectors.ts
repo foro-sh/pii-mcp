@@ -49,6 +49,16 @@
  *   compact form collides with Unix timestamps. After a lone ``1`` and a
  *   separator it is a NANP number with country code (``1-943-476-5919``) and is
  *   left to the phone detector.
+ * - UK National Insurance number (``ssn``): two prefix letters, six digits and
+ *   a suffix ``A``–``D``, any case, compact ``AB123456C`` or with a space after
+ *   the prefix, between digit pairs and before the suffix (``AB 12 34 56 C``,
+ *   ``AB 123456 C``, ``AB 12 34 56C``). ``AB 123456 C`` needs an uppercase
+ *   prefix, and the suffix may be left off only in ``AB 12 34 56`` with an
+ *   uppercase prefix. HMRC prefix rules reject ``QQ`` (the placeholder prefix),
+ *   ``GB``, ``ZZ`` and other unissued prefixes. A compact hit next to ``-`` or
+ *   before ``=`` (order refs, base64 padding), or a suffixless hit followed by
+ *   another digit group, is left alone; URL path segments (``/ni/AB123456C``)
+ *   are masked.
  * - German Steuer-IdNr (tax_id): 11 digits, compact or grouped ``12 345 678 901``,
  *   with structure + mod-11/10 check.
  * - German USt-IdNr (``vat_id``): uppercase ``DE`` + 9 digits, compact or
@@ -926,6 +936,76 @@ function scrubItin(text: string): { text: string; count: number } {
 }
 
 export const itinDetector: Detector = { type: "tax_id", scrub: scrubItin };
+
+const NINO_RE = new RegExp(
+  String.raw`(?<![\p{L}\p{N}_])[A-Za-z]{2}${ID_SPACE}?(?:[0-9]{6}|[0-9]{2}${ID_SPACE}[0-9]{2}${ID_SPACE}[0-9]{2})(?:${ID_SPACE}?[A-Da-d])?(?![\p{L}\p{N}_])`,
+  "gu",
+);
+const NINO_PREFIX_REJECTS = new Set(["BG", "GB", "KN", "NK", "NT", "TN", "ZZ"]);
+const NINO_SPACE = new RegExp(ID_SPACE, "u");
+
+/**
+ * HMRC prefix rules: first letter not D F I Q U V, second not D F I O Q U V.
+ *
+ * BG GB KN NK NT TN ZZ are never issued. NIM39110:
+ * https://www.gov.uk/hmrc-internal-manuals/national-insurance-manual/nim39110
+ * Without the suffix letter only ``AB 12 34 56`` with an uppercase prefix is
+ * accepted: other suffixless forms match order codes and ``at 10 15 20``.
+ * ``AB 123456 C`` also needs an uppercase prefix: in lowercase it matches
+ * prose such as ``by 100000 a year``.
+ */
+function ninoValid(value: string): boolean {
+  const prefix = value.slice(0, 2).toUpperCase();
+  if (
+    "DFIQUV".includes(prefix[0] ?? "") ||
+    "DFIOQUV".includes(prefix[1] ?? "") ||
+    NINO_PREFIX_REJECTS.has(prefix)
+  ) {
+    return false;
+  }
+  const chars = [...value];
+  if (
+    NINO_SPACE.test(chars[2] ?? "") &&
+    /^[0-9]{6}$/.test(chars.slice(3, 9).join("")) &&
+    !/^[A-Z]{2}/.test(value)
+  ) {
+    return false;
+  }
+  if (/[A-Za-z]$/.test(value)) {
+    return true;
+  }
+  return [...value].length === 11 && /^[A-Z]{2}/.test(value);
+}
+
+/**
+ * Reject a compact hit inside an order ref or before base64 padding
+ * (``ORD-AB123456C``, ``AB123456C-2``, ``AB123456C=``), and a suffixless hit
+ * that heads a longer run of digit pairs (``AB 12 34 56 78``).
+ */
+function ninoEnd(text: string, start: number, end: number): number {
+  const compact = !NINO_SPACE.test(text.slice(start, end));
+  if (compact && text[start - 1] === "-") {
+    return start;
+  }
+  const after = text[end] ?? "";
+  if (compact && (after === "-" || after === "=")) {
+    return start;
+  }
+  if (
+    /[0-9]/.test(text[end - 1] ?? "") &&
+    NINO_SPACE.test(after) &&
+    /[0-9]/.test(text[end + 1] ?? "")
+  ) {
+    return start;
+  }
+  return ninoValid(text.slice(start, end)) ? end : start;
+}
+
+function scrubNino(text: string): { text: string; count: number } {
+  return replaceMatches(text, NINO_RE, "[SSN]", undefined, false, ninoEnd);
+}
+
+export const ninoDetector: Detector = { type: "ssn", scrub: scrubNino };
 
 const NHS_GROUP_SEP = String.raw`[ \-${GROUP_SPACES}${GROUP_DASHES}]`;
 const NHS_RES = [ID_SPACE, ID_DASH].map(

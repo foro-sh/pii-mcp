@@ -215,6 +215,43 @@ def _nhs_compact(r: R) -> str:
     return "".join(ch for ch in nhs(r) if ch.isdigit())
 
 
+def nino(r: R) -> str:
+    """A UK National Insurance number with an issued prefix (HMRC NIM39110).
+
+    Compact or spaced in the layouts the detector supports, with a space or
+    no-break space, upper, lower or mixed case; ``AB 123456 C`` and the
+    suffixless ``AB 12 34 56`` stay uppercase.
+    """
+    rejects = {"BG", "GB", "KN", "NK", "NT", "TN", "ZZ"}
+    while True:
+        prefix = r.choice("ABCEGHJKLMNOPRSTWXYZ") + r.choice("ABCEGHJKLMNPRSTWXYZ")
+        if prefix not in rejects:
+            break
+    digits = _digits(r, 6)
+    suffix = r.choice("ABCD")
+    sp = " " if r.random() < 0.85 else "\xa0"
+    pairs = _group(digits, (2, 2, 2), sp)
+    style = r.random()
+    if style < 0.15:
+        return f"{prefix}{sp}{pairs}"
+    if style < 0.25:
+        return f"{prefix}{sp}{digits}{sp}{suffix}"
+    if style < 0.45:
+        value = f"{prefix}{digits}{suffix}"
+    elif style < 0.7:
+        value = f"{prefix}{sp}{pairs}{sp}{suffix}"
+    elif style < 0.85:
+        value = f"{prefix}{digits}{sp}{suffix}"
+    else:
+        value = f"{prefix}{sp}{pairs}{suffix}"
+    case = r.random()
+    if case < 0.15:
+        return value.lower()
+    if case < 0.25:
+        return value[0] + value[1].lower() + value[2:]
+    return value
+
+
 def tax_id_de(r: R) -> str:
     while True:
         pool = list(string.digits)
@@ -427,6 +464,7 @@ PII: list[tuple[str, Callable[[R], str], tuple[str, ...]]] = [
     ("tax_id", tax_id_de, ("de",)),
     ("tax_id", itin, ("en",)),
     ("ssn", nhs, ("en",)),
+    ("ssn", nino, ("en",)),
     ("vat_id", vat_nl, ("nl",)),
     ("vat_id", vat_de, ("de",)),
     ("passport", passport_nl, ("nl",)),
@@ -463,6 +501,13 @@ def _ean13(r: R) -> str:
 
 CLEAN: list[tuple[str, Callable[[R], str]]] = [
     ("nhs_compact", _nhs_compact),
+    ("nino_placeholder", lambda r: f"QQ{_digits(r, 6)}{r.choice('ABCD')}"),
+    ("nino_bad_suffix", lambda r: f"AB{_digits(r, 6)}{r.choice('EFGXYZ')}"),
+    ("nino_no_suffix", lambda r: f"sku AB{_digits(r, 6)}"),
+    ("nino_order_ref", lambda r: f"ORD-AB{_digits(r, 6)}{r.choice('ABCD')}"),
+    ("nino_prose", lambda r: f"claims fell by {r.randint(100000, 999999)} a month"),
+    ("nino_base64", lambda r: f"aGVsbG8JG{_digits(r, 6)}{r.choice('ABCD')}d29ybGQ="),
+    ("nino_padding", lambda r: f"JG{_digits(r, 6)}{r.choice('ABCD')}=="),
     ("vat_de_bad_checksum", lambda r: "DE136695977"),
     ("vat_de_leading_zero", lambda r: "DE036695976"),
     ("uuid", lambda r: str(uuid.UUID(int=r.getrandbits(128), version=4))),

@@ -10,6 +10,13 @@
 //! The NHS detector runs before the national phone forms.
 //! After a lone `1` and a separator the value is a NANP number with country
 //! code and is left to the phone detector.
+//! UK National Insurance numbers (`ssn`, en pack) match `AB123456C` in any
+//! case, with an optional space after the prefix, between digit pairs and
+//! before the suffix, and HMRC prefix rules. `AB 123456 C` needs an uppercase
+//! prefix, and the suffix may be left off only in `AB 12 34 56` with an
+//! uppercase prefix. A compact hit next to `-` or before `=`, or a suffixless
+//! hit followed by another digit group, is left alone; URL path segments are
+//! masked.
 
 use crate::checksum::{
     bsn_valid_grouped, iban_valid, imei_valid, is_group_sep, itin_valid_grouped, luhn_valid,
@@ -1402,6 +1409,83 @@ fn scrub_itin(text: &str) -> (Option<String>, u32) {
     scrub_patterns(text, itin_res(), "[TAX_ID]", |v, _, _| itin_valid_grouped(v), false)
 }
 
+fn nino_re() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| {
+        let sp = id_space();
+        Regex::new(&format!(
+            r"\b[A-Za-z]{{2}}{sp}?(?:[0-9]{{6}}|[0-9]{{2}}{sp}[0-9]{{2}}{sp}[0-9]{{2}})(?:{sp}?[A-Da-d])?\b"
+        ))
+        .unwrap()
+    })
+}
+
+/// HMRC prefix rules: first letter not D F I Q U V, second not D F I O Q U V;
+/// BG GB KN NK NT TN ZZ are never issued. Without the suffix letter only
+/// ``AB 12 34 56`` with an uppercase prefix is accepted: other suffixless
+/// forms match order codes and ``at 10 15 20``. ``AB 123456 C`` also needs an
+/// uppercase prefix: in lowercase it matches prose such as ``by 100000 a year``.
+///
+/// NIM39110: <https://www.gov.uk/hmrc-internal-manuals/national-insurance-manual/nim39110>
+fn nino_valid(value: &str) -> bool {
+    let b = value.as_bytes();
+    let (first, second) = (b[0].to_ascii_uppercase(), b[1].to_ascii_uppercase());
+    if b"DFIQUV".contains(&first)
+        || b"DFIOQUV".contains(&second)
+        || [b"BG", b"GB", b"KN", b"NK", b"NT", b"TN", b"ZZ"].contains(&&[first, second])
+    {
+        return false;
+    }
+    let upper_prefix = b[0].is_ascii_uppercase() && b[1].is_ascii_uppercase();
+    let mut rest = value[2..].chars();
+    if rest.next().is_some_and(is_nino_space)
+        && rest.take(6).filter(char::is_ascii_digit).count() == 6
+        && !upper_prefix
+    {
+        return false;
+    }
+    if b[b.len() - 1].is_ascii_alphabetic() {
+        return true;
+    }
+    value.chars().count() == 11 && upper_prefix
+}
+
+fn is_nino_space(c: char) -> bool {
+    c == ' ' || GROUP_SPACES.contains(&c)
+}
+
+/// Reject a compact hit inside an order ref or before base64 padding
+/// (``ORD-AB123456C``, ``AB123456C-2``, ``AB123456C=``), and a suffixless hit
+/// that heads a longer run of digit pairs (``AB 12 34 56 78``).
+fn nino_context_ok(text: &str, start: usize, end: usize) -> bool {
+    let compact = !text[start..end].chars().any(is_nino_space);
+    if compact && text[..start].ends_with('-') {
+        return false;
+    }
+    let mut after = text[end..].chars();
+    match (after.next(), after.next()) {
+        (Some('-' | '='), _) if compact => false,
+        (Some(sp), Some(d))
+            if is_nino_space(sp)
+                && d.is_ascii_digit()
+                && text.as_bytes()[end - 1].is_ascii_digit() =>
+        {
+            false
+        }
+        _ => true,
+    }
+}
+
+fn scrub_nino(text: &str) -> (Option<String>, u32) {
+    replace_matches(
+        text,
+        nino_re(),
+        "[SSN]",
+        |v, s, e| nino_valid(v) && nino_context_ok(text, s, e),
+        false,
+    )
+}
+
 fn nhs_res() -> &'static [Regex] {
     static RES: OnceLock<Vec<Regex>> = OnceLock::new();
     RES.get_or_init(|| {
@@ -2118,6 +2202,10 @@ fn build_detectors(mask: u8) -> Vec<Detector> {
         });
     }
     if has_en {
+        pack.push(Detector {
+            category: PiiCategory::Ssn,
+            scrub: scrub_nino,
+        });
         pack.push(Detector {
             category: PiiCategory::TaxId,
             scrub: scrub_itin,

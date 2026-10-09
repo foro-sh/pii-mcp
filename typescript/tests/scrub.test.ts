@@ -308,6 +308,101 @@ describe("scrubText", () => {
     expect(scrubText(compact, { languages: ["en"] }).text).toBe(compact);
   });
 
+  it("masks UK National Insurance numbers as ssn with en pack", () => {
+    for (const value of [
+      "AB123456C",
+      "AB 12 34 56 C",
+      "ab 12 34 56 d",
+      "jg103759a",
+      "AB 12 34 56",
+      "AB 123456 C",
+      "AB123456 C",
+      "AB 12 34 56C",
+      "AB\u00a012\u00a034\u00a056\u00a0C",
+    ]) {
+      const result = scrubText(`NINO ${value} on file`, { languages: ["en"] });
+      expect(result.text).toBe("NINO [SSN] on file");
+      expect(result.counts.ssn).toBe(1);
+    }
+    expect(scrubText('{"ni": "JG103759A"}', { languages: ["en"] }).text).toBe(
+      '{"ni": "[SSN]"}',
+    );
+    expect(scrubText("a,JG 10 37 59 A,b", { languages: ["en"] }).text).toBe(
+      "a,[SSN],b",
+    );
+    expect(scrubText("NINO AB123456C", { languages: ["nl"] }).counts.ssn).toBe(0);
+    expect(scrubText("AB 12 34 56 Cat", { languages: ["en"] }).text).toBe(
+      "[SSN] Cat",
+    );
+    expect(scrubText("AB 12 34 56 C 7 days", { languages: ["en"] }).text).toBe(
+      "[SSN] 7 days",
+    );
+    expect(scrubText("nino=AB123456C", { languages: ["en"] }).text).toBe(
+      "nino=[SSN]",
+    );
+    expect(
+      scrubText("NINO AB 12 34 56 C/JG 10 37 59 A", { languages: ["en"] }).text,
+    ).toBe("NINO [SSN]/[SSN]");
+    expect(scrubText("AB 12 34 56 C-2024", { languages: ["en"] }).text).toBe(
+      "[SSN]-2024",
+    );
+    for (const [text, expected] of [
+      ["GET /api/claimants/AB123456C HTTP/1.1", "GET /api/claimants/[SSN] HTTP/1.1"],
+      ["https://x.gov.uk/ni/AB123456C", "https://x.gov.uk/ni/[SSN]"],
+      ["NINO:AB123456C/2", "NINO:[SSN]/2"],
+    ] as const) {
+      expect(scrubText(text, { languages: ["en"] }).text).toBe(expected);
+    }
+  });
+
+  it("rejects every unissued NINO prefix and masks thin-space forms", () => {
+    const bad = [
+      ...[..."DFIQUV"].map((c) => `${c}A`),
+      ...[..."DFIOQUV"].map((c) => `A${c}`),
+      "BG", "GB", "KN", "NK", "NT", "TN", "ZZ",
+    ];
+    for (const prefix of bad) {
+      const value = `${prefix}123456A`;
+      expect(scrubText(value, { languages: ["en"] }).text).toBe(value);
+    }
+    for (const value of [
+      "AB\u200912\u200934\u200956\u2009C",
+      "AB\u202f12\u202f34\u202f56",
+      "AB12 34 56 C",
+    ]) {
+      expect(scrubText(value, { languages: ["en"] }).text).toBe("[SSN]");
+    }
+  });
+
+  it("leaves unissued NINO prefixes, bad suffixes and glued tokens alone", () => {
+    for (const value of [
+      "QQ123456C",
+      "QQ 12 34 56 C",
+      "GB123456A",
+      "ZZ 12 34 56 A",
+      "DA123456A",
+      "AO123456A",
+      "AB123456E",
+      "AB123456",
+      "AB 123456",
+      "ab 12 34 56",
+      "meet at 10 15 20",
+      "rose by 100000 a year",
+      "at 123456 b",
+      "AB 12 34 56 78",
+      "xAB123456C",
+      "AB123456Cx",
+      "sku_AB123456C",
+      "ORD-AB123456C",
+      "AB123456C-2",
+      "aGVsbG8AB123456Cd29ybGQ=",
+      "AB123456C=",
+    ]) {
+      const text = `ref ${value}`;
+      expect(scrubText(text, { languages: ["en"] }).text).toBe(text);
+    }
+  });
+
   it("masks German tax id with de pack", () => {
     const result = scrubText("IdNr 36574261809 gespeichert", {
       languages: ["de"],

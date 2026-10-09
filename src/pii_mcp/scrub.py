@@ -42,6 +42,7 @@ from pii_mcp.detectors import (
     de_vat_detector,
     itin_detector,
     nhs_detector,
+    nino_detector,
     nl_license_plate_detector,
     nl_passport_detector,
     nl_postcode_detector,
@@ -226,6 +227,7 @@ def _detectors_for(languages: Sequence[str] | None) -> tuple[Detector, ...]:
         pack.append(bsn_detector)
         pack.append(nl_passport_detector)
     if "en" in langs:
+        pack.append(nino_detector)
         pack.append(itin_detector)
         pack.append(ssn_detector)
         pack.append(street_en_detector)
