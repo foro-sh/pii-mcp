@@ -310,6 +310,99 @@ mod tests {
     use super::*;
 
     #[test]
+    fn masks_uk_nino_as_ssn_in_en_pack() {
+        let en = [LanguageCode::En];
+        for value in [
+            "AB123456C",
+            "AB 12 34 56 C",
+            "ab 12 34 56 d",
+            "jg103759a",
+            "AB 12 34 56",
+            "AB 123456 C",
+            "AB123456 C",
+            "AB 12 34 56C",
+            "AB\u{a0}12\u{a0}34\u{a0}56\u{a0}C",
+        ] {
+            let r = scrub_text_langs(&format!("NINO {value} on file"), &en, true, false).unwrap();
+            assert_eq!(r.text, "NINO [SSN] on file", "{value}");
+            assert_eq!(r.counts["ssn"], 1);
+        }
+        let r = scrub_text_langs(r#"{"ni": "JG103759A"}"#, &en, true, false).unwrap();
+        assert_eq!(r.text, r#"{"ni": "[SSN]"}"#);
+        let r = scrub_text_langs("a,JG 10 37 59 A,b", &en, true, false).unwrap();
+        assert_eq!(r.text, "a,[SSN],b");
+        let nl = [LanguageCode::Nl];
+        let r = scrub_text_langs("NINO AB123456C", &nl, true, false).unwrap();
+        assert_eq!(r.counts["ssn"], 0);
+        let r = scrub_text_langs("AB 12 34 56 Cat", &en, true, false).unwrap();
+        assert_eq!(r.text, "[SSN] Cat");
+        let r = scrub_text_langs("AB 12 34 56 C 7 days", &en, true, false).unwrap();
+        assert_eq!(r.text, "[SSN] 7 days");
+        let r = scrub_text_langs("nino=AB123456C", &en, true, false).unwrap();
+        assert_eq!(r.text, "nino=[SSN]");
+        let r = scrub_text_langs("NINO AB 12 34 56 C/JG 10 37 59 A", &en, true, false).unwrap();
+        assert_eq!(r.text, "NINO [SSN]/[SSN]");
+        let r = scrub_text_langs("AB 12 34 56 C-2024", &en, true, false).unwrap();
+        assert_eq!(r.text, "[SSN]-2024");
+        for (text, expected) in [
+            ("GET /api/claimants/AB123456C HTTP/1.1", "GET /api/claimants/[SSN] HTTP/1.1"),
+            ("https://x.gov.uk/ni/AB123456C", "https://x.gov.uk/ni/[SSN]"),
+            ("NINO:AB123456C/2", "NINO:[SSN]/2"),
+        ] {
+            let r = scrub_text_langs(text, &en, true, false).unwrap();
+            assert_eq!(r.text, expected, "{text}");
+        }
+        for value in [
+            "QQ123456C",
+            "QQ 12 34 56 C",
+            "GB123456A",
+            "ZZ 12 34 56 A",
+            "DA123456A",
+            "AO123456A",
+            "AB123456E",
+            "AB123456",
+            "AB 123456",
+            "ab 12 34 56",
+            "meet at 10 15 20",
+            "rose by 100000 a year",
+            "at 123456 b",
+            "AB 12 34 56 78",
+            "xAB123456C",
+            "AB123456Cx",
+            "sku_AB123456C",
+            "ORD-AB123456C",
+            "AB123456C-2",
+            "aGVsbG8AB123456Cd29ybGQ=",
+            "AB123456C=",
+        ] {
+            let text = format!("ref {value}");
+            let r = scrub_text_langs(&text, &en, true, false).unwrap();
+            assert_eq!(r.text, text, "{value}");
+        }
+    }
+
+    #[test]
+    fn rejects_every_unissued_nino_prefix_and_masks_thin_space_forms() {
+        let en = [LanguageCode::En];
+        let mut bad: Vec<String> = "DFIQUV".chars().map(|c| format!("{c}A")).collect();
+        bad.extend("DFIOQUV".chars().map(|c| format!("A{c}")));
+        bad.extend(["BG", "GB", "KN", "NK", "NT", "TN", "ZZ"].map(String::from));
+        for prefix in bad {
+            let value = format!("{prefix}123456A");
+            let r = scrub_text_langs(&value, &en, true, false).unwrap();
+            assert_eq!(r.text, value, "{prefix}");
+        }
+        for value in [
+            "AB\u{2009}12\u{2009}34\u{2009}56\u{2009}C",
+            "AB\u{202f}12\u{202f}34\u{202f}56",
+            "AB12 34 56 C",
+        ] {
+            let r = scrub_text_langs(value, &en, true, false).unwrap();
+            assert_eq!(r.text, "[SSN]", "{value}");
+        }
+    }
+
+    #[test]
     fn masks_grouped_nhs_numbers_as_ssn_in_en_pack() {
         let en = [LanguageCode::En];
         for value in ["943 476 5919", "943-476-5919", "943\u{a0}476\u{a0}5919"] {

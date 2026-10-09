@@ -28,6 +28,7 @@ import {
   deVatDetector,
   itinDetector,
   nhsDetector,
+  ninoDetector,
   nlLicensePlateDetector,
   nlPassportDetector,
   nlPostcodeDetector,
@@ -130,7 +131,7 @@ function detectorsFor(
     pack.push(nlVatDetector, bsnDetector, nlPassportDetector);
   }
   if (langs.includes("en")) {
-    pack.push(itinDetector, ssnDetector, streetEnDetector, ukPostcodeDetector);
+    pack.push(ninoDetector, itinDetector, ssnDetector, streetEnDetector, ukPostcodeDetector);
   }
   if (langs.includes("de")) {
     pack.push(streetDeDetector);

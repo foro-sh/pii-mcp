@@ -53,6 +53,16 @@ Patterns:
   compact form collides with Unix timestamps. After a lone ``1`` and a
   separator it is a NANP number with country code (``1-943-476-5919``) and is
   left to the phone detector.
+- UK National Insurance number (``ssn``): two prefix letters, six digits and
+  a suffix ``A``–``D``, any case, compact ``AB123456C`` or with a space after
+  the prefix, between digit pairs and before the suffix (``AB 12 34 56 C``,
+  ``AB 123456 C``, ``AB 12 34 56C``). ``AB 123456 C`` needs an uppercase
+  prefix, and the suffix may be left off only in ``AB 12 34 56`` with an
+  uppercase prefix. HMRC prefix rules reject ``QQ`` (the placeholder prefix),
+  ``GB``, ``ZZ`` and other unissued prefixes. A compact hit next to ``-`` or
+  before ``=`` (order refs, base64 padding), or a suffixless hit followed by
+  another digit group, is left alone; URL path segments (``/ni/AB123456C``)
+  are masked.
 - German Steuer-IdNr (tax_id): 11 digits, compact or grouped ``12 345 678 901``,
   with structure + mod-11/10 check.
 - German USt-IdNr (``vat_id``): uppercase ``DE`` + 9 digits, compact or
@@ -928,6 +938,62 @@ def _scrub_nhs(text: str) -> tuple[str, int]:
 
 
 nhs_detector = Detector(type="ssn", scrub=_scrub_nhs)
+
+NINO_RE = re.compile(
+    rf"\b[A-Za-z]{{2}}{_ID_SPACE}?"
+    rf"(?:[0-9]{{6}}|[0-9]{{2}}{_ID_SPACE}[0-9]{{2}}{_ID_SPACE}[0-9]{{2}})"
+    rf"(?:{_ID_SPACE}?[A-Da-d])?\b"
+)
+_NINO_PREFIX_REJECTS = frozenset({"BG", "GB", "KN", "NK", "NT", "TN", "ZZ"})
+_NINO_SPACES = frozenset(" " + _GROUP_SPACES)
+
+
+def _nino_valid(value: str) -> bool:
+    """HMRC prefix rules: first letter not D F I Q U V, second not D F I O Q U V.
+
+    BG GB KN NK NT TN ZZ are never issued. NIM39110:
+    https://www.gov.uk/hmrc-internal-manuals/national-insurance-manual/nim39110
+    Without the suffix letter only ``AB 12 34 56`` with an uppercase prefix is
+    accepted: other suffixless forms match order codes and ``at 10 15 20``.
+    ``AB 123456 C`` also needs an uppercase prefix: in lowercase it matches
+    prose such as ``by 100000 a year``.
+    """
+    first, second = value[0].upper(), value[1].upper()
+    if first in "DFIQUV" or second in "DFIOQUV" or first + second in _NINO_PREFIX_REJECTS:
+        return False
+    if value[2] in _NINO_SPACES and value[3:9].isdigit() and not value[:2].isupper():
+        return False
+    if value[-1].isalpha():
+        return True
+    return len(value) == 11 and value[:2].isupper()
+
+
+def _nino_context_ok(text: str, start: int, end: int) -> bool:
+    """Reject a compact hit inside an order ref or before base64 padding
+    (``ORD-AB123456C``, ``AB123456C-2``, ``AB123456C=``), and a suffixless hit
+    that heads a longer run of digit pairs (``AB 12 34 56 78``)."""
+    compact = not any(c in _NINO_SPACES for c in text[start:end])
+    if compact and start > 0 and text[start - 1] == "-":
+        return False
+    if end < len(text):
+        after = text[end]
+        if compact and after in "-=":
+            return False
+        if (
+            text[end - 1].isdigit()
+            and after in _NINO_SPACES
+            and end + 1 < len(text)
+            and text[end + 1] in "0123456789"
+        ):
+            return False
+    return True
+
+
+def _scrub_nino(text: str) -> tuple[str, int]:
+    return _replace_matches(text, NINO_RE, "[SSN]", _nino_valid, _nino_context_ok)
+
+
+nino_detector = Detector(type="ssn", scrub=_scrub_nino)
 
 # Compact, or the ``12 345 678 901`` grouping printed on Steuerbescheide and
 # payslips (single space / nbsp between groups).
