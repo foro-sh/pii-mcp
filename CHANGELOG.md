@@ -6,6 +6,27 @@
 * **rust:** mirror the US ITIN detector in pii-core ([f0323f8](https://github.com/foro-sh/pii-mcp/commit/f0323f8f2c8f03d70e98a923e36d6e71bede04b3)), closes [#62](https://github.com/foro-sh/pii-mcp/issues/62)
 * **typescript:** mirror the US ITIN detector in the js backend ([aad506e](https://github.com/foro-sh/pii-mcp/commit/aad506ed114c8cd3f00b04388e7ea786fa6f44f9)), closes [#62](https://github.com/foro-sh/pii-mcp/issues/62)
 
+## [1.10.0](https://github.com/foro-sh/pii-mcp/compare/v1.9.1...v1.10.0) (2026-10-09)
+
+
+### Features
+
+* **detectors:** add German VAT IDs across backends ([f50c3e5](https://github.com/foro-sh/pii-mcp/commit/f50c3e5b6d80d537578331653430533d2b10ec3b))
+* **detectors:** detect German VAT IDs in de pack ([298104e](https://github.com/foro-sh/pii-mcp/commit/298104ebf60e9157d5d44c3115a20c13b0ca6749))
+* **detectors:** detect UK National Insurance numbers ([#94](https://github.com/foro-sh/pii-mcp/issues/94)) ([541b375](https://github.com/foro-sh/pii-mcp/commit/541b3750efe2a3998f98a5801ce3a14f73fb2f4c)), closes [#60](https://github.com/foro-sh/pii-mcp/issues/60)
+* **detectors:** detect UK National Insurance numbers in the en pack ([8a0aa4d](https://github.com/foro-sh/pii-mcp/commit/8a0aa4da23086efcebbe05a343a788940fa69eb4)), closes [#60](https://github.com/foro-sh/pii-mcp/issues/60)
+* **detectors:** detect UK NHS numbers in the en pack ([19ec28c](https://github.com/foro-sh/pii-mcp/commit/19ec28cd7aeaaada94430a12f15de8bbfe7e76d7)), closes [#61](https://github.com/foro-sh/pii-mcp/issues/61)
+* match street addresses with a comma before the house number ([a4f5fe5](https://github.com/foro-sh/pii-mcp/commit/a4f5fe5bd2ad02080e6e59165f43b00d4ffdd8ea))
+* match street addresses with a comma before the house number ([c9cef47](https://github.com/foro-sh/pii-mcp/commit/c9cef47acfbf6e8509d0a0d8bef916480ee5b024))
+* **python:** ship py.typed metadata ([f19ce08](https://github.com/foro-sh/pii-mcp/commit/f19ce08164281953398dea69890af65b3dfab783))
+* **python:** ship py.typed metadata ([2d3eb41](https://github.com/foro-sh/pii-mcp/commit/2d3eb4190aed03a1920033997119040ad954f169))
+
+
+### Bug Fixes
+
+* **python:** build packaging test wheel with pip ([f902d8d](https://github.com/foro-sh/pii-mcp/commit/f902d8dcf2944989bc30a5c291bfe60080e79a7c))
+* **rust:** honor Unicode word boundaries for IPs ([f9c9900](https://github.com/foro-sh/pii-mcp/commit/f9c9900748619276f7afaff716ecab0ce8907d8a))
+
 ## [1.9.1](https://github.com/foro-sh/pii-mcp/compare/v1.9.0...v1.9.1) (2026-10-01)
 
 
