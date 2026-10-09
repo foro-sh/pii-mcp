@@ -14,13 +14,12 @@ from __future__ import annotations
 from collections.abc import Awaitable, Callable, Sequence
 from typing import Any
 
-from mcp.types import TextContent
-
 # Package-level exports: FastMCP 4 moved the submodules (tools.tool → tools.base).
 from fastmcp.prompts import PromptResult
 from fastmcp.resources import ResourceContent, ResourceResult
 from fastmcp.server.middleware import Middleware, MiddlewareContext
 from fastmcp.tools import ToolResult
+from mcp.types import TextContent
 
 from pii_mcp.scrub import (
     DEFAULT_LANGUAGES,
