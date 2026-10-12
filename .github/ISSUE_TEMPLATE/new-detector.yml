@@ -1,0 +1,70 @@
+name: New detector
+description: Propose a new pattern or checksum detector
+title: "feat: detect "
+labels: ["enhancement", "detector"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Describe the identifier and how to validate it. Prefer a public
+        specification over informal examples.
+
+  - type: input
+    id: identifier
+    attributes:
+      label: Identifier
+      description: Short name of the value to detect
+      placeholder: Belgian national register number
+    validations:
+      required: true
+
+  - type: dropdown
+    id: language_pack
+    attributes:
+      label: Language pack
+      description: Where the detector should be registered
+      options:
+        - en
+        - nl
+        - de
+        - universal (all packs)
+    validations:
+      required: true
+
+  - type: textarea
+    id: format
+    attributes:
+      label: Format and checksum
+      description: Length, alphabet, grouping, and any check digit. Link the spec.
+      placeholder: |
+        11 digits YY.MM.DD-SSS.CC. Check: 97 - (n mod 97). Spec: …
+    validations:
+      required: true
+
+  - type: textarea
+    id: surface_forms
+    attributes:
+      label: Surface forms
+      description: Spaced, grouped, compact, and other variants to accept
+      placeholder: |
+        85.07.30-033.28
+        85073003328
+    validations:
+      required: true
+
+  - type: textarea
+    id: collisions
+    attributes:
+      label: Known collisions
+      description: Other detectors or common strings this might falsely match
+      placeholder: Compact form collides with 11-digit phones and DE tax ID
+    validations:
+      required: true
+
+  - type: textarea
+    id: extra
+    attributes:
+      label: Extra context
+      description: Category reuse (`bsn`, `tax_id`, …), sample corpus, or links
+    validations:
+      required: false

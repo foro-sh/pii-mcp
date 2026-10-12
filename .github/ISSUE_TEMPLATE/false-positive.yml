@@ -1,0 +1,68 @@
+name: False positive
+description: Text that was masked but is not PII
+title: "fix(detectors): false positive "
+labels: ["bug", "detector"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use **fake data only**. Do not paste real personal information.
+
+  - type: textarea
+    id: input
+    attributes:
+      label: Input that was masked incorrectly
+      description: The text or payload that should have been left alone. Fake data only.
+      placeholder: Order REF-4111-1111-1111-1111 shipped
+    validations:
+      required: true
+
+  - type: dropdown
+    id: languages
+    attributes:
+      label: Languages passed
+      description: Language packs used for the scrub call
+      multiple: true
+      options:
+        - en
+        - nl
+        - de
+    validations:
+      required: true
+
+  - type: dropdown
+    id: backend
+    attributes:
+      label: Backend
+      options:
+        - Python
+        - native (Rust)
+        - TypeScript
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: Package version
+      description: PyPI or npm version, or git commit SHA for a checkout
+      placeholder: 1.9.0
+    validations:
+      required: true
+
+  - type: input
+    id: detector
+    attributes:
+      label: Detector that matched incorrectly
+      description: e.g. credit_card, phone, address
+      placeholder: credit_card
+    validations:
+      required: true
+
+  - type: textarea
+    id: extra
+    attributes:
+      label: Extra context
+      description: Why this is not PII, or anything else that helps
+    validations:
+      required: false
