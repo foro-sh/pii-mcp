@@ -1,0 +1,68 @@
+name: False negative
+description: PII that was not masked
+title: "fix(detectors): miss "
+labels: ["bug", "detector"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use **fake data only**. Do not paste real personal information.
+
+  - type: textarea
+    id: input
+    attributes:
+      label: Input that was not masked
+      description: The text or payload that should have been scrubbed. Fake data only.
+      placeholder: Contact ada@example.com about NL91ABNA0417164300
+    validations:
+      required: true
+
+  - type: dropdown
+    id: languages
+    attributes:
+      label: Languages passed
+      description: Language packs used for the scrub call
+      multiple: true
+      options:
+        - en
+        - nl
+        - de
+    validations:
+      required: true
+
+  - type: dropdown
+    id: backend
+    attributes:
+      label: Backend
+      options:
+        - Python
+        - native (Rust)
+        - TypeScript
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: Package version
+      description: PyPI or npm version, or git commit SHA for a checkout
+      placeholder: 1.9.0
+    validations:
+      required: true
+
+  - type: input
+    id: detector
+    attributes:
+      label: Detector that should have matched
+      description: e.g. email, iban, bsn, tax_id
+      placeholder: email
+    validations:
+      required: true
+
+  - type: textarea
+    id: extra
+    attributes:
+      label: Extra context
+      description: Expected placeholder, call site, or anything else that helps
+    validations:
+      required: false
