@@ -172,3 +172,6 @@ jobs:
 
       - name: Test (native backend)
         run: PII_MCP_BACKEND=native npm test
+
+      - name: JS and native agree (parity)
+        run: npm run parity
