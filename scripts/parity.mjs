@@ -102,8 +102,9 @@ function withBackend(backend, text) {
   }
 }
 
-function main() {
-  const n = Number.parseInt(process.argv[2] ?? "5000", 10);
+function requireNative() {
+  delete process.env.PII_MCP_BACKEND;
+  resetNativeCache();
   if (!usingNative()) {
     console.error(
       "napi addon not installed; build with:\n" +
@@ -111,6 +112,15 @@ function main() {
     );
     process.exit(1);
   }
+}
+
+function main() {
+  const n = Number.parseInt(process.argv[2] ?? "5000", 10);
+  if (!Number.isFinite(n) || n <= 0) {
+    console.error(`usage: node scripts/parity.mjs [n]  (n > 0, got ${process.argv[2]})`);
+    process.exit(2);
+  }
+  requireNative();
 
   let mismatches = 0;
   for (let i = 0; i < n; i++) {
