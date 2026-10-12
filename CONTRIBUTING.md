@@ -12,21 +12,19 @@ From a clone of the repo:
 # Python (editable + tests)
 pip install -e ".[dev]"
 
-# Optional: local Rust acceleration for Python
+# Local Rust acceleration for Python (needed for eval/parity.py)
 pip install -e ".[native]"
 maturin develop --release --manifest-path crates/pii-mcp-native/Cargo.toml
 
 # TypeScript package
 (cd typescript && npm ci && npm run build)
 
-# Optional: napi addon for the TypeScript package
+# napi addon for the TypeScript package (needed for native TS tests)
 (cd typescript && npm run build:native)
 
 # Rust core unit tests
 cargo test -p pii-core
 ```
-
-Runnable scripts live under [`examples/`](examples/).
 
 ## Adding a detector
 
@@ -58,15 +56,16 @@ issue [#62](https://github.com/foro-sh/pii-mcp/issues/62)).
 
 ```bash
 python -m pytest tests                       # Python backend
-(cd typescript && npm test)                  # TypeScript backend
+(cd typescript && npm test)                  # TypeScript (js backend)
+(cd typescript && npm run build:native && PII_MCP_BACKEND=native npm test)
 cargo test -p pii-core                       # Rust core
-maturin develop --release && python eval/parity.py   # Python and Rust agree
+pip install -e ".[native]"
+maturin develop --release --manifest-path crates/pii-mcp-native/Cargo.toml
+python eval/parity.py                        # Python and Rust agree
 python eval/score.py                         # loss, false positives, ReDoS, perf
 ```
 
-`eval/score.py` must print `"ok": true`. When you touch detectors or scrub
-logic, also run TypeScript with `PII_MCP_BACKEND=native` after
-`npm run build:native`.
+`eval/score.py` must print `"ok": true`.
 
 ## Commits and releases
 
