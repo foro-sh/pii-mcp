@@ -198,3 +198,7 @@ Medians from `scripts/bench_backends.py` on macOS arm64 / CPython 3.14.7
 ```bash
 python scripts/bench_backends.py
 ```
+
+## Contributing
+
+See [`CONTRIBUTING.md`](CONTRIBUTING.md) for setup, how to add a detector, and the checks a PR must pass.
