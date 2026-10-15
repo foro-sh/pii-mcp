@@ -984,27 +984,26 @@ describe("scrubPayload", () => {
     expect(() => scrubPayload(deep)).toThrow(/nests past/);
   });
 
-  const IMAGE_B64 =
-    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==";
-  const AUDIO_B64 =
-    "UklGRiQAAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQAAAAA=";
-  const BLOB_B64 =
-    "AAAAHGZ0eXBpc29tAAACAGlzb21pc28yYXZjMW1wNDEAAAAIZnJlZQAA";
+  const IMAGE_B64 = "AAAA4111111111111111BBBBada@example.comCCCC";
+  const AUDIO_B64 = "ZZZZ NL91ABNA0417164300 YYYY";
+  const BLOB_B64 = "WWWW +31 6 12345678 XXXX";
 
   it("skips image and audio data but scrubs sibling text", () => {
+    expect(scrubText(IMAGE_B64).text).not.toBe(IMAGE_B64);
+    expect(scrubText(AUDIO_B64).text).not.toBe(AUDIO_B64);
     const result = scrubPayload({
       content: [
         {
           type: "image",
           mimeType: "image/png",
           data: IMAGE_B64,
-          alt: "mail ada@example.com",
+          alt: "mail bob@example.com",
         },
         {
           type: "audio",
           mimeType: "audio/wav",
           data: AUDIO_B64,
-          transcript: "iban NL91ABNA0417164300",
+          transcript: "card 4111111111111111",
         },
         { type: "text", text: "reach me at +31 6 12345678" },
       ],
@@ -1021,17 +1020,19 @@ describe("scrubPayload", () => {
           type: "audio",
           mimeType: "audio/wav",
           data: AUDIO_B64,
-          transcript: "iban [IBAN]",
+          transcript: "card [CREDIT_CARD]",
         },
         { type: "text", text: "reach me at [PHONE]" },
       ],
     });
     expect(result.counts.email).toBe(1);
-    expect(result.counts.iban).toBe(1);
+    expect(result.counts.credit_card).toBe(1);
     expect(result.counts.phone).toBe(1);
+    expect(result.counts.iban).toBe(0);
   });
 
   it("skips resource blob but scrubs sibling text", () => {
+    expect(scrubText(BLOB_B64).text).not.toBe(BLOB_B64);
     const result = scrubPayload({
       contents: [
         {
@@ -1053,6 +1054,7 @@ describe("scrubPayload", () => {
       ],
     });
     expect(result.counts.email).toBe(1);
+    expect(result.counts.phone).toBe(0);
   });
 
   it("scrubs data when type is not image or audio", () => {

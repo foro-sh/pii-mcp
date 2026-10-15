@@ -182,8 +182,10 @@ export function scrubText(
  *
  * ``ner: true`` adds the person-name pass (native ``ner`` build only).
  *
- * Size is enforced on string leaves before the walk. Non-plain objects,
- * oversize input, and an unavailable ``ner`` pass raise ``PiiScrubError``.
+ * MCP binary fields (``data`` on image/audio blocks, ``blob`` on resource
+ * contents) are left unchanged; see ``scrub-js``. Size is enforced on scrubbed
+ * string leaves before the walk. Non-plain objects, oversize input, and an
+ * unavailable ``ner`` pass raise ``PiiScrubError``.
  */
 export function scrubPayload(
   payload: unknown,

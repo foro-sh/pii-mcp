@@ -924,21 +924,29 @@ mod tests {
     #[cfg(feature = "payload")]
     #[test]
     fn skips_image_and_audio_data_scrubs_siblings() {
-        const IMAGE_B64: &str = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==";
-        const AUDIO_B64: &str = "UklGRiQAAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQAAAAA=";
+        const IMAGE_B64: &str = "AAAA4111111111111111BBBBada@example.comCCCC";
+        const AUDIO_B64: &str = "ZZZZ NL91ABNA0417164300 YYYY";
+        assert_ne!(
+            scrub_text(IMAGE_B64, None, true, false).unwrap().text,
+            IMAGE_B64
+        );
+        assert_ne!(
+            scrub_text(AUDIO_B64, None, true, false).unwrap().text,
+            AUDIO_B64
+        );
         let payload = serde_json::json!({
             "content": [
                 {
                     "type": "image",
                     "mimeType": "image/png",
                     "data": IMAGE_B64,
-                    "alt": "mail ada@example.com",
+                    "alt": "mail bob@example.com",
                 },
                 {
                     "type": "audio",
                     "mimeType": "audio/wav",
                     "data": AUDIO_B64,
-                    "transcript": "iban NL91ABNA0417164300",
+                    "transcript": "card 4111111111111111",
                 },
                 {"type": "text", "text": "reach me at +31 6 12345678"},
             ]
@@ -958,21 +966,26 @@ mod tests {
                         "type": "audio",
                         "mimeType": "audio/wav",
                         "data": AUDIO_B64,
-                        "transcript": "iban [IBAN]",
+                        "transcript": "card [CREDIT_CARD]",
                     },
                     {"type": "text", "text": "reach me at [PHONE]"},
                 ]
             })
         );
         assert_eq!(r.counts["email"], 1);
-        assert_eq!(r.counts["iban"], 1);
+        assert_eq!(r.counts["credit_card"], 1);
         assert_eq!(r.counts["phone"], 1);
+        assert_eq!(r.counts["iban"], 0);
     }
 
     #[cfg(feature = "payload")]
     #[test]
     fn skips_resource_blob_scrubs_siblings() {
-        const BLOB_B64: &str = "AAAAHGZ0eXBpc29tAAACAGlzb21pc28yYXZjMW1wNDEAAAAIZnJlZQAA";
+        const BLOB_B64: &str = "WWWW +31 6 12345678 XXXX";
+        assert_ne!(
+            scrub_text(BLOB_B64, None, true, false).unwrap().text,
+            BLOB_B64
+        );
         let payload = serde_json::json!({
             "contents": [{
                 "uri": "file:///secret.bin",
@@ -994,6 +1007,7 @@ mod tests {
             })
         );
         assert_eq!(r.counts["email"], 1);
+        assert_eq!(r.counts["phone"], 0);
     }
 
     #[cfg(feature = "payload")]

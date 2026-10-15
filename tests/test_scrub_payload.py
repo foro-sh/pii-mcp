@@ -6,7 +6,7 @@ from datetime import datetime
 
 import pytest
 
-from pii_mcp import PiiScrubError, scrub_payload
+from pii_mcp import PiiScrubError, scrub_payload, scrub_text
 
 
 def test_nested_payload() -> None:
@@ -86,14 +86,16 @@ def test_languages_de_masks_tax_id() -> None:
     assert result["counts"]["tax_id"] == 1
 
 
-# Base64 with digit runs that would false-positive as phone/BSN if scrubbed.
-_IMAGE_B64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="
-_AUDIO_B64 = "UklGRiQAAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQAAAAA="
-_BLOB_B64 = "AAAAHGZ0eXBpc29tAAACAGlzb21pc28yYXZjMW1wNDEAAAAIZnJlZQAA"
+# Embedded PII that scrub_text would mask if these leaves were walked.
+_IMAGE_B64 = "AAAA4111111111111111BBBBada@example.comCCCC"
+_AUDIO_B64 = "ZZZZ NL91ABNA0417164300 YYYY"
+_BLOB_B64 = "WWWW +31 6 12345678 XXXX"
 
 
 def test_skips_image_and_audio_data_scrubs_siblings() -> None:
     """MCP image/audio ``data`` is left as-is; sibling text still scrubbed."""
+    assert scrub_text(_IMAGE_B64)["text"] != _IMAGE_B64
+    assert scrub_text(_AUDIO_B64)["text"] != _AUDIO_B64
     result = scrub_payload(
         {
             "content": [
@@ -101,13 +103,13 @@ def test_skips_image_and_audio_data_scrubs_siblings() -> None:
                     "type": "image",
                     "mimeType": "image/png",
                     "data": _IMAGE_B64,
-                    "alt": "mail ada@example.com",
+                    "alt": "mail bob@example.com",
                 },
                 {
                     "type": "audio",
                     "mimeType": "audio/wav",
                     "data": _AUDIO_B64,
-                    "transcript": "iban NL91ABNA0417164300",
+                    "transcript": "card 4111111111111111",
                 },
                 {"type": "text", "text": "reach me at +31 6 12345678"},
             ]
@@ -125,18 +127,20 @@ def test_skips_image_and_audio_data_scrubs_siblings() -> None:
                 "type": "audio",
                 "mimeType": "audio/wav",
                 "data": _AUDIO_B64,
-                "transcript": "iban [IBAN]",
+                "transcript": "card [CREDIT_CARD]",
             },
             {"type": "text", "text": "reach me at [PHONE]"},
         ]
     }
     assert result["counts"]["email"] == 1
-    assert result["counts"]["iban"] == 1
+    assert result["counts"]["credit_card"] == 1
     assert result["counts"]["phone"] == 1
+    assert result["counts"]["iban"] == 0
 
 
 def test_skips_resource_blob_scrubs_siblings() -> None:
     """Resource ``blob`` with string ``uri`` is left as-is; siblings scrubbed."""
+    assert scrub_text(_BLOB_B64)["text"] != _BLOB_B64
     result = scrub_payload(
         {
             "contents": [
@@ -160,6 +164,7 @@ def test_skips_resource_blob_scrubs_siblings() -> None:
         ]
     }
     assert result["counts"]["email"] == 1
+    assert result["counts"]["phone"] == 0
 
 
 def test_data_without_media_type_is_scrubbed() -> None:
