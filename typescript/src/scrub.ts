@@ -180,8 +180,10 @@ export function scrubText(
 /**
  * Walk a JSON-like payload and mask string leaves. Fails closed on errors.
  *
- * Size is enforced on string leaves before the walk. Non-plain objects and
- * oversize input raise ``PiiScrubError``.
+ * MCP binary fields (``data`` on image/audio blocks, ``blob`` on resource
+ * contents) are left unchanged; see ``scrub-js``. Size is enforced on scrubbed
+ * string leaves before the walk. Non-plain objects and oversize input raise
+ * ``PiiScrubError``.
  */
 export function scrubPayload(
   payload: unknown,

@@ -4,6 +4,13 @@
 //! street addresses / NL and UK postcodes. Counts always include every
 //! [`PiiType`] key (0 when unused). `person` stays 0 until key-aware masking
 //! lands (issue #52); in-process NER is out of scope for this crate.
+//!
+//! MCP binary content is left unscrubbed (foro-pii `binaryKey` parity): on an
+//! object with `type` of `image` or `audio` and a string `data`, that `data`
+//! field is passed through; on an object with string `uri` and string `blob`,
+//! `blob` is passed through. Sibling string fields are still scrubbed. Matched
+//! by shape, not key alone. Binary leaves are excluded from the
+//! `MAX_SCRUB_BYTES` string-leaf sum.
 
 use crate::detectors::{detectors_for, PiiCategory};
 use std::borrow::Cow;
@@ -171,6 +178,26 @@ mod payload {
     use super::*;
     use serde_json::Value;
 
+    /// Return the MCP binary field to leave unscrubbed, or `None`.
+    ///
+    /// Matching foro-pii: `data` when `type` is `image` or `audio` and `data`
+    /// is a string; `blob` when both `uri` and `blob` are strings.
+    fn binary_key(map: &serde_json::Map<String, Value>) -> Option<&'static str> {
+        let is_media = matches!(
+            map.get("type").and_then(Value::as_str),
+            Some("image") | Some("audio")
+        );
+        if is_media && map.get("data").map(Value::is_string).unwrap_or(false) {
+            return Some("data");
+        }
+        if map.get("uri").map(Value::is_string).unwrap_or(false)
+            && map.get("blob").map(Value::is_string).unwrap_or(false)
+        {
+            return Some("blob");
+        }
+        None
+    }
+
     fn payload_string_bytes(value: &Value, depth: usize) -> Result<usize, PiiScrubError> {
         if depth > MAX_DEPTH {
             return Err(PiiScrubError::new(format!(
@@ -187,8 +214,12 @@ mod payload {
                 Ok(total)
             }
             Value::Object(map) => {
+                let skip = binary_key(map);
                 let mut total = 0usize;
-                for item in map.values() {
+                for (key, item) in map {
+                    if skip == Some(key.as_str()) {
+                        continue;
+                    }
                     total += payload_string_bytes(item, depth + 1)?;
                 }
                 Ok(total)
@@ -226,9 +257,14 @@ mod payload {
                 Ok(Value::Array(out))
             }
             Value::Object(map) => {
+                let skip = binary_key(&map).map(str::to_owned);
                 let mut out = serde_json::Map::new();
                 for (key, item) in map {
-                    out.insert(key, scrub_walk(item, counts, depth + 1, langs)?);
+                    if skip.as_deref() == Some(key.as_str()) {
+                        out.insert(key, item);
+                    } else {
+                        out.insert(key, scrub_walk(item, counts, depth + 1, langs)?);
+                    }
                 }
                 Ok(Value::Object(out))
             }
@@ -243,7 +279,8 @@ mod payload {
         pub counts: PiiCounts,
     }
 
-    /// Walk a JSON value and mask string leaves.
+    /// Walk a JSON value and mask string leaves. MCP binary fields (`data` on
+    /// image/audio, `blob` on resources) are left unchanged; see the module docs.
     pub fn scrub_payload(
         payload: Value,
         languages: Option<&[String]>,
@@ -827,5 +864,121 @@ mod tests {
         let r = scrub_text(t, None, true).unwrap();
         assert_eq!(r.text, t);
         assert!(!r.found);
+    }
+
+    #[cfg(feature = "payload")]
+    #[test]
+    fn skips_image_and_audio_data_scrubs_siblings() {
+        const IMAGE_B64: &str = "AAAA4111111111111111BBBBada@example.comCCCC";
+        const AUDIO_B64: &str = "ZZZZ NL91ABNA0417164300 YYYY";
+        assert_ne!(
+            scrub_text(IMAGE_B64, None, true).unwrap().text,
+            IMAGE_B64
+        );
+        assert_ne!(
+            scrub_text(AUDIO_B64, None, true).unwrap().text,
+            AUDIO_B64
+        );
+        let payload = serde_json::json!({
+            "content": [
+                {
+                    "type": "image",
+                    "mimeType": "image/png",
+                    "data": IMAGE_B64,
+                    "alt": "mail bob@example.com",
+                },
+                {
+                    "type": "audio",
+                    "mimeType": "audio/wav",
+                    "data": AUDIO_B64,
+                    "transcript": "card 4111111111111111",
+                },
+                {"type": "text", "text": "reach me at +31 6 12345678"},
+            ]
+        });
+        let r = scrub_payload(payload, None).unwrap();
+        assert_eq!(
+            r.payload,
+            serde_json::json!({
+                "content": [
+                    {
+                        "type": "image",
+                        "mimeType": "image/png",
+                        "data": IMAGE_B64,
+                        "alt": "mail [EMAIL]",
+                    },
+                    {
+                        "type": "audio",
+                        "mimeType": "audio/wav",
+                        "data": AUDIO_B64,
+                        "transcript": "card [CREDIT_CARD]",
+                    },
+                    {"type": "text", "text": "reach me at [PHONE]"},
+                ]
+            })
+        );
+        assert_eq!(r.counts["email"], 1);
+        assert_eq!(r.counts["credit_card"], 1);
+        assert_eq!(r.counts["phone"], 1);
+        assert_eq!(r.counts["iban"], 0);
+    }
+
+    #[cfg(feature = "payload")]
+    #[test]
+    fn skips_resource_blob_scrubs_siblings() {
+        const BLOB_B64: &str = "WWWW +31 6 12345678 XXXX";
+        assert_ne!(
+            scrub_text(BLOB_B64, None, true).unwrap().text,
+            BLOB_B64
+        );
+        let payload = serde_json::json!({
+            "contents": [{
+                "uri": "file:///secret.bin",
+                "mimeType": "application/octet-stream",
+                "blob": BLOB_B64,
+                "name": "contact ada@example.com",
+            }]
+        });
+        let r = scrub_payload(payload, None).unwrap();
+        assert_eq!(
+            r.payload,
+            serde_json::json!({
+                "contents": [{
+                    "uri": "file:///secret.bin",
+                    "mimeType": "application/octet-stream",
+                    "blob": BLOB_B64,
+                    "name": "contact [EMAIL]",
+                }]
+            })
+        );
+        assert_eq!(r.counts["email"], 1);
+        assert_eq!(r.counts["phone"], 0);
+    }
+
+    #[cfg(feature = "payload")]
+    #[test]
+    fn data_without_media_type_is_scrubbed() {
+        let r = scrub_payload(
+            serde_json::json!({"data": "mail ada@example.com", "type": "text"}),
+            None,
+        )
+        .unwrap();
+        assert_eq!(
+            r.payload,
+            serde_json::json!({"data": "mail [EMAIL]", "type": "text"})
+        );
+        assert_eq!(r.counts["email"], 1);
+    }
+
+    #[cfg(feature = "payload")]
+    #[test]
+    fn blob_without_uri_is_scrubbed() {
+        let r = scrub_payload(
+            serde_json::json!({"blob": "mail ada@example.com"}),
+            None,
+        )
+        .unwrap();
+        assert_eq!(r.payload, serde_json::json!({"blob": "mail [EMAIL]"}));
+        assert_eq!(r.counts["email"], 1);
     }
 }

@@ -20,6 +20,13 @@ both packs are on, US ITIN before SSN; DE USt-IdNr and NL BTW before BSN,
 passport after) → street + house number per pack (en, de, nl) → postcode
 per pack → kenteken when ``nl``.
 
+MCP binary content is left unscrubbed (foro-pii ``binaryKey`` parity): on an
+object with ``type`` of ``image`` or ``audio`` and a string ``data``, that
+``data`` field is passed through; on an object with string ``uri`` and string
+``blob``, ``blob`` is passed through. Sibling string fields are still scrubbed.
+Matched by shape, not key alone, so a ``data`` field elsewhere is scrubbed.
+Binary leaves are also excluded from the ``MAX_SCRUB_BYTES`` string-leaf sum.
+
 Optional Rust acceleration: when ``pii_mcp._native`` is importable (shipped in
 platform wheels, or built via maturin), ``scrub_text`` / ``scrub_payload``
 prefer it. Set ``PII_MCP_BACKEND=python`` to force the pure-Python path;
@@ -244,8 +251,21 @@ def _utf8_size(text: str) -> int:
     return len(text.encode("utf-8"))
 
 
+def _binary_key(value: dict[str, Any]) -> str | None:
+    """Return the MCP binary field to leave unscrubbed, or ``None``.
+
+    Matching foro-pii: ``data`` when ``type`` is ``image`` or ``audio`` and
+    ``data`` is a string; ``blob`` when both ``uri`` and ``blob`` are strings.
+    """
+    if value.get("type") in ("image", "audio") and isinstance(value.get("data"), str):
+        return "data"
+    if isinstance(value.get("uri"), str) and isinstance(value.get("blob"), str):
+        return "blob"
+    return None
+
+
 def _payload_string_bytes(value: Any, depth: int = 0) -> int:
-    """Sum UTF-8 sizes of string leaves only (matches scrub cost)."""
+    """Sum UTF-8 sizes of scrubbed string leaves only (matches scrub cost)."""
     if depth > MAX_DEPTH:
         raise PiiScrubError(f"payload nests past the {MAX_DEPTH}-level scrub limit")
     if isinstance(value, str):
@@ -253,7 +273,12 @@ def _payload_string_bytes(value: Any, depth: int = 0) -> int:
     if isinstance(value, list):
         return sum(_payload_string_bytes(item, depth + 1) for item in value)
     if isinstance(value, dict):
-        return sum(_payload_string_bytes(item, depth + 1) for item in value.values())
+        skip = _binary_key(value)
+        return sum(
+            _payload_string_bytes(item, depth + 1)
+            for key, item in value.items()
+            if key != skip
+        )
     return 0
 
 
@@ -313,8 +338,13 @@ def _scrub_walk(
     if isinstance(value, list):
         return [_scrub_walk(item, counts, depth + 1, languages) for item in value]
     if isinstance(value, dict):
+        skip = _binary_key(value)
         return {
-            key: _scrub_walk(item, counts, depth + 1, languages)
+            key: (
+                item
+                if key == skip
+                else _scrub_walk(item, counts, depth + 1, languages)
+            )
             for key, item in value.items()
         }
     if value is None or isinstance(value, (bool, int, float)):
@@ -331,7 +361,9 @@ def scrub_payload(
 ) -> ScrubPayloadResult:
     """Walk a JSON-like payload and mask string leaves. Fails closed on errors.
 
-    Size is enforced on string leaves before the walk. Non-plain objects and
+    MCP binary fields (``data`` on image/audio blocks, ``blob`` on resource
+    contents) are left unchanged; see the module docstring. Size is enforced
+    on scrubbed string leaves before the walk. Non-plain objects and
     oversize input raise ``PiiScrubError``.
     """
     if _resolve_backend() == "native":
