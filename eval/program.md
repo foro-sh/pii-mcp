@@ -105,8 +105,16 @@ commit	loss	leak_rate	fp_rate	overreach_rate	status	description
 
 ## foro Tier 1 adoption gate
 
-Before claiming readiness to replace `foro-pii.mts`, run the shared fixture
-pack (ported from platform `pii.test.ts`):
+pii-mcp is public; `foro-sh/platform` is private. Keep a sibling checkout at
+`../platform` (or set `PII_MCP_PLATFORM`). Vendored fixtures in
+`eval/fixtures/foro_tier1.json` run in public CI without that checkout.
+After platform Tier 1 tests change, refresh metadata from the sibling tree:
+
+```bash
+python eval/sync_foro_tier1.py
+```
+
+Before claiming readiness to replace `foro-pii.mts`:
 
 ```bash
 python eval/foro_tier1.py

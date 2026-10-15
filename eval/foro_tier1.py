@@ -1,9 +1,10 @@
 """Run the foro Tier 1 adoption-gate fixtures against the Python scrubber.
 
-Fixtures live in ``eval/fixtures/foro_tier1.json`` (ported from
-``foro-sh/platform`` ``packages/types/pii.test.ts``). Exit status 1 if any
-case regresses: a positive that fails to mask as expected, or a listed clean
-sample that is newly masked (or masked differently than recorded).
+Fixtures live in ``eval/fixtures/foro_tier1.json`` (vendored from the private
+sibling checkout ``../platform``; see ``eval/platform_root.py`` and
+``python eval/sync_foro_tier1.py``). Exit status 1 if any case regresses: a
+positive that fails to mask as expected, or a listed clean sample that is
+newly masked (or masked differently than recorded).
 
 Usage::
 
@@ -11,13 +12,13 @@ Usage::
 
 Optional ``PII_MCP_BACKEND=native`` exercises the Rust path after
 ``maturin develop --release``. Prints a go/no-go summary with pass counts and
-wall time for the pack.
+wall time for the pack. Public CI never reads ``../platform``.
 """
 
 from __future__ import annotations
 
-import json
 import importlib.util
+import json
 import sys
 import time
 from pathlib import Path
