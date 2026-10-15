@@ -872,11 +872,11 @@ mod tests {
         const IMAGE_B64: &str = "AAAA4111111111111111BBBBada@example.comCCCC";
         const AUDIO_B64: &str = "ZZZZ NL91ABNA0417164300 YYYY";
         assert_ne!(
-            scrub_text(IMAGE_B64, None, true, false).unwrap().text,
+            scrub_text(IMAGE_B64, None, true).unwrap().text,
             IMAGE_B64
         );
         assert_ne!(
-            scrub_text(AUDIO_B64, None, true, false).unwrap().text,
+            scrub_text(AUDIO_B64, None, true).unwrap().text,
             AUDIO_B64
         );
         let payload = serde_json::json!({
@@ -896,7 +896,7 @@ mod tests {
                 {"type": "text", "text": "reach me at +31 6 12345678"},
             ]
         });
-        let r = scrub_payload(payload, None, false).unwrap();
+        let r = scrub_payload(payload, None).unwrap();
         assert_eq!(
             r.payload,
             serde_json::json!({
@@ -928,7 +928,7 @@ mod tests {
     fn skips_resource_blob_scrubs_siblings() {
         const BLOB_B64: &str = "WWWW +31 6 12345678 XXXX";
         assert_ne!(
-            scrub_text(BLOB_B64, None, true, false).unwrap().text,
+            scrub_text(BLOB_B64, None, true).unwrap().text,
             BLOB_B64
         );
         let payload = serde_json::json!({
@@ -939,7 +939,7 @@ mod tests {
                 "name": "contact ada@example.com",
             }]
         });
-        let r = scrub_payload(payload, None, false).unwrap();
+        let r = scrub_payload(payload, None).unwrap();
         assert_eq!(
             r.payload,
             serde_json::json!({
@@ -961,7 +961,6 @@ mod tests {
         let r = scrub_payload(
             serde_json::json!({"data": "mail ada@example.com", "type": "text"}),
             None,
-            false,
         )
         .unwrap();
         assert_eq!(
@@ -977,7 +976,6 @@ mod tests {
         let r = scrub_payload(
             serde_json::json!({"blob": "mail ada@example.com"}),
             None,
-            false,
         )
         .unwrap();
         assert_eq!(r.payload, serde_json::json!({"blob": "mail [EMAIL]"}));
