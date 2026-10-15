@@ -6,8 +6,7 @@
  *
  *   cd typescript && npm run build && npm run build:native && npm run parity
  *
- * Prints the first 10 mismatches and exits 1 if any remain. Person names are
- * left out: NER only exists on a native build with the ``ner`` feature.
+ * Prints the first 10 mismatches and exits 1 if any remain.
  */
 
 import { dirname, join } from "node:path";

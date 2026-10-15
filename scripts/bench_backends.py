@@ -5,18 +5,12 @@ Build a release extension first (debug builds look slower than Python):
 
   maturin develop --release --manifest-path crates/pii-mcp-native/Cargo.toml
   python scripts/bench_backends.py
-
-With a ``--features ner`` build and ``PII_MCP_NER_MODEL`` set, a second table
-compares regex-only native scrubbing with ``ner=True`` and reports model load
-time and peak RSS.
 """
 
 from __future__ import annotations
 
 import os
-import resource
 import statistics
-import sys
 import time
 from typing import Any, Callable
 
@@ -66,39 +60,6 @@ def _with_backend(backend: str, fn: Callable[[], Any], rounds: int) -> list[floa
             os.environ.pop("PII_MCP_BACKEND", None)
         else:
             os.environ["PII_MCP_BACKEND"] = previous
-
-
-def _peak_rss_mib() -> float:
-    peak = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
-    return peak / (1 << 20) if sys.platform == "darwin" else peak / 1024
-
-
-def _bench_ner(mixed: str, clean: str) -> None:
-    os.environ["PII_MCP_BACKEND"] = "native"
-    rss_before = _peak_rss_mib()
-    start = time.perf_counter()
-    scrub.scrub_text("warmup", ner=True)
-    load_s = time.perf_counter() - start
-    print(
-        f"\nNER (native, ner=True): model load {load_s:.2f} s, "
-        f"peak RSS {rss_before:.0f} -> {_peak_rss_mib():.0f} MiB\n"
-    )
-    names = " Ada Lovelace met Jan de Vries and Anna Müller. "
-    tool_2k = ((clean + names + mixed) * 3)[:2048]
-    tool_16k = tool_2k * 8
-    header = f"{'case':<28} {'regex only':<40} {'ner=True':<40} relative"
-    print(header)
-    print("-" * len(header))
-    for name, text, rounds in [
-        ("short mixed PII", mixed + names, 30),
-        ("2 KiB tool result", tool_2k, 20),
-        ("16 KiB tool result", tool_16k, 5),
-    ]:
-        regex = _time_ms(lambda: scrub.scrub_text(text), rounds=rounds)
-        ner = _time_ms(lambda: scrub.scrub_text(text, ner=True), rounds=rounds)
-        ratio = statistics.median(ner) / statistics.median(regex)
-        print(f"{name:<28} {_fmt(regex):<40} {_fmt(ner):<40} {ratio:7.0f}× slower")
-    print(f"\npeak RSS after NER cases: {_peak_rss_mib():.0f} MiB")
 
 
 def main() -> None:
@@ -155,9 +116,6 @@ def main() -> None:
         "\nNote: medians over repeated rounds after warmup. "
         "Relative = median(Python) / median(Rust)."
     )
-
-    if os.environ.get("PII_MCP_NER_MODEL"):
-        _bench_ner(mixed, clean)
 
 
 if __name__ == "__main__":
