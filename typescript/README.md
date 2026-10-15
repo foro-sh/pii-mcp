@@ -1,6 +1,6 @@
 # pii-mcp (TypeScript)
 
-Pattern-based PII scrubbing for MCP servers (regex + checksums). Same detectors
+Pattern-based PII redaction for MCP servers (regex + checksums). Same detectors
 as the Python package: emails, IBANs, cards, BICs, MACs, IMEIs, IPs, coordinates,
 BSNs, US SSNs and ITINs, UK National Insurance and NHS numbers, German tax
 IDs, Dutch BTW-ids, Dutch passport/ID numbers, phones, street + house number
@@ -36,9 +36,11 @@ When the napi addon is loadable, `scrubText` / `scrubPayload` use it.
 Force the JS path with `PII_MCP_BACKEND=js`. Require native with
 `PII_MCP_BACKEND=native`.
 
-Person names in prose are out of band (Presidio or another NER sidecar). The
-`person` count stays `0` until key-aware masking lands (issue #52). See the
-[main README](../README.md#scope).
+`person` is pattern / key-aware when available; until then the count stays
+`0` (issue #52). Prose NER is out of band: Tier 1 (this package, no model)
+in live MCP gates; Tier 2 (Presidio or another NER sidecar) on API paths.
+Do not run a second in-process NER beside Presidio. Details:
+[Using with foro / Presidio](https://github.com/foro-sh/pii-mcp#using-with-foro--presidio).
 
 #### Performance (TypeScript vs Rust release)
 Medians from `scripts/bench_backends.mjs` on macOS arm64 / Node 22
