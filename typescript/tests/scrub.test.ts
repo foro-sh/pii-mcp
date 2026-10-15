@@ -1022,36 +1022,12 @@ describe("native backend", () => {
     }
   });
 
-  it.skipIf(process.env.PII_MCP_NER_MODEL)(
-    "fails closed when ner is requested without a ner build or model",
-    () => {
-      const reason = /`ner` feature|PII_MCP_NER_MODEL/;
-      expect(() => scrubText("Ada Lovelace", { ner: true })).toThrow(reason);
-      expect(() => scrubPayload({ to: "Ada Lovelace" }, { ner: true })).toThrow(reason);
-    },
-  );
-
-  it.skipIf(!process.env.PII_MCP_NER_MODEL)(
-    "masks person names with ner on a ner build",
-    (ctx) => {
-      process.env.PII_MCP_BACKEND = "native";
-      resetNativeCache();
-      let result;
-      try {
-        result = scrubText("Mail Ada Lovelace at ada@example.com", { ner: true });
-      } catch (err) {
-        if (err instanceof PiiScrubError && err.message.includes("`ner` feature")) {
-          ctx.skip();
-        }
-        throw err;
-      }
-      expect(result.text).toBe("Mail [PERSON] at [EMAIL]");
-      expect(result.counts.person).toBe(1);
-      expect(result.counts.email).toBe(1);
-      const payload = scrubPayload({ to: ["Jan de Vries"] }, { ner: true });
-      expect(payload.payload).toEqual({ to: ["[PERSON]"] });
-    },
-  );
+  it("keeps person count at zero for prose names", () => {
+    const result = scrubText("Mail Ada Lovelace at ada@example.com");
+    expect(result.text).toBe("Mail Ada Lovelace at [EMAIL]");
+    expect(result.counts.person).toBe(0);
+    expect(result.counts.email).toBe(1);
+  });
 
   it("forces js backend even when native is present", () => {
     process.env.PII_MCP_BACKEND = "js";

@@ -3,8 +3,8 @@
  *
  * Sync, in-process, regex + checksum detectors, including street + house
  * number addresses. Optional Rust acceleration via the napi addon built from
- * ``crates/pii-mcp-napi``; person names need ``ner: true`` and an addon built
- * with the ``ner`` feature.
+ * ``crates/pii-mcp-napi``. ``person`` counts stay 0 until key-aware masking
+ * (issue #52); in-process NER is out of scope.
  */
 
 export {

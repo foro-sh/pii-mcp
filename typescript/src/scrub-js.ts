@@ -4,9 +4,9 @@
  * Universal detectors (email, IBAN, credit card, BIC, MAC, IMEI, IP, location)
  * always run. Locale packs add national IDs / phone shapes / NL and UK
  * postcodes / kentekens / VAT IDs / passport numbers. Counts always include
- * every ``PiiType`` key (0 when unused), including ``person`` (filled only by
- * the optional Rust NER pass). ``address`` counts street + house number hits
- * and NL / UK postcodes.
+ * every ``PiiType`` key (0 when unused). ``person`` stays 0 until key-aware
+ * masking (issue #52). ``address`` counts street + house number hits and NL /
+ * UK postcodes.
  *
  * ``MAX_SCRUB_BYTES`` matches foro-proxy (32 MiB). Oversize raises
  * ``PiiScrubError`` so callers withhold rather than forward unscrubbed text.
