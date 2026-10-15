@@ -1,6 +1,6 @@
 # pii-mcp
 
-Pattern-based PII scrubbing for MCP servers (regex + checksums). Masks emails,
+Pattern-based PII redaction for MCP servers (regex + checksums). Masks emails,
 IBANs, cards, BICs, MACs, IMEIs, IPs, coordinates, BSNs, US SSNs and ITINs, UK
 National Insurance and NHS numbers, German tax IDs, Dutch BTW-ids, Dutch
 passport/ID numbers, phones, street + house number addresses, Dutch and UK
