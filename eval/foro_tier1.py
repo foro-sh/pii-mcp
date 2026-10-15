@@ -37,6 +37,7 @@ def main() -> None:
     languages = tuple(pack["default_languages"])
     cases = pack["cases"]
     failures: list[str] = []
+    failed_ids: set[str] = set()
     start = time.perf_counter()
     for case in cases:
         result = scrub_text(case["input"], languages=languages)
@@ -45,6 +46,7 @@ def main() -> None:
             failures.append(
                 f"{case['id']}: text {result['text']!r} != {expect_text!r}"
             )
+            failed_ids.add(case["id"])
             continue
         for key, want in case["expect_counts"].items():
             got = result["counts"].get(key, 0)
@@ -52,8 +54,9 @@ def main() -> None:
                 failures.append(
                     f"{case['id']}: counts[{key}]={got} != {want}"
                 )
+                failed_ids.add(case["id"])
     elapsed_ms = (time.perf_counter() - start) * 1000
-    passed = len(cases) - len(failures)
+    passed = len(cases) - len(failed_ids)
     print(f"foro Tier 1 fixtures: {passed}/{len(cases)} passed in {elapsed_ms:.1f} ms")
     if failures:
         print("FAIL — not ready to replace foro-pii")
