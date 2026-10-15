@@ -29,10 +29,15 @@
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
+    },
+    "./gate": {
+      "types": "./dist/gate.d.ts",
+      "import": "./dist/gate.js"
     }
   },
   "files": [
     "dist",
+    "gate",
     "README.md"
   ],
   "napi": {
@@ -43,6 +48,7 @@
   },
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
+    "build:gate": "node scripts/build-gate.mjs",
     "build:native": "napi build --platform --release --cargo-cwd ../crates/pii-mcp-napi --cargo-name pii_mcp native",
     "build:native:debug": "napi build --platform --cargo-cwd ../crates/pii-mcp-napi --cargo-name pii_mcp native",
     "bench": "npm run build && node ../scripts/bench_backends.mjs",
@@ -51,11 +57,12 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "prepublishOnly": "npm run build"
+    "prepublishOnly": "npm run build && npm run build:gate"
   },
   "devDependencies": {
     "@napi-rs/cli": "^2.18.4",
     "@types/node": "^22.0.0",
+    "esbuild": "^0.25.12",
     "typescript": "^5.8.0",
     "vitest": "^3.0.0"
   }
