@@ -20,6 +20,13 @@
  * both packs are on, US ITIN before SSN; DE USt-IdNr and NL BTW before BSN,
  * passport after) → street + house number per pack (en, de, nl) → postcode
  * per pack → kenteken when ``nl``.
+ *
+ * MCP binary content is left unscrubbed (foro-pii ``binaryKey`` parity): on an
+ * object with ``type`` of ``image`` or ``audio`` and a string ``data``, that
+ * ``data`` field is passed through; on an object with string ``uri`` and string
+ * ``blob``, ``blob`` is passed through. Sibling string fields are still scrubbed.
+ * Matched by shape, not key alone, so a ``data`` field elsewhere is scrubbed.
+ * Binary leaves are also excluded from the ``MAX_SCRUB_BYTES`` string-leaf sum.
  */
 
 import {
@@ -146,6 +153,25 @@ function utf8Size(text: string): number {
   return Buffer.byteLength(text, "utf8");
 }
 
+/**
+ * Return the MCP binary field to leave unscrubbed, or ``null``.
+ *
+ * Matching foro-pii: ``data`` when ``type`` is ``image`` or ``audio`` and
+ * ``data`` is a string; ``blob`` when both ``uri`` and ``blob`` are strings.
+ */
+function binaryKey(value: Record<string, unknown>): string | null {
+  if (
+    (value.type === "image" || value.type === "audio") &&
+    typeof value.data === "string"
+  ) {
+    return "data";
+  }
+  if (typeof value.uri === "string" && typeof value.blob === "string") {
+    return "blob";
+  }
+  return null;
+}
+
 function payloadStringBytes(value: unknown, depth = 0): number {
   if (depth > MAX_DEPTH) {
     throw new PiiScrubError(`payload nests past the ${MAX_DEPTH}-level scrub limit`);
@@ -161,8 +187,12 @@ function payloadStringBytes(value: unknown, depth = 0): number {
     return total;
   }
   if (isPlainObject(value)) {
+    const skip = binaryKey(value);
     let total = 0;
-    for (const item of Object.values(value)) {
+    for (const [key, item] of Object.entries(value)) {
+      if (key === skip) {
+        continue;
+      }
       total += payloadStringBytes(item, depth + 1);
     }
     return total;
@@ -237,8 +267,10 @@ function scrubWalk(
   }
   if (isPlainObject(value)) {
     const out: Record<string, unknown> = {};
+    const skip = binaryKey(value);
     for (const [key, item] of Object.entries(value)) {
-      out[key] = scrubWalk(item, counts, depth + 1, languages);
+      out[key] =
+        key === skip ? item : scrubWalk(item, counts, depth + 1, languages);
     }
     return out;
   }
