@@ -2,8 +2,8 @@
 //!
 //! Universal detectors always run. Locale packs add national IDs / phones /
 //! street addresses / NL and UK postcodes. Counts always include every
-//! [`PiiType`] key (0 when unused); `person` is filled only by the `ner`
-//! feature.
+//! [`PiiType`] key (0 when unused). `person` stays 0 until key-aware masking
+//! lands (issue #52); in-process NER is out of scope for this crate.
 
 use crate::detectors::{detectors_for, PiiCategory};
 use std::borrow::Cow;
@@ -128,28 +128,11 @@ fn bump_count(counts: &mut PiiCounts, cat: PiiCategory, n: u32) {
     }
 }
 
-/// Fail unless the NER pass can run: built with the `ner` feature and a
-/// loadable model.
-fn require_ner() -> Result<(), PiiScrubError> {
-    #[cfg(feature = "ner")]
-    return crate::ner::ensure_loaded();
-    #[cfg(not(feature = "ner"))]
-    Err(PiiScrubError::new(
-        "NER needs a native build with the `ner` feature \
-         (maturin develop --release --features ner, or \
-         npm run build:native -- --features ner)",
-    ))
-}
-
 /// Mask pattern-detectable PII in a string using an already-normalized language pack.
-///
-/// With `ner`, a person-name pass runs last, on the already-masked text
-/// (see the `ner` module).
 pub fn scrub_text_langs(
     text: &str,
     langs: &[LanguageCode],
     check_size: bool,
-    ner: bool,
 ) -> Result<ScrubResult, PiiScrubError> {
     if check_size && text.len() > MAX_SCRUB_BYTES {
         return Err(PiiScrubError::new(format!(
@@ -166,18 +149,6 @@ pub fn scrub_text_langs(
             out = Cow::Owned(s);
         }
     }
-    #[cfg(feature = "ner")]
-    if ner {
-        let (next, n) = crate::ner::scrub_persons(out.as_ref())?;
-        bump_count(&mut counts, PiiCategory::Person, n);
-        if let Some(s) = next {
-            out = Cow::Owned(s);
-        }
-    }
-    #[cfg(not(feature = "ner"))]
-    if ner {
-        require_ner()?;
-    }
     Ok(ScrubResult {
         found: total_pii_count(&counts) > 0,
         text: out.into_owned(),
@@ -185,18 +156,14 @@ pub fn scrub_text_langs(
     })
 }
 
-/// Mask pattern-detectable PII in a string. `ner` adds the person-name pass.
+/// Mask pattern-detectable PII in a string.
 pub fn scrub_text(
     text: &str,
     languages: Option<&[String]>,
     check_size: bool,
-    ner: bool,
 ) -> Result<ScrubResult, PiiScrubError> {
     let langs = normalize_languages(languages)?;
-    if ner {
-        require_ner()?;
-    }
-    scrub_text_langs(text, &langs, check_size, ner)
+    scrub_text_langs(text, &langs, check_size)
 }
 
 #[cfg(feature = "payload")]
@@ -235,7 +202,6 @@ mod payload {
         counts: &mut PiiCounts,
         depth: usize,
         langs: &[LanguageCode],
-        ner: bool,
     ) -> Result<Value, PiiScrubError> {
         if depth > MAX_DEPTH {
             return Err(PiiScrubError::new(format!(
@@ -244,7 +210,7 @@ mod payload {
         }
         match value {
             Value::String(s) => {
-                let result = scrub_text_langs(&s, langs, false, ner)?;
+                let result = scrub_text_langs(&s, langs, false)?;
                 for t in PII_TYPES {
                     if let Some(slot) = counts.get_mut(*t) {
                         *slot += result.counts.get(*t).copied().unwrap_or(0);
@@ -255,14 +221,14 @@ mod payload {
             Value::Array(items) => {
                 let mut out = Vec::with_capacity(items.len());
                 for item in items {
-                    out.push(scrub_walk(item, counts, depth + 1, langs, ner)?);
+                    out.push(scrub_walk(item, counts, depth + 1, langs)?);
                 }
                 Ok(Value::Array(out))
             }
             Value::Object(map) => {
                 let mut out = serde_json::Map::new();
                 for (key, item) in map {
-                    out.insert(key, scrub_walk(item, counts, depth + 1, langs, ner)?);
+                    out.insert(key, scrub_walk(item, counts, depth + 1, langs)?);
                 }
                 Ok(Value::Object(out))
             }
@@ -277,11 +243,10 @@ mod payload {
         pub counts: PiiCounts,
     }
 
-    /// Walk a JSON value and mask string leaves. `ner` adds the person-name pass.
+    /// Walk a JSON value and mask string leaves.
     pub fn scrub_payload(
         payload: Value,
         languages: Option<&[String]>,
-        ner: bool,
     ) -> Result<PayloadScrubResult, PiiScrubError> {
         if payload_string_bytes(&payload, 0)? > MAX_SCRUB_BYTES {
             return Err(PiiScrubError::new(format!(
@@ -289,11 +254,8 @@ mod payload {
             )));
         }
         let langs = normalize_languages(languages)?;
-        if ner {
-            require_ner()?;
-        }
         let mut counts = empty_pii_counts();
-        let scrubbed = scrub_walk(payload, &mut counts, 0, &langs, ner)?;
+        let scrubbed = scrub_walk(payload, &mut counts, 0, &langs)?;
         Ok(PayloadScrubResult {
             found: total_pii_count(&counts) > 0,
             payload: scrubbed,
@@ -323,33 +285,33 @@ mod tests {
             "AB 12 34 56C",
             "AB\u{a0}12\u{a0}34\u{a0}56\u{a0}C",
         ] {
-            let r = scrub_text_langs(&format!("NINO {value} on file"), &en, true, false).unwrap();
+            let r = scrub_text_langs(&format!("NINO {value} on file"), &en, true).unwrap();
             assert_eq!(r.text, "NINO [SSN] on file", "{value}");
             assert_eq!(r.counts["ssn"], 1);
         }
-        let r = scrub_text_langs(r#"{"ni": "JG103759A"}"#, &en, true, false).unwrap();
+        let r = scrub_text_langs(r#"{"ni": "JG103759A"}"#, &en, true).unwrap();
         assert_eq!(r.text, r#"{"ni": "[SSN]"}"#);
-        let r = scrub_text_langs("a,JG 10 37 59 A,b", &en, true, false).unwrap();
+        let r = scrub_text_langs("a,JG 10 37 59 A,b", &en, true).unwrap();
         assert_eq!(r.text, "a,[SSN],b");
         let nl = [LanguageCode::Nl];
-        let r = scrub_text_langs("NINO AB123456C", &nl, true, false).unwrap();
+        let r = scrub_text_langs("NINO AB123456C", &nl, true).unwrap();
         assert_eq!(r.counts["ssn"], 0);
-        let r = scrub_text_langs("AB 12 34 56 Cat", &en, true, false).unwrap();
+        let r = scrub_text_langs("AB 12 34 56 Cat", &en, true).unwrap();
         assert_eq!(r.text, "[SSN] Cat");
-        let r = scrub_text_langs("AB 12 34 56 C 7 days", &en, true, false).unwrap();
+        let r = scrub_text_langs("AB 12 34 56 C 7 days", &en, true).unwrap();
         assert_eq!(r.text, "[SSN] 7 days");
-        let r = scrub_text_langs("nino=AB123456C", &en, true, false).unwrap();
+        let r = scrub_text_langs("nino=AB123456C", &en, true).unwrap();
         assert_eq!(r.text, "nino=[SSN]");
-        let r = scrub_text_langs("NINO AB 12 34 56 C/JG 10 37 59 A", &en, true, false).unwrap();
+        let r = scrub_text_langs("NINO AB 12 34 56 C/JG 10 37 59 A", &en, true).unwrap();
         assert_eq!(r.text, "NINO [SSN]/[SSN]");
-        let r = scrub_text_langs("AB 12 34 56 C-2024", &en, true, false).unwrap();
+        let r = scrub_text_langs("AB 12 34 56 C-2024", &en, true).unwrap();
         assert_eq!(r.text, "[SSN]-2024");
         for (text, expected) in [
             ("GET /api/claimants/AB123456C HTTP/1.1", "GET /api/claimants/[SSN] HTTP/1.1"),
             ("https://x.gov.uk/ni/AB123456C", "https://x.gov.uk/ni/[SSN]"),
             ("NINO:AB123456C/2", "NINO:[SSN]/2"),
         ] {
-            let r = scrub_text_langs(text, &en, true, false).unwrap();
+            let r = scrub_text_langs(text, &en, true).unwrap();
             assert_eq!(r.text, expected, "{text}");
         }
         for value in [
@@ -376,7 +338,7 @@ mod tests {
             "AB123456C=",
         ] {
             let text = format!("ref {value}");
-            let r = scrub_text_langs(&text, &en, true, false).unwrap();
+            let r = scrub_text_langs(&text, &en, true).unwrap();
             assert_eq!(r.text, text, "{value}");
         }
     }
@@ -389,7 +351,7 @@ mod tests {
         bad.extend(["BG", "GB", "KN", "NK", "NT", "TN", "ZZ"].map(String::from));
         for prefix in bad {
             let value = format!("{prefix}123456A");
-            let r = scrub_text_langs(&value, &en, true, false).unwrap();
+            let r = scrub_text_langs(&value, &en, true).unwrap();
             assert_eq!(r.text, value, "{prefix}");
         }
         for value in [
@@ -397,7 +359,7 @@ mod tests {
             "AB\u{202f}12\u{202f}34\u{202f}56",
             "AB12 34 56 C",
         ] {
-            let r = scrub_text_langs(value, &en, true, false).unwrap();
+            let r = scrub_text_langs(value, &en, true).unwrap();
             assert_eq!(r.text, "[SSN]", "{value}");
         }
     }
@@ -406,12 +368,12 @@ mod tests {
     fn masks_grouped_nhs_numbers_as_ssn_in_en_pack() {
         let en = [LanguageCode::En];
         for value in ["943 476 5919", "943-476-5919", "943\u{a0}476\u{a0}5919"] {
-            let r = scrub_text_langs(&format!("NHS {value} on file"), &en, true, false).unwrap();
+            let r = scrub_text_langs(&format!("NHS {value} on file"), &en, true).unwrap();
             assert_eq!(r.text, "NHS [SSN] on file");
             assert_eq!(r.counts["ssn"], 1);
             assert_eq!(r.counts["phone"], 0);
         }
-        let r = scrub_text_langs(r#"{"nhs": "943-476-5919"}"#, &en, true, false).unwrap();
+        let r = scrub_text_langs(r#"{"nhs": "943-476-5919"}"#, &en, true).unwrap();
         assert_eq!(r.text, r#"{"nhs": "[SSN]"}"#);
         for value in [
             "943 476 5918",
@@ -420,11 +382,11 @@ mod tests {
             "1 943 476 5919",
             "943-476 5919",
         ] {
-            let r = scrub_text_langs(value, &en, true, false).unwrap();
+            let r = scrub_text_langs(value, &en, true).unwrap();
             assert_eq!(r.text, "[PHONE]", "{value}");
             assert_eq!(r.counts["ssn"], 0, "{value}");
         }
-        let r = scrub_text_langs("ts 9434765919", &en, true, false).unwrap();
+        let r = scrub_text_langs("ts 9434765919", &en, true).unwrap();
         assert_eq!(r.text, "ts 9434765919");
         for (text, expected) in [
             ("943 476 5919 943 476 5919", "[SSN] [SSN]"),
@@ -433,7 +395,7 @@ mod tests {
             ("NHS 401 023 2137 2 visits", "NHS [SSN] 2 visits"),
             ("ward 11 943 476 5919", "ward 11 [SSN]"),
         ] {
-            let r = scrub_text_langs(text, &en, true, false).unwrap();
+            let r = scrub_text_langs(text, &en, true).unwrap();
             assert_eq!(r.text, expected, "{text}");
             assert_eq!(r.counts["phone"], 0, "{text}");
         }
@@ -442,10 +404,10 @@ mod tests {
             ("401 023 2137 943 476 5919", "[SSN] [SSN]"),
             ("NHS 401 023 2137 049", "NHS [SSN] 049"),
         ] {
-            let r = scrub_text(text, None, true, false).unwrap();
+            let r = scrub_text(text, None, true).unwrap();
             assert_eq!(r.text, expected, "{text}");
         }
-        let r = scrub_text("bel 020 794 6095", None, true, false).unwrap();
+        let r = scrub_text("bel 020 794 6095", None, true).unwrap();
         assert_eq!(r.text, "bel [PHONE]");
         assert_eq!(r.counts["ssn"], 0);
     }
@@ -454,7 +416,7 @@ mod tests {
     fn masks_only_valid_german_vat_ids_in_de_pack() {
         let de = [LanguageCode::De];
         for value in ["DE136695976", "DE 136 695 976", "DE.136.695.976"] {
-            let r = scrub_text_langs(&format!("VAT {value} on file"), &de, true, false).unwrap();
+            let r = scrub_text_langs(&format!("VAT {value} on file"), &de, true).unwrap();
             assert_eq!(r.text, "VAT [VAT_ID] on file");
             assert_eq!(r.counts["vat_id"], 1);
         }
@@ -465,34 +427,34 @@ mod tests {
             "xDE136695976",
             "DE136695976x",
         ] {
-            let r = scrub_text_langs(value, &de, true, false).unwrap();
+            let r = scrub_text_langs(value, &de, true).unwrap();
             assert_eq!(r.text, value);
             assert_eq!(r.counts["vat_id"], 0);
         }
-        let r = scrub_text("DE136695976", None, true, false).unwrap();
+        let r = scrub_text("DE136695976", None, true).unwrap();
         assert_eq!(r.text, "DE136695976");
     }
 
     #[test]
     fn ipv6_embedded_in_unicode_word_stays_outside_the_word() {
         let text = "Hauptstraße64:ff9b::142.227.134.185";
-        let r = scrub_text(text, None, true, false).unwrap();
+        let r = scrub_text(text, None, true).unwrap();
         assert_eq!(r.text, "Hauptstraße64:ff9b::[IP]");
     }
 
     #[test]
     fn decimal_location_backtracks_its_optional_tails() {
         // Python's order: drop the E/W group, then the degree sign.
-        let r = scrub_text("52.3676, 4.9041°Ex", None, true, false).unwrap();
+        let r = scrub_text("52.3676, 4.9041°Ex", None, true).unwrap();
         assert_eq!(r.text, "[LOCATION]°Ex");
-        let r = scrub_text("52.3676, 4.904152°22", None, true, false).unwrap();
+        let r = scrub_text("52.3676, 4.904152°22", None, true).unwrap();
         assert_eq!(r.text, "[LOCATION]°22");
         // Only two cuts: a long space run before the tail stays linear
         // (400k spaces: milliseconds, where a full walk-back takes minutes).
         let spaces = " ".repeat(400_000);
         let text = format!("52.3676, 4.9041{spaces}Ex");
         let started = std::time::Instant::now();
-        let r = scrub_text(&text, None, true, false).unwrap();
+        let r = scrub_text(&text, None, true).unwrap();
         assert!(started.elapsed() < std::time::Duration::from_secs(5));
         assert_eq!(r.text, format!("[LOCATION]{spaces}Ex"));
     }
@@ -501,10 +463,10 @@ mod tests {
     fn dms_seconds_glued_to_a_word_fall_back_to_minutes() {
         // Python's lookahead backtracks past the optional seconds; the
         // linear engine walks the end back instead.
-        let r = scrub_text("N 52°22' E 4°54' 12\"x", None, true, false).unwrap();
+        let r = scrub_text("N 52°22' E 4°54' 12\"x", None, true).unwrap();
         assert_eq!(r.text, "[LOCATION] 12\"x");
         for sep in ['\u{3000}', '\u{0c}', '\u{0b}', '\u{85}', '\u{2028}', '\u{2029}'] {
-            let r = scrub_text(&format!("52°22'N{sep}4°54'E"), None, true, false).unwrap();
+            let r = scrub_text(&format!("52°22'N{sep}4°54'E"), None, true).unwrap();
             assert_eq!(r.text, "[LOCATION]", "separator {sep:?}");
         }
     }
@@ -514,19 +476,19 @@ mod tests {
         // ``(?!@)`` emulation: the span Python's backtracking picks, even when
         // it lies past the shortening walk's cap.
         let text = format!("a@ex.com.{}.{}.xx@y", "1".repeat(63), "1".repeat(63));
-        let r = scrub_text(&text, None, true, false).unwrap();
+        let r = scrub_text(&text, None, true).unwrap();
         assert_eq!(r.text, format!("[EMAIL]{}", &text["a@ex.com".len()..]));
         // No quadratic re-walk when a long domain runs into ``@``.
         let text = format!("{}@{}cc@", "a".repeat(64), "b.".repeat(2000));
-        assert_eq!(scrub_text(&text, None, true, false).unwrap().text, text);
+        assert_eq!(scrub_text(&text, None, true).unwrap().text, text);
         // Capped walk: a long domain with a glued TLD is masked as found.
         let text = format!("a@{}{}", "b.".repeat(2000), "c".repeat(30));
-        assert_eq!(scrub_text(&text, None, true, false).unwrap().text, "[EMAIL]cccccc");
+        assert_eq!(scrub_text(&text, None, true).unwrap().text, "[EMAIL]cccccc");
     }
 
     #[test]
     fn masks_email() {
-        let r = scrub_text("Contact ada@example.com for help", None, true, false).unwrap();
+        let r = scrub_text("Contact ada@example.com for help", None, true).unwrap();
         assert_eq!(r.text, "Contact [EMAIL] for help");
         assert!(r.found);
         assert_eq!(r.counts["email"], 1);
@@ -534,14 +496,14 @@ mod tests {
 
     #[test]
     fn masks_glued_emails() {
-        let r = scrub_text("a@b.comc@d.com", None, true, false).unwrap();
+        let r = scrub_text("a@b.comc@d.com", None, true).unwrap();
         assert_eq!(r.text, "[EMAIL][EMAIL]");
         assert_eq!(r.counts["email"], 2);
     }
 
     #[test]
     fn email_tld_does_not_eat_iban() {
-        let r = scrub_text("ada@example.comNL91ABNA0417164300", None, true, false).unwrap();
+        let r = scrub_text("ada@example.comNL91ABNA0417164300", None, true).unwrap();
         assert_eq!(r.text, "[EMAIL][IBAN]");
         assert_eq!(r.counts["email"], 1);
         assert_eq!(r.counts["iban"], 1);
@@ -556,7 +518,6 @@ mod tests {
             "18:c0:50:92:da:be4+4bc4545667033NL09BSLW5753882578",
             None,
             true,
-            false,
         )
         .unwrap();
         assert_eq!(r.text, "18:c0:50:92:da:be4+4bc4545667033[IBAN]");
@@ -565,7 +526,7 @@ mod tests {
 
     #[test]
     fn iban_after_a_pseudo_country_code_is_masked() {
-        let r = scrub_text("ac@LG180UU07GB89IWQY91132044634700", None, true, false).unwrap();
+        let r = scrub_text("ac@LG180UU07GB89IWQY91132044634700", None, true).unwrap();
         assert_eq!(r.text, "ac@[PASSPORT][IBAN]");
         assert_eq!(r.counts["iban"], 1);
     }
@@ -575,101 +536,101 @@ mod tests {
         // ``0.5741, -0.9633`` is leftmost but both components are within 1.0,
         // so it is rejected. The scan resumes after it, as Python does, so the
         // overlapping window ``-0.9633,-37.45816`` is never considered.
-        let r = scrub_text("scale 0.5741, -0.9633,-37.45816,41.605875", None, true, false).unwrap();
+        let r = scrub_text("scale 0.5741, -0.9633,-37.45816,41.605875", None, true).unwrap();
         assert_eq!(r.text, "scale 0.5741, -0.9633,[LOCATION]");
         assert_eq!(r.counts["location"], 1);
     }
 
     #[test]
     fn masks_iban_and_card() {
-        let r = scrub_text("Pay NL91ABNA0417164300 with 4111111111111111", None, true, false).unwrap();
+        let r = scrub_text("Pay NL91ABNA0417164300 with 4111111111111111", None, true).unwrap();
         assert_eq!(r.text, "Pay [IBAN] with [CREDIT_CARD]");
     }
 
     #[test]
     fn masks_dashed_and_mixed_case_iban() {
-        let dashed = scrub_text("Pay NL91-ABNA-0417-1643-00 please", None, true, false).unwrap();
+        let dashed = scrub_text("Pay NL91-ABNA-0417-1643-00 please", None, true).unwrap();
         assert_eq!(dashed.text, "Pay [IBAN] please");
         assert_eq!(dashed.counts["iban"], 1);
         assert_eq!(dashed.counts["phone"], 0);
 
-        let mixed = scrub_text("Pay Nl91 AbNa 0417 1643 00 please", None, true, false).unwrap();
+        let mixed = scrub_text("Pay Nl91 AbNa 0417 1643 00 please", None, true).unwrap();
         assert_eq!(mixed.text, "Pay [IBAN] please");
         assert_eq!(mixed.counts["iban"], 1);
 
-        let slash = scrub_text("Pay NL91/ABNA/0417/1643/00 please", None, true, false).unwrap();
+        let slash = scrub_text("Pay NL91/ABNA/0417/1643/00 please", None, true).unwrap();
         assert_eq!(slash.text, "Pay [IBAN] please");
         assert_eq!(slash.counts["iban"], 1);
     }
 
     #[test]
     fn masks_grouped_card_separators_and_mapped_ip() {
-        let card = scrub_text("card 4111.1111.1111.1111", None, true, false).unwrap();
+        let card = scrub_text("card 4111.1111.1111.1111", None, true).unwrap();
         assert_eq!(card.text, "card [CREDIT_CARD]");
         assert_eq!(card.counts["credit_card"], 1);
 
-        let mapped = scrub_text("peer ::ffff:192.0.2.1 ok", None, true, false).unwrap();
+        let mapped = scrub_text("peer ::ffff:192.0.2.1 ok", None, true).unwrap();
         assert_eq!(mapped.text, "peer [IP] ok");
         assert_eq!(mapped.counts["ip"], 1);
     }
 
     #[test]
     fn masks_card_iban_glue_email_ssn_degree_nanp_double_spaced_iban() {
-        let glue = scrub_text("4111111111111111NL91ABNA0417164300", None, true, false).unwrap();
+        let glue = scrub_text("4111111111111111NL91ABNA0417164300", None, true).unwrap();
         assert_eq!(glue.text, "[CREDIT_CARD][IBAN]");
 
         let langs = vec!["en".to_string()];
         let email_ssn =
-            scrub_text("ada@example.com078-05-1120", Some(&langs), true, false).unwrap();
+            scrub_text("ada@example.com078-05-1120", Some(&langs), true).unwrap();
         assert_eq!(email_ssn.text, "[EMAIL][SSN]");
 
-        let loc = scrub_text("52.3676°, 4.9041°", None, true, false).unwrap();
+        let loc = scrub_text("52.3676°, 4.9041°", None, true).unwrap();
         assert_eq!(loc.text, "[LOCATION]");
 
-        let phone = scrub_text("(415)555-0132", Some(&langs), true, false).unwrap();
+        let phone = scrub_text("(415)555-0132", Some(&langs), true).unwrap();
         assert_eq!(phone.text, "[PHONE]");
 
-        let iban = scrub_text("NL91  ABNA  0417  1643  00", None, true, false).unwrap();
+        let iban = scrub_text("NL91  ABNA  0417  1643  00", None, true).unwrap();
         assert_eq!(iban.text, "[IBAN]");
     }
 
     #[test]
     fn masks_email_ip_mac_location_slash_ssn_padded_ip() {
         assert_eq!(
-            scrub_text("ada@example.com192.0.2.1", None, true, false)
+            scrub_text("ada@example.com192.0.2.1", None, true)
                 .unwrap()
                 .text,
             "[EMAIL][IP]"
         );
         assert_eq!(
-            scrub_text("ada@example.comaa:bb:cc:dd:ee:ff", None, true, false)
+            scrub_text("ada@example.comaa:bb:cc:dd:ee:ff", None, true)
                 .unwrap()
                 .text,
             "[EMAIL][MAC]"
         );
         assert_eq!(
-            scrub_text("ada@example.com52.3676,4.9041", None, true, false)
+            scrub_text("ada@example.com52.3676,4.9041", None, true)
                 .unwrap()
                 .text,
             "[EMAIL][LOCATION]"
         );
         let en = vec!["en".to_string()];
         assert_eq!(
-            scrub_text("078/05/1120", Some(&en), true, false).unwrap().text,
+            scrub_text("078/05/1120", Some(&en), true).unwrap().text,
             "[SSN]"
         );
         assert_eq!(
-            scrub_text("192.168.001.001", None, true, false).unwrap().text,
+            scrub_text("192.168.001.001", None, true).unwrap().text,
             "[IP]"
         );
         assert_eq!(
-            scrub_text("52.3676 N, 4.9041 E", None, true, false)
+            scrub_text("52.3676 N, 4.9041 E", None, true)
                 .unwrap()
                 .text,
             "[LOCATION]"
         );
         assert_eq!(
-            scrub_text("NL91\u{200b}ABNA0417164300", None, true, false)
+            scrub_text("NL91\u{200b}ABNA0417164300", None, true)
                 .unwrap()
                 .text,
             "[IBAN]"
@@ -679,7 +640,7 @@ mod tests {
     #[test]
     fn language_gate_bsn() {
         let langs = vec!["en".to_string()];
-        let r = scrub_text("BSN 100000009 on file", Some(&langs), true, false).unwrap();
+        let r = scrub_text("BSN 100000009 on file", Some(&langs), true).unwrap();
         assert_eq!(r.counts["bsn"], 0);
     }
 
@@ -687,14 +648,14 @@ mod tests {
     fn masks_grouped_itin_as_tax_id() {
         let langs = vec!["en".to_string()];
         for value in ["912-70-1234", "900 50 1234", "999\u{2013}94\u{2013}0001"] {
-            let r = scrub_text(&format!("itin {value} on file"), Some(&langs), true, false).unwrap();
+            let r = scrub_text(&format!("itin {value} on file"), Some(&langs), true).unwrap();
             assert_eq!(r.text, "itin [TAX_ID] on file", "{value}");
             assert_eq!(r.counts["tax_id"], 1, "{value}");
             assert_eq!(r.counts["ssn"], 0, "{value}");
         }
         for value in ["912-89-1234", "912-93-1234", "912701234", "912.70.1234"] {
             let text = format!("ref {value}");
-            let r = scrub_text(&text, Some(&langs), true, false).unwrap();
+            let r = scrub_text(&text, Some(&langs), true).unwrap();
             assert_eq!(r.text, text, "{value}");
         }
     }
@@ -706,7 +667,7 @@ mod tests {
             "M1 1AE", "B33 8TH", "W1A 0AX", "SW1A 1AA", "NW1 6XE", "GU30 7RS", "E1W 1AA",
             "JE2 3AA", "GY1 1AA", "ZE1 0AA", "NR1 3PS", "EC1A 1BB",
         ] {
-            let r = scrub_text(&format!("postcode {value}"), Some(&langs), true, false).unwrap();
+            let r = scrub_text(&format!("postcode {value}"), Some(&langs), true).unwrap();
             assert_eq!(r.text, "postcode [ADDRESS]", "{value}");
             assert_eq!(r.counts["address"], 1, "{value}");
         }
@@ -717,7 +678,7 @@ mod tests {
         let langs = vec!["en".to_string()];
         for separator in [" ", "  ", "\t", "\u{a0}", "\u{202f}"] {
             let text = format!("postcode NW1{separator}6XE");
-            let r = scrub_text(&text, Some(&langs), true, false).unwrap();
+            let r = scrub_text(&text, Some(&langs), true).unwrap();
             assert_eq!(r.text, "postcode [ADDRESS]", "{separator:?}");
             assert_eq!(r.counts["address"], 1, "{separator:?}");
         }
@@ -730,7 +691,6 @@ mod tests {
             "Ship to 221B Baker Street, London NW1 6XE",
             Some(&langs),
             true,
-            false,
         )
         .unwrap();
         assert_eq!(r.text, "Ship to [ADDRESS], London [ADDRESS]");
@@ -742,7 +702,7 @@ mod tests {
         let langs = vec!["en".to_string()];
         for value in ["A4 2PK", "PS5 1TB", "A1 2PK"] {
             let text = format!("part {value} in stock");
-            let r = scrub_text(&text, Some(&langs), true, false).unwrap();
+            let r = scrub_text(&text, Some(&langs), true).unwrap();
             assert_eq!(r.text, text, "{value}");
             assert_eq!(r.counts["address"], 0, "{value}");
         }
@@ -753,7 +713,7 @@ mod tests {
         let langs = vec!["en".to_string()];
         for value in ["AB12C 3DE", "M12C 3DE", "LA23J 2DX", "SW123 4AB"] {
             let text = format!("order {value} shipped");
-            let r = scrub_text(&text, Some(&langs), true, false).unwrap();
+            let r = scrub_text(&text, Some(&langs), true).unwrap();
             assert_eq!(r.counts["address"], 0, "{value}");
         }
     }
@@ -761,7 +721,7 @@ mod tests {
     #[test]
     fn uk_postcode_needs_the_en_pack() {
         let langs = vec!["nl".to_string()];
-        let r = scrub_text("postcode NW1 6XE", Some(&langs), true, false).unwrap();
+        let r = scrub_text("postcode NW1 6XE", Some(&langs), true).unwrap();
         assert_eq!(r.text, "postcode NW1 6XE");
         assert_eq!(r.counts["address"], 0);
     }
@@ -782,7 +742,7 @@ mod tests {
             ("1NW1 6XE", "1NW1 6XE"),
             ("NW1 6XEa", "NW1 6XEa"),
         ] {
-            let r = scrub_text(text, Some(&langs), true, false).unwrap();
+            let r = scrub_text(text, Some(&langs), true).unwrap();
             assert_eq!(r.text, expected, "{text:?}");
         }
     }
@@ -807,7 +767,7 @@ mod tests {
             ("221B, Baker Street", "en", "[ADDRESS]"),
         ] {
             let langs = vec![lang.to_string()];
-            let r = scrub_text(text, Some(&langs), true, false).unwrap();
+            let r = scrub_text(text, Some(&langs), true).unwrap();
             assert_eq!(r.text, expected, "{text:?}");
             assert_eq!(r.counts["address"], 1, "{text:?}");
         }
@@ -817,7 +777,7 @@ mod tests {
     fn street_comma_needs_a_street_word() {
         for (text, lang) in [("Foo, 12", "nl"), ("Foo, 12", "de"), ("12, Foo", "en")] {
             let langs = vec![lang.to_string()];
-            let r = scrub_text(text, Some(&langs), true, false).unwrap();
+            let r = scrub_text(text, Some(&langs), true).unwrap();
             assert_eq!(r.text, text, "{text:?}");
             assert_eq!(r.counts["address"], 0, "{text:?}");
         }
@@ -833,7 +793,7 @@ mod tests {
             ("id,518,Hollywater Road,x", "en"),
         ] {
             let langs = vec![lang.to_string()];
-            let r = scrub_text(text, Some(&langs), true, false).unwrap();
+            let r = scrub_text(text, Some(&langs), true).unwrap();
             assert_eq!(r.text, text, "{text:?}");
             assert_eq!(r.counts["address"], 0, "{text:?}");
         }
@@ -847,38 +807,24 @@ mod tests {
             ("Kerkstraat, 2024", "nl", "[ADDRESS]"),
         ] {
             let langs = vec![lang.to_string()];
-            let without = scrub_text(&text.replace(',', ""), Some(&langs), true, false).unwrap();
+            let without = scrub_text(&text.replace(',', ""), Some(&langs), true).unwrap();
             assert_eq!(without.counts["address"], 1, "{text:?}");
-            let r = scrub_text(text, Some(&langs), true, false).unwrap();
+            let r = scrub_text(text, Some(&langs), true).unwrap();
             assert_eq!(r.text, expected, "{text:?}");
         }
-    }
-
-    #[cfg(not(feature = "ner"))]
-    #[test]
-    fn ner_without_feature_is_an_error() {
-        let err = scrub_text("Ada Lovelace", None, true, true).unwrap_err();
-        assert!(err.to_string().contains("`ner` feature"));
-    }
-
-    #[cfg(all(feature = "payload", not(feature = "ner")))]
-    #[test]
-    fn ner_payload_without_feature_is_an_error() {
-        let err = scrub_payload(serde_json::json!([]), None, true).unwrap_err();
-        assert!(err.to_string().contains("`ner` feature"));
     }
 
     #[test]
     fn unknown_language() {
         let langs = vec!["fr".to_string()];
-        let err = scrub_text("hi", Some(&langs), true, false).unwrap_err();
+        let err = scrub_text("hi", Some(&langs), true).unwrap_err();
         assert!(err.to_string().contains("unknown language"));
     }
 
     #[test]
     fn clean_text_unchanged() {
         let t = "The server exposes a search tool and a fetch tool.";
-        let r = scrub_text(t, None, true, false).unwrap();
+        let r = scrub_text(t, None, true).unwrap();
         assert_eq!(r.text, t);
         assert!(!r.found);
     }

@@ -27,18 +27,15 @@ fn counts_to_py<'py>(py: Python<'py>, counts: &pii_core::PiiCounts) -> PyResult<
 }
 
 /// Mask pattern-detectable PII in a string. Returns ``{text, found, counts}``.
-///
-/// ``ner=True`` adds the person-name pass; it needs the ``ner`` build.
 #[pyfunction]
-#[pyo3(signature = (text, *, languages=None, ner=false))]
+#[pyo3(signature = (text, *, languages=None))]
 fn scrub_text<'py>(
     py: Python<'py>,
     text: &str,
     languages: Option<Vec<String>>,
-    ner: bool,
 ) -> PyResult<Bound<'py, PyDict>> {
     let result = py
-        .detach(|| core_scrub_text(text, languages.as_deref(), true, ner))
+        .detach(|| core_scrub_text(text, languages.as_deref(), true))
         .map_err(scrub_error)?;
     let out = PyDict::new(py);
     out.set_item("text", result.text)?;
@@ -125,19 +122,16 @@ fn value_to_py(py: Python<'_>, value: Value) -> PyResult<Py<PyAny>> {
 }
 
 /// Walk a JSON-like payload and mask string leaves.
-///
-/// ``ner=True`` adds the person-name pass; it needs the ``ner`` build.
 #[pyfunction]
-#[pyo3(signature = (payload, *, languages=None, ner=false))]
+#[pyo3(signature = (payload, *, languages=None))]
 fn scrub_payload<'py>(
     py: Python<'py>,
     payload: Bound<'_, PyAny>,
     languages: Option<Vec<String>>,
-    ner: bool,
 ) -> PyResult<Bound<'py, PyDict>> {
     let value = py_to_value(&payload, 0)?;
     let result = py
-        .detach(|| core_scrub_payload(value, languages.as_deref(), ner))
+        .detach(|| core_scrub_payload(value, languages.as_deref()))
         .map_err(scrub_error)?;
     let out = PyDict::new(py);
     out.set_item("payload", value_to_py(py, result.payload)?)?;

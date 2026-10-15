@@ -10,21 +10,10 @@ description = "Shared pattern-based PII detectors and scrub walk (regex + checks
 regex = { workspace = true }
 serde_json = { workspace = true, optional = true }
 thiserror = { workspace = true }
-candle-core = { workspace = true, optional = true }
-candle-nn = { workspace = true, optional = true }
-candle-transformers = { workspace = true, optional = true }
-tokenizers = { workspace = true, optional = true }
 
 [features]
 default = ["payload"]
 payload = ["dep:serde_json"]
-ner = [
-    "dep:candle-core",
-    "dep:candle-nn",
-    "dep:candle-transformers",
-    "dep:tokenizers",
-    "dep:serde_json",
-]
 
 [dev-dependencies]
 serde_json = { workspace = true }

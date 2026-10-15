@@ -2,8 +2,8 @@
  * Shared types and constants for pattern-based PII scrubbing.
  *
  * Sync, in-process, regex + checksum detectors, including street + house
- * number addresses. Person names need ``ner: true`` and the napi addon built
- * with the optional ``ner`` feature.
+ * number addresses. ``person`` counts stay 0 until key-aware masking (issue
+ * #52); in-process NER is out of scope.
  */
 
 export const PII_TYPES = [
