@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from pii_mcp import scrub_text, using_native
+from pii_mcp import scrub_payload, scrub_text, using_native
 from pii_mcp import scrub as scrub_mod
 
 
@@ -39,3 +39,10 @@ def test_person_count_stays_zero_for_prose_names() -> None:
     assert result["text"] == "Mail Ada Lovelace at [EMAIL]"
     assert result["counts"]["person"] == 0
     assert result["counts"]["email"] == 1
+
+
+def test_ner_keyword_is_rejected() -> None:
+    with pytest.raises(TypeError, match="ner"):
+        scrub_text("Ada Lovelace", ner=True)  # type: ignore[call-arg]
+    with pytest.raises(TypeError, match="ner"):
+        scrub_payload({"to": "Ada Lovelace"}, ner=True)  # type: ignore[call-arg]
