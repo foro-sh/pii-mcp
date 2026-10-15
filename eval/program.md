@@ -102,3 +102,17 @@ commit	loss	leak_rate	fp_rate	overreach_rate	status	description
    TypeScript test suite.
 4. Squash or regroup the commits into atomic `fix:` commits per
    `AGENTS.md`, then open the PR.
+
+## foro Tier 1 adoption gate
+
+Before claiming readiness to replace `foro-pii.mts`, run the shared fixture
+pack (ported from platform `pii.test.ts`):
+
+```bash
+python eval/foro_tier1.py
+```
+
+Exit 0 and a `GO` line means every listed positive still masks and every
+listed clean sample is unchanged (or strictly improved, e.g. IP masking).
+The same JSON drives `tests/test_foro_tier1.py` and
+`typescript/tests/foro-tier1.test.ts` in CI.

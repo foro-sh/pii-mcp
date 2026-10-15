@@ -1,0 +1,233 @@
+{
+  "source": "foro-sh/platform packages/types/pii.test.ts (Tier 1 scrubText cases)",
+  "purpose": "Adoption gate: pii-mcp must match or strictly improve foro-pii Tier 1 masking on these inputs. CI fails on any regression.",
+  "default_languages": ["en", "nl"],
+  "cases": [
+    {
+      "id": "clean-prose",
+      "kind": "negative",
+      "input": "The server exposes a search tool and a fetch tool.",
+      "expect_text": "The server exposes a search tool and a fetch tool.",
+      "expect_counts": { "email": 0 }
+    },
+    {
+      "id": "email-plain",
+      "kind": "positive",
+      "input": "Contact ada@example.com for help",
+      "expect_text": "Contact [EMAIL] for help",
+      "expect_counts": { "email": 1 }
+    },
+    {
+      "id": "email-plus-subdomain",
+      "kind": "positive",
+      "input": "to a.b+tag@mail.sub.example.co.uk now",
+      "expect_text": "to [EMAIL] now",
+      "expect_counts": { "email": 1 }
+    },
+    {
+      "id": "email-multiple",
+      "kind": "positive",
+      "input": "one@a.com, two@b.org, three@c.net",
+      "expect_text": "[EMAIL], [EMAIL], [EMAIL]",
+      "expect_counts": { "email": 3 }
+    },
+    {
+      "id": "email-bare-handle",
+      "kind": "negative",
+      "input": "ping @octocat about this",
+      "expect_text": "ping @octocat about this",
+      "expect_counts": { "email": 0 }
+    },
+    {
+      "id": "iban-compact-nl",
+      "kind": "positive",
+      "input": "Pay to NL91ABNA0417164300 please",
+      "expect_text": "Pay to [IBAN] please",
+      "expect_counts": { "iban": 1 }
+    },
+    {
+      "id": "iban-compact-de",
+      "kind": "positive",
+      "input": "IBAN: DE89370400440532013000",
+      "expect_text": "IBAN: [IBAN]",
+      "expect_counts": { "iban": 1 }
+    },
+    {
+      "id": "iban-lowercased",
+      "kind": "positive",
+      "input": "acct gb82west12345698765432 here",
+      "expect_text": "acct [IBAN] here",
+      "expect_counts": { "iban": 1 }
+    },
+    {
+      "id": "iban-bad-checksum-compact",
+      "kind": "negative",
+      "input": "ref NL91ABNA0417164301 noted",
+      "expect_text": "ref NL91ABNA0417164301 noted",
+      "expect_counts": { "iban": 0 }
+    },
+    {
+      "id": "iban-keeps-following-word",
+      "kind": "positive",
+      "input": "NL91ABNA0417164300 please confirm",
+      "expect_text": "[IBAN] please confirm",
+      "expect_counts": { "iban": 1 }
+    },
+    {
+      "id": "iban-two-in-prose",
+      "kind": "positive",
+      "input": "from NL91ABNA0417164300 to DE89370400440532013000 today",
+      "expect_text": "from [IBAN] to [IBAN] today",
+      "expect_counts": { "iban": 2 }
+    },
+    {
+      "id": "iban-spaced-nl-before-phone",
+      "kind": "positive",
+      "input": "wire the deposit to NL91 ABNA 0417 1643 00",
+      "expect_text": "wire the deposit to [IBAN]",
+      "expect_counts": { "iban": 1, "phone": 0 }
+    },
+    {
+      "id": "iban-spaced-be",
+      "kind": "positive",
+      "input": "Please pay to BE68 5390 0754 7034 today",
+      "expect_text": "Please pay to [IBAN] today",
+      "expect_counts": { "iban": 1 }
+    },
+    {
+      "id": "iban-spaced-bad-checksum",
+      "kind": "negative",
+      "note": "foro-pii only asserts iban=0; trailing digits may still match phone (documented over-redaction).",
+      "input": "ref NL91 ABNA 0417 1643 01 noted",
+      "expect_text": "ref NL91 ABNA [PHONE] noted",
+      "expect_counts": { "iban": 0, "phone": 1 }
+    },
+    {
+      "id": "card-compact-16",
+      "kind": "positive",
+      "input": "card 4111111111111111 exp 12/29",
+      "expect_text": "card [CREDIT_CARD] exp 12/29",
+      "expect_counts": { "credit_card": 1 }
+    },
+    {
+      "id": "card-spaced",
+      "kind": "positive",
+      "input": "pay with 4111 1111 1111 1111 now",
+      "expect_text": "pay with [CREDIT_CARD] now",
+      "expect_counts": { "credit_card": 1 }
+    },
+    {
+      "id": "card-dashed",
+      "kind": "positive",
+      "input": "4111-1111-1111-1111",
+      "expect_text": "[CREDIT_CARD]",
+      "expect_counts": { "credit_card": 1 }
+    },
+    {
+      "id": "card-amex",
+      "kind": "positive",
+      "input": "amex 378282246310005 ok",
+      "expect_text": "amex [CREDIT_CARD] ok",
+      "expect_counts": { "credit_card": 1 }
+    },
+    {
+      "id": "card-luhn-fail",
+      "kind": "negative",
+      "input": "order 1234567812345678 shipped",
+      "expect_text": "order 1234567812345678 shipped",
+      "expect_counts": { "credit_card": 0 }
+    },
+    {
+      "id": "card-no-glue-following",
+      "kind": "positive",
+      "input": "4111 1111 1111 1111 4242",
+      "expect_text": "[CREDIT_CARD] 4242",
+      "expect_counts": { "credit_card": 1 }
+    },
+    {
+      "id": "bsn-valid",
+      "kind": "positive",
+      "input": "BSN 111222333 on file",
+      "expect_text": "BSN [BSN] on file",
+      "expect_counts": { "bsn": 1 }
+    },
+    {
+      "id": "bsn-bad-11-proof",
+      "kind": "negative",
+      "input": "ticket 123456789 open",
+      "expect_text": "ticket 123456789 open",
+      "expect_counts": { "bsn": 0 }
+    },
+    {
+      "id": "bsn-no-slice-of-longer",
+      "kind": "negative",
+      "input": "id 11122233300",
+      "expect_text": "id 11122233300",
+      "expect_counts": { "bsn": 0 }
+    },
+    {
+      "id": "phone-e164-spaced",
+      "kind": "positive",
+      "input": "call +31 6 12345678 today",
+      "expect_text": "call [PHONE] today",
+      "expect_counts": { "phone": 1 }
+    },
+    {
+      "id": "phone-e164-compact",
+      "kind": "positive",
+      "input": "uk +442079460958.",
+      "expect_text": "uk [PHONE].",
+      "expect_counts": { "phone": 1 }
+    },
+    {
+      "id": "phone-00-prefix",
+      "kind": "positive",
+      "input": "call 0031612345678 now",
+      "expect_text": "call [PHONE] now",
+      "expect_counts": { "phone": 1 }
+    },
+    {
+      "id": "phone-nl-national",
+      "kind": "positive",
+      "input": "reach 06 12345678 or 0612345678",
+      "expect_text": "reach [PHONE] or [PHONE]",
+      "expect_counts": { "phone": 2 }
+    },
+    {
+      "id": "phone-nanp",
+      "kind": "positive",
+      "input": "(415) 555-0132 / 415-555-0132 / 415.555.0132",
+      "expect_text": "[PHONE] / [PHONE] / [PHONE]",
+      "expect_counts": { "phone": 3 }
+    },
+    {
+      "id": "phone-not-year",
+      "kind": "negative",
+      "input": "in 2024 we shipped 500 units",
+      "expect_text": "in 2024 we shipped 500 units",
+      "expect_counts": { "phone": 0 }
+    },
+    {
+      "id": "phone-not-ip",
+      "kind": "positive",
+      "note": "Strict improvement over foro-pii: foro only required phone=0; pii-mcp also masks the IP.",
+      "input": "host at 192.168.0.1 responds",
+      "expect_text": "host at [IP] responds",
+      "expect_counts": { "phone": 0, "ip": 1 }
+    },
+    {
+      "id": "multi-email-card",
+      "kind": "positive",
+      "input": "mail ada@example.com or card 4111111111111111",
+      "expect_text": "mail [EMAIL] or card [CREDIT_CARD]",
+      "expect_counts": { "email": 1, "credit_card": 1, "phone": 0, "bsn": 0 }
+    },
+    {
+      "id": "multi-card-not-phone-bsn",
+      "kind": "positive",
+      "input": "card 4111111111111111",
+      "expect_text": "card [CREDIT_CARD]",
+      "expect_counts": { "credit_card": 1, "phone": 0, "bsn": 0 }
+    }
+  ]
+}
