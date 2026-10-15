@@ -71,3 +71,21 @@ usingNative(); // true when the napi addon is active
 ```
 
 For a runnable Node example, see [`examples/node/`](../examples/node/).
+
+## Gate (foro user containers)
+
+For a sync, pattern-only scrubber with **zero npm dependencies** in the image
+(no napi, no NER), use the vendored artifact or the `pii-mcp/gate` export:
+
+```bash
+cd typescript && npm run build:gate   # writes gate/pii-gate.mjs
+```
+
+```ts
+import { scrubPayload, scrubText, PiiScrubError } from "pii-mcp/gate";
+// or COPY gate/pii-gate.mjs into the image and import that file directly
+```
+
+Contract (placeholders, caps, binary skip, fail-closed rules):
+[`docs/tier1-gate.md`](../docs/tier1-gate.md). Hybrid packaging: vendored JS for
+the gate; optional native for the API process.

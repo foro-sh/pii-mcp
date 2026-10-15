@@ -99,7 +99,11 @@ masking lands (issue #52).
 | ---------- | ----------------- | ----------------------------- |
 | Python     | `src/pii_mcp`     | `pip install pii-mcp`         |
 | TypeScript | `typescript/`     | `npm install pii-mcp`         |
+| Gate (JS)  | `typescript/gate/` | COPY `pii-gate.mjs` (zero npm deps) |
 | Rust core  | `crates/pii-core` | shared by both (PyO3 / N-API) |
+
+Tier 1 gate contract for foro user containers (caps, placeholders, binary skip):
+[`docs/tier1-gate.md`](docs/tier1-gate.md).
 
 ## Rust core (Python)
 
