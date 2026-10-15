@@ -1,7 +1,7 @@
 {
   "name": "pii-mcp",
   "version": "0.1.0",
-  "description": "Pattern-based PII scrubbing for MCP servers (TypeScript + optional Rust napi)",
+  "description": "Pattern-based PII redaction for MCP servers (TypeScript + optional Rust napi)",
   "type": "module",
   "license": "MIT",
   "author": "foro.sh",
@@ -18,7 +18,9 @@
     "mcp",
     "pii",
     "privacy",
-    "redaction"
+    "redaction",
+    "pattern",
+    "checksum"
   ],
   "engines": {
     "node": ">=18"

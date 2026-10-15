@@ -5,12 +5,12 @@ build-backend = "hatchling.build"
 [project]
 name = "pii-mcp"
 version = "1.9.1"
-description = "Pattern-based PII scrubbing for MCP servers — one-line FastMCP middleware"
+description = "Pattern-based PII redaction for MCP servers — FastMCP middleware (Tier 1)"
 readme = "README.md"
 license = "MIT"
 requires-python = ">=3.10"
 authors = [{ name = "foro.sh" }]
-keywords = ["mcp", "pii", "fastmcp", "privacy", "redaction"]
+keywords = ["mcp", "pii", "fastmcp", "privacy", "redaction", "pattern", "checksum"]
 classifiers = [
   "Development Status :: 3 - Alpha",
   "Intended Audience :: Developers",
