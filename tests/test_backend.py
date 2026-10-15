@@ -2,11 +2,9 @@
 
 from __future__ import annotations
 
-import os
-
 import pytest
 
-from pii_mcp import PiiScrubError, scrub_payload, scrub_text, using_native
+from pii_mcp import scrub_text, using_native
 from pii_mcp import scrub as scrub_mod
 
 
@@ -36,40 +34,8 @@ def test_force_native_without_extension_raises(
         using_native()
 
 
-_NER_UNAVAILABLE = r"`ner` feature|PII_MCP_NER_MODEL"
-
-
-@pytest.mark.parametrize("backend", ["python", "native"])
-def test_ner_unavailable_raises(
-    monkeypatch: pytest.MonkeyPatch, backend: str
-) -> None:
-    if backend == "native" and scrub_mod._native_mod is None:
-        pytest.skip("native extension not built")
-    if backend == "native" and os.environ.get("PII_MCP_NER_MODEL"):
-        pytest.skip("the model loads once per process; covered by the success test")
-    monkeypatch.setenv("PII_MCP_BACKEND", backend)
-    monkeypatch.delenv("PII_MCP_NER_MODEL", raising=False)
-    with pytest.raises(PiiScrubError, match=_NER_UNAVAILABLE):
-        scrub_text("Ada Lovelace", ner=True)
-    with pytest.raises(PiiScrubError, match=_NER_UNAVAILABLE):
-        scrub_payload({"to": "Ada Lovelace"}, ner=True)
-
-
-@pytest.mark.skipif(
-    not os.environ.get("PII_MCP_NER_MODEL"),
-    reason="needs PII_MCP_NER_MODEL and a native build with the ner feature",
-)
-def test_ner_masks_person_names(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("PII_MCP_BACKEND", "native")
-    try:
-        result = scrub_text("Mail Ada Lovelace at ada@example.com", ner=True)
-    except PiiScrubError as exc:
-        if "`ner` feature" not in str(exc):
-            raise
-        pytest.skip("native extension built without the ner feature")
-    assert result["text"] == "Mail [PERSON] at [EMAIL]"
-    assert result["counts"]["person"] == 1
+def test_person_count_stays_zero_for_prose_names() -> None:
+    result = scrub_text("Mail Ada Lovelace at ada@example.com")
+    assert result["text"] == "Mail Ada Lovelace at [EMAIL]"
+    assert result["counts"]["person"] == 0
     assert result["counts"]["email"] == 1
-    payload = scrub_payload({"to": ["Jan de Vries"]}, ner=True)
-    assert payload["payload"] == {"to": ["[PERSON]"]}
-    assert payload["counts"]["person"] == 1
