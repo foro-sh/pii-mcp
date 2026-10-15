@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import pytest
 
-from pii_mcp import scrub_payload, scrub_text, using_native
 from pii_mcp import scrub as scrub_mod
+from pii_mcp import scrub_payload, scrub_text, using_native
 
 
 def test_default_backend_is_python_without_native(
