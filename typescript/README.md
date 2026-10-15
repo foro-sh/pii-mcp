@@ -73,3 +73,25 @@ usingNative(); // true when the napi addon is active
 ```
 
 For a runnable Node example, see [`examples/node/`](../examples/node/).
+
+## Gate (foro user containers)
+
+User-container gates must **COPY** the vendored file — do not `npm install`
+inside the gate image:
+
+```bash
+cd typescript && npm run build:gate   # writes gate/pii-gate.mjs
+# dockerfile: COPY typescript/gate/pii-gate.mjs …/foro-pii.mjs
+```
+
+```ts
+import { scrubPayload, scrubText, PiiScrubError } from "./foro-pii.mjs";
+```
+
+For Node apps that already depend on this package (API process, not the gate
+image), `import { … } from "pii-mcp/gate"` is the same JS-only surface without
+loading napi.
+
+Contract (placeholders, caps, binary skip, fail-closed rules):
+[`docs/tier1-gate.md`](../docs/tier1-gate.md). Hybrid packaging: vendored JS for
+the gate; optional native for the API process.
