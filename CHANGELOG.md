@@ -6,6 +6,56 @@
 * **rust:** mirror the US ITIN detector in pii-core ([f0323f8](https://github.com/foro-sh/pii-mcp/commit/f0323f8f2c8f03d70e98a923e36d6e71bede04b3)), closes [#62](https://github.com/foro-sh/pii-mcp/issues/62)
 * **typescript:** mirror the US ITIN detector in the js backend ([aad506e](https://github.com/foro-sh/pii-mcp/commit/aad506ed114c8cd3f00b04388e7ea786fa6f44f9)), closes [#62](https://github.com/foro-sh/pii-mcp/issues/62)
 
+## [1.10.0](https://github.com/foro-sh/pii-mcp/compare/v1.9.1...v1.10.0) (2026-10-15)
+
+
+### ⚠ BREAKING CHANGES
+
+* **typescript:** scrubText/scrubPayload no longer accept { ner: true }.
+* **python:** scrub_text(..., ner=True) and scrub_payload(..., ner=True) are no longer accepted.
+* **rust:** the `ner` cargo feature and in-process NER path are gone. Use Presidio or another out-of-process NER for names in prose.
+
+### Features
+
+* **detectors:** add German VAT IDs across backends ([f50c3e5](https://github.com/foro-sh/pii-mcp/commit/f50c3e5b6d80d537578331653430533d2b10ec3b))
+* **detectors:** detect German VAT IDs in de pack ([298104e](https://github.com/foro-sh/pii-mcp/commit/298104ebf60e9157d5d44c3115a20c13b0ca6749))
+* **detectors:** detect UK National Insurance numbers ([#94](https://github.com/foro-sh/pii-mcp/issues/94)) ([541b375](https://github.com/foro-sh/pii-mcp/commit/541b3750efe2a3998f98a5801ce3a14f73fb2f4c)), closes [#60](https://github.com/foro-sh/pii-mcp/issues/60)
+* **detectors:** detect UK National Insurance numbers in the en pack ([8a0aa4d](https://github.com/foro-sh/pii-mcp/commit/8a0aa4da23086efcebbe05a343a788940fa69eb4)), closes [#60](https://github.com/foro-sh/pii-mcp/issues/60)
+* **detectors:** detect UK NHS numbers in the en pack ([19ec28c](https://github.com/foro-sh/pii-mcp/commit/19ec28cd7aeaaada94430a12f15de8bbfe7e76d7)), closes [#61](https://github.com/foro-sh/pii-mcp/issues/61)
+* match street addresses with a comma before the house number ([a4f5fe5](https://github.com/foro-sh/pii-mcp/commit/a4f5fe5bd2ad02080e6e59165f43b00d4ffdd8ea))
+* match street addresses with a comma before the house number ([c9cef47](https://github.com/foro-sh/pii-mcp/commit/c9cef47acfbf6e8509d0a0d8bef916480ee5b024))
+* **python:** ship py.typed metadata ([f19ce08](https://github.com/foro-sh/pii-mcp/commit/f19ce08164281953398dea69890af65b3dfab783))
+* **python:** ship py.typed metadata ([2d3eb41](https://github.com/foro-sh/pii-mcp/commit/2d3eb4190aed03a1920033997119040ad954f169))
+* **python:** skip MCP binary fields in scrub_payload ([7eb4870](https://github.com/foro-sh/pii-mcp/commit/7eb4870f510c11bbc22febed865e7a448fb2bf10))
+* **rust:** skip MCP binary fields in scrub_payload ([62d805c](https://github.com/foro-sh/pii-mcp/commit/62d805c2e8ff99755ad3a52459f5488cb76923d0))
+* skip MCP binary content fields in scrubPayload ([#104](https://github.com/foro-sh/pii-mcp/issues/104)) ([02465fe](https://github.com/foro-sh/pii-mcp/commit/02465fe56a196774f099e4d9027f189fc6961f7f)), closes [#99](https://github.com/foro-sh/pii-mcp/issues/99)
+* **typescript:** add gate module and vendored pii-gate.mjs ([c20d5ed](https://github.com/foro-sh/pii-mcp/commit/c20d5eda55db360b803a00ef610ba795ca77177c))
+* **typescript:** gate-ready Tier 1 contract for foro-pii ([#107](https://github.com/foro-sh/pii-mcp/issues/107)) ([a34a2a6](https://github.com/foro-sh/pii-mcp/commit/a34a2a674f549195e8e1a092c174e95255a8809f)), closes [#101](https://github.com/foro-sh/pii-mcp/issues/101)
+* **typescript:** skip MCP binary fields in scrubPayload ([283d718](https://github.com/foro-sh/pii-mcp/commit/283d718ca192ff313a0872c7f29a8bc81742568d))
+
+
+### Bug Fixes
+
+* drop ner from native stub; reject leftover ner option ([3d337ec](https://github.com/foro-sh/pii-mcp/commit/3d337eccd94f3291313b11d06a6dc8e767744283))
+* **eval:** count failed foro fixture cases not lines ([11216b8](https://github.com/foro-sh/pii-mcp/commit/11216b8f68c672a4d8d5e902a23c8a5b47ee46e5))
+* **eval:** loosen foro IBAN-reject fixture contract ([9dacb36](https://github.com/foro-sh/pii-mcp/commit/9dacb36a7dfe2927d1da7a4143e2f68a9465870c))
+* **python:** build packaging test wheel with pip ([f902d8d](https://github.com/foro-sh/pii-mcp/commit/f902d8dcf2944989bc30a5c291bfe60080e79a7c))
+* **rust:** drop leftover ner args from binary-skip tests ([d470e78](https://github.com/foro-sh/pii-mcp/commit/d470e78049c2386ce41de0264d2e97ec0ca268ef))
+* **rust:** drop leftover ner args from binary-skip tests ([6f0b120](https://github.com/foro-sh/pii-mcp/commit/6f0b12058d446a58616857c530b1d11f07e34370))
+* **rust:** honor Unicode word boundaries for IPs ([f9c9900](https://github.com/foro-sh/pii-mcp/commit/f9c9900748619276f7afaff716ecab0ce8907d8a))
+* **test:** assert binary skip with scrub-sensitive payloads ([f842c8f](https://github.com/foro-sh/pii-mcp/commit/f842c8f01a64f99838c25caa58bda1b6369321f3))
+* **typescript:** harden parity sample count and native probe ([8036a18](https://github.com/foro-sh/pii-mcp/commit/8036a18ea91f6d56f3363f2cf86616aa7e036357))
+* **typescript:** only reject truthy leftover ner option ([f948ca9](https://github.com/foro-sh/pii-mcp/commit/f948ca987b2552d9893f4a8c260c75e35f9fd0f2))
+* **typescript:** tighten gate docs, ner reject, binary-skip tests ([7fd884b](https://github.com/foro-sh/pii-mcp/commit/7fd884b4aa267eca33ba2ba473e269e6578733c1))
+
+
+### Miscellaneous Chores
+
+* keep the next release on the 1.x line ([375a38e](https://github.com/foro-sh/pii-mcp/commit/375a38e1abfcf4df003ab8f85c69b3d07faaa9ed))
+* **python:** drop ner= from scrub API ([52833be](https://github.com/foro-sh/pii-mcp/commit/52833beea6517d39c86fada76617608ff73ed880))
+* **rust:** remove optional candle NER backend ([51676dd](https://github.com/foro-sh/pii-mcp/commit/51676ddd3c17eb65e36516a1c11c504fc0f12ae1))
+* **typescript:** drop ner option from scrub API ([57f1aa8](https://github.com/foro-sh/pii-mcp/commit/57f1aa8c39af4be6ac5e008cb0756ed8d6cf1a34))
+
 ## [1.9.1](https://github.com/foro-sh/pii-mcp/compare/v1.9.0...v1.9.1) (2026-10-01)
 
 
