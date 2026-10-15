@@ -42,16 +42,12 @@ pub struct ScrubPayloadResult {
 }
 
 /// Mask pattern-detectable PII in a string. Returns ``{text, found, counts}``.
-///
-/// ``ner`` adds the person-name pass; it needs the ``ner`` build.
 #[napi]
 pub fn scrub_text(
     text: String,
     languages: Option<Vec<String>>,
-    ner: Option<bool>,
 ) -> Result<ScrubTextResult> {
-    let result = core_scrub_text(&text, languages.as_deref(), true, ner.unwrap_or(false))
-        .map_err(scrub_error)?;
+    let result = core_scrub_text(&text, languages.as_deref(), true).map_err(scrub_error)?;
     Ok(ScrubTextResult {
         text: result.text,
         found: result.found,
@@ -60,16 +56,12 @@ pub fn scrub_text(
 }
 
 /// Walk a JSON-like payload and mask string leaves.
-///
-/// ``ner`` adds the person-name pass; it needs the ``ner`` build.
 #[napi]
 pub fn scrub_payload(
     payload: Value,
     languages: Option<Vec<String>>,
-    ner: Option<bool>,
 ) -> Result<ScrubPayloadResult> {
-    let result = core_scrub_payload(payload, languages.as_deref(), ner.unwrap_or(false))
-        .map_err(scrub_error)?;
+    let result = core_scrub_payload(payload, languages.as_deref()).map_err(scrub_error)?;
     Ok(ScrubPayloadResult {
         payload: result.payload,
         found: result.found,

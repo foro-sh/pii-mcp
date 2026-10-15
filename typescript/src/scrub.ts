@@ -43,13 +43,18 @@ export type ScrubPayloadResult = { payload: unknown } & ScrubReport;
 
 export type ScrubOptions = {
   languages?: readonly string[] | null | undefined;
-  /** Person-name NER pass; needs the napi addon built with the ``ner`` feature. */
-  ner?: boolean | undefined;
 };
 
-const NER_UNAVAILABLE =
-  "NER needs a native build with the `ner` feature " +
-  "(npm run build:native -- --features ner); the pure TypeScript backend has none";
+const NER_REMOVED =
+  "ner was removed from pii-mcp; use Presidio or another out-of-process NER " +
+  "for person names in prose (see README Scope)";
+
+function rejectRemovedNer(options?: ScrubOptions): void {
+  const ner = (options as { ner?: boolean } | undefined)?.ner;
+  if (ner) {
+    throw new PiiScrubError(NER_REMOVED);
+  }
+}
 
 function normalizeCounts(raw: NativeCounts): PiiCounts {
   const counts = emptyPiiCounts();
@@ -136,10 +141,7 @@ export function usingNative(): boolean {
 /**
  * Mask pattern-detectable PII in a string. Returns ``{text, found, counts}``.
  *
- * ``ner: true`` adds the person-name pass (native ``ner`` build only).
- *
- * Raises ``PiiScrubError`` when input exceeds ``MAX_SCRUB_BYTES``, or when
- * ``ner`` is requested but unavailable.
+ * Raises ``PiiScrubError`` when input exceeds ``MAX_SCRUB_BYTES``.
  */
 export function scrubText(
   text: string,
@@ -148,6 +150,7 @@ export function scrubText(
   if (typeof text !== "string") {
     throw new TypeError("scrubText expects a string");
   }
+  rejectRemovedNer(options);
   if (resolveBackend() === "native") {
     const native = loadNative();
     if (native === null) {
@@ -158,7 +161,7 @@ export function scrubText(
         options?.languages === undefined || options.languages === null
           ? null
           : [...options.languages];
-      const result = native.scrubText(text, languages, options?.ner ?? false);
+      const result = native.scrubText(text, languages);
       return {
         text: result.text,
         found: result.found,
@@ -167,9 +170,6 @@ export function scrubText(
     } catch (err) {
       raiseNativeError(err);
     }
-  }
-  if (options?.ner) {
-    throw new PiiScrubError(NER_UNAVAILABLE);
   }
   return scrubTextJs(text, {
     languages: options?.languages,
@@ -180,17 +180,16 @@ export function scrubText(
 /**
  * Walk a JSON-like payload and mask string leaves. Fails closed on errors.
  *
- * ``ner: true`` adds the person-name pass (native ``ner`` build only).
- *
  * MCP binary fields (``data`` on image/audio blocks, ``blob`` on resource
  * contents) are left unchanged; see ``scrub-js``. Size is enforced on scrubbed
- * string leaves before the walk. Non-plain objects, oversize input, and an
- * unavailable ``ner`` pass raise ``PiiScrubError``.
+ * string leaves before the walk. Non-plain objects and oversize input raise
+ * ``PiiScrubError``.
  */
 export function scrubPayload(
   payload: unknown,
   options?: ScrubOptions,
 ): ScrubPayloadResult {
+  rejectRemovedNer(options);
   if (resolveBackend() === "native") {
     const native = loadNative();
     if (native === null) {
@@ -202,7 +201,7 @@ export function scrubPayload(
           ? null
           : [...options.languages];
       const plain = assertPlainJson(payload);
-      const result = native.scrubPayload(plain, languages, options?.ner ?? false);
+      const result = native.scrubPayload(plain, languages);
       return {
         payload: result.payload,
         found: result.found,
@@ -211,9 +210,6 @@ export function scrubPayload(
     } catch (err) {
       raiseNativeError(err);
     }
-  }
-  if (options?.ner) {
-    throw new PiiScrubError(NER_UNAVAILABLE);
   }
   return scrubPayloadJs(payload, { languages: options?.languages });
 }

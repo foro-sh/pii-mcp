@@ -1,8 +1,9 @@
 """Pattern-based PII scrubbing for MCP tool/resource/prompt results.
 
 Sync, in-process, regex + checksum detectors, including street + house
-number addresses. Person names need ``ner=True`` and the native extension
-built with the optional ``ner`` feature.
+number addresses. ``person`` counts stay 0 until key-aware masking (issue
+#52); in-process NER is out of scope — use Presidio or another out-of-process
+NER for names in prose.
 """
 
 from __future__ import annotations

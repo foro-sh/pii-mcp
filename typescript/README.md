@@ -36,26 +36,11 @@ When the napi addon is loadable, `scrubText` / `scrubPayload` use it.
 Force the JS path with `PII_MCP_BACKEND=js`. Require native with
 `PII_MCP_BACKEND=native`.
 
-#### Person names (optional NER)
-
-Build the addon with the `ner` feature and point `PII_MCP_NER_MODEL` at the
-model directory (download command in the
-[main README](../README.md#person-names-optional-ner)):
-
-```bash
-npm run build:native -- --features ner
-```
-
-```ts
-scrubText("Mail Ada Lovelace at ada@example.com", { ner: true });
-// { text: "Mail [PERSON] at [EMAIL]", ... }
-```
-
-`ner: true` throws `PiiScrubError` on the pure TypeScript backend, on an addon
-built without `ner`, and when the model directory is missing or invalid.
+Person names in prose are out of band (Presidio or another NER sidecar). The
+`person` count stays `0` until key-aware masking lands (issue #52). See the
+[main README](../README.md#scope).
 
 #### Performance (TypeScript vs Rust release)
-
 Medians from `scripts/bench_backends.mjs` on macOS arm64 / Node 22
 (release napi build; debug builds are not representative). V8’s regex engine
 is already fast, so napi wins are modest on larger/mixed inputs; tiny calls can
