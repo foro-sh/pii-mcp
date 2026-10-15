@@ -983,6 +983,89 @@ describe("scrubPayload", () => {
     }
     expect(() => scrubPayload(deep)).toThrow(/nests past/);
   });
+
+  const IMAGE_B64 =
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==";
+  const AUDIO_B64 =
+    "UklGRiQAAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQAAAAA=";
+  const BLOB_B64 =
+    "AAAAHGZ0eXBpc29tAAACAGlzb21pc28yYXZjMW1wNDEAAAAIZnJlZQAA";
+
+  it("skips image and audio data but scrubs sibling text", () => {
+    const result = scrubPayload({
+      content: [
+        {
+          type: "image",
+          mimeType: "image/png",
+          data: IMAGE_B64,
+          alt: "mail ada@example.com",
+        },
+        {
+          type: "audio",
+          mimeType: "audio/wav",
+          data: AUDIO_B64,
+          transcript: "iban NL91ABNA0417164300",
+        },
+        { type: "text", text: "reach me at +31 6 12345678" },
+      ],
+    });
+    expect(result.payload).toEqual({
+      content: [
+        {
+          type: "image",
+          mimeType: "image/png",
+          data: IMAGE_B64,
+          alt: "mail [EMAIL]",
+        },
+        {
+          type: "audio",
+          mimeType: "audio/wav",
+          data: AUDIO_B64,
+          transcript: "iban [IBAN]",
+        },
+        { type: "text", text: "reach me at [PHONE]" },
+      ],
+    });
+    expect(result.counts.email).toBe(1);
+    expect(result.counts.iban).toBe(1);
+    expect(result.counts.phone).toBe(1);
+  });
+
+  it("skips resource blob but scrubs sibling text", () => {
+    const result = scrubPayload({
+      contents: [
+        {
+          uri: "file:///secret.bin",
+          mimeType: "application/octet-stream",
+          blob: BLOB_B64,
+          name: "contact ada@example.com",
+        },
+      ],
+    });
+    expect(result.payload).toEqual({
+      contents: [
+        {
+          uri: "file:///secret.bin",
+          mimeType: "application/octet-stream",
+          blob: BLOB_B64,
+          name: "contact [EMAIL]",
+        },
+      ],
+    });
+    expect(result.counts.email).toBe(1);
+  });
+
+  it("scrubs data when type is not image or audio", () => {
+    const result = scrubPayload({ data: "mail ada@example.com", type: "text" });
+    expect(result.payload).toEqual({ data: "mail [EMAIL]", type: "text" });
+    expect(result.counts.email).toBe(1);
+  });
+
+  it("scrubs blob when uri is absent", () => {
+    const result = scrubPayload({ blob: "mail ada@example.com" });
+    expect(result.payload).toEqual({ blob: "mail [EMAIL]" });
+    expect(result.counts.email).toBe(1);
+  });
 });
 
 describe("native backend", () => {
