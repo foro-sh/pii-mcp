@@ -102,3 +102,27 @@ commit	loss	leak_rate	fp_rate	overreach_rate	status	description
    TypeScript test suite.
 4. Squash or regroup the commits into atomic `fix:` commits per
    `AGENTS.md`, then open the PR.
+
+## foro Tier 1 adoption gate
+
+pii-mcp is public; `foro-sh/platform` is private. Keep a sibling checkout at
+`../platform` (or set `PII_MCP_PLATFORM`). Vendored fixtures in
+`eval/fixtures/foro_tier1.json` run in public CI without that checkout.
+After platform Tier 1 tests change, refresh metadata from the sibling tree:
+
+```bash
+python eval/sync_foro_tier1.py
+```
+
+Before claiming readiness to replace `foro-pii.mts`:
+
+```bash
+python eval/foro_tier1.py
+```
+
+Exit 0 and a `GO` line means every case with `expect_text` still matches
+and every listed `expect_counts` key holds (positives mask; `negative`
+cases stay unmasked on those types). Strict improvements over foro-pii
+are recorded as separate `positive` cases (e.g. `ip-not-phone`). The
+same JSON drives `tests/test_foro_tier1.py` and
+`typescript/tests/foro-tier1.test.ts` in CI.
