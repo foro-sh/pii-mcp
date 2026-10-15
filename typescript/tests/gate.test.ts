@@ -51,15 +51,47 @@ describe("gate module (src)", () => {
     });
   }
 
-  it("skips MCP image data while scrubbing siblings", () => {
-    const data = "AAAA4111111111111111BBBBada@example.comCCCC";
+  it("skips MCP image/audio data and resource blobs; counts ignore them", () => {
+    const imageData = "AAAA4111111111111111BBBBada@example.comCCCC";
+    const audioData = "ZZZZ NL91ABNA0417164300 YYYY";
+    const blobData = "WWWW +31 6 12345678 XXXX";
     const result = scrubPayload({
-      content: [{ type: "image", data, alt: "bob@example.com" }],
+      content: [
+        { type: "image", data: imageData, alt: "bob@example.com" },
+        {
+          type: "audio",
+          data: audioData,
+          transcript: "card 4111111111111111",
+        },
+      ],
+      contents: [
+        {
+          uri: "file:///secret.bin",
+          blob: blobData,
+          name: "contact ada@example.com",
+        },
+      ],
     });
-    const block = (result.payload as { content: Array<Record<string, string>> })
-      .content[0]!;
-    expect(block.data).toBe(data);
-    expect(block.alt).toBe("[EMAIL]");
+    const payload = result.payload as {
+      content: Array<Record<string, string>>;
+      contents: Array<Record<string, string>>;
+    };
+    expect(payload.content[0]!.data).toBe(imageData);
+    expect(payload.content[0]!.alt).toBe("[EMAIL]");
+    expect(payload.content[1]!.data).toBe(audioData);
+    expect(payload.content[1]!.transcript).toBe("card [CREDIT_CARD]");
+    expect(payload.contents[0]!.blob).toBe(blobData);
+    expect(payload.contents[0]!.name).toBe("contact [EMAIL]");
+    expect(result.counts.email).toBe(2);
+    expect(result.counts.credit_card).toBe(1);
+    expect(result.counts.iban).toBe(0);
+    expect(result.counts.phone).toBe(0);
+  });
+
+  it("rejects leftover ner option", () => {
+    expect(() =>
+      scrubText("hi", { ner: true } as { languages?: never }),
+    ).toThrow(PiiScrubError);
   });
 
   it("throws PiiScrubError on non-plain objects", () => {

@@ -34,6 +34,17 @@ export type GateScrubOptions = {
   languages?: readonly string[] | null | undefined;
 };
 
+const NER_REMOVED =
+  "ner was removed from pii-mcp; use Presidio or another out-of-process NER " +
+  "for person names in prose (see README Scope)";
+
+function rejectRemovedNer(options?: GateScrubOptions): void {
+  const ner = (options as { ner?: boolean } | undefined)?.ner;
+  if (ner) {
+    throw new PiiScrubError(NER_REMOVED);
+  }
+}
+
 /**
  * Mask pattern-detectable PII in a string. Returns ``{text, found, counts}``.
  *
@@ -43,6 +54,7 @@ export function scrubText(
   text: string,
   options: GateScrubOptions = {},
 ): ScrubTextResult {
+  rejectRemovedNer(options);
   return scrubTextJs(text, {
     languages: options.languages,
     checkSize: true,
@@ -60,6 +72,7 @@ export function scrubPayload(
   payload: unknown,
   options: GateScrubOptions = {},
 ): ScrubPayloadResult {
+  rejectRemovedNer(options);
   return scrubPayloadJs(payload, { languages: options.languages });
 }
 

@@ -1220,13 +1220,22 @@ function scrubPayloadJs(payload, options = {}) {
 }
 
 // src/gate.ts
+var NER_REMOVED = "ner was removed from pii-mcp; use Presidio or another out-of-process NER for person names in prose (see README Scope)";
+function rejectRemovedNer(options) {
+  const ner = options?.ner;
+  if (ner) {
+    throw new PiiScrubError(NER_REMOVED);
+  }
+}
 function scrubText(text, options = {}) {
+  rejectRemovedNer(options);
   return scrubTextJs(text, {
     languages: options.languages,
     checkSize: true
   });
 }
 function scrubPayload(payload, options = {}) {
+  rejectRemovedNer(options);
   return scrubPayloadJs(payload, { languages: options.languages });
 }
 export {

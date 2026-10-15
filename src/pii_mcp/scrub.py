@@ -363,8 +363,8 @@ def scrub_payload(
 
     MCP binary fields (``data`` on image/audio blocks, ``blob`` on resource
     contents) are left unchanged; see the module docstring. Size is enforced
-    on scrubbed string leaves before the walk. Non-plain objects and oversize
-    input raise ``PiiScrubError``.
+    on scrubbed string leaves before the walk. Non-plain objects and
+    oversize input raise ``PiiScrubError``.
     """
     if _resolve_backend() == "native":
         assert _native_mod is not None

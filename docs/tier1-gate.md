@@ -15,8 +15,8 @@ Platform follow-up: [foro-sh/platform#1154](https://github.com/foro-sh/platform/
 
 | Path | Role |
 |------|------|
-| `typescript/gate/pii-gate.mjs` | Generated single-file ESM (zero npm packages; Node built-ins only). COPY into the image next to the proxy. |
-| `typescript/src/gate.ts` | Source entry; also published as `pii-mcp/gate` for Node apps that install the package. |
+| `typescript/gate/pii-gate.mjs` | Generated single-file ESM (zero npm packages; Node built-ins only). **This** is what the gate image COPYs — not an `npm install`. |
+| `typescript/src/gate.ts` | Source entry; also published as `pii-mcp/gate` for Node apps that already install the package (API process). |
 
 Regenerate after detector changes:
 
