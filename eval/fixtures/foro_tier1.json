@@ -1,5 +1,5 @@
 {
-  "source": "foro-sh/platform packages/types/pii.test.ts (Tier 1 scrubText cases)",
+  "source": "foro-sh/platform packages/types/pii.test.ts Tier 1 scrubText cases; clean prose also from infra/templates/tests/pii-scrub.test.mts",
   "purpose": "Adoption gate: pii-mcp must match or strictly improve foro-pii Tier 1 masking on these inputs. CI fails on any regression.",
   "default_languages": ["en", "nl"],
   "cases": [
@@ -96,11 +96,10 @@
     },
     {
       "id": "iban-spaced-bad-checksum",
-      "kind": "negative",
-      "note": "foro-pii only asserts iban=0; trailing digits may still match phone (documented over-redaction).",
+      "kind": "iban_reject",
+      "note": "foro-pii only asserts iban=0. Trailing digits may still match phone; do not pin that over-redaction.",
       "input": "ref NL91 ABNA 0417 1643 01 noted",
-      "expect_text": "ref NL91 ABNA [PHONE] noted",
-      "expect_counts": { "iban": 0, "phone": 1 }
+      "expect_counts": { "iban": 0 }
     },
     {
       "id": "card-compact-16",
@@ -208,12 +207,20 @@
       "expect_counts": { "phone": 0 }
     },
     {
-      "id": "phone-not-ip",
+      "id": "ip-not-phone",
       "kind": "positive",
-      "note": "Strict improvement over foro-pii: foro only required phone=0; pii-mcp also masks the IP.",
+      "note": "Strict improvement over foro-pii: foro only required phone=0 on this IP; pii-mcp also masks it as [IP].",
       "input": "host at 192.168.0.1 responds",
       "expect_text": "host at [IP] responds",
       "expect_counts": { "phone": 0, "ip": 1 }
+    },
+    {
+      "id": "clean-tool-result-prose",
+      "kind": "negative",
+      "note": "Clean sample shape from platform infra/templates/tests/pii-scrub.test.mts (pii_redactions: 0 path).",
+      "input": "The tools/list result has no personal data in this fixture.",
+      "expect_text": "The tools/list result has no personal data in this fixture.",
+      "expect_counts": { "email": 0, "iban": 0, "credit_card": 0, "bsn": 0, "phone": 0 }
     },
     {
       "id": "multi-email-card",

@@ -16,7 +16,7 @@ const pack = JSON.parse(
   cases: Array<{
     id: string;
     input: string;
-    expect_text: string;
+    expect_text?: string;
     expect_counts: Record<string, number>;
   }>;
 };
@@ -27,7 +27,9 @@ describe("foro Tier 1 fixtures", () => {
       const result = scrubText(case_.input, {
         languages: pack.default_languages,
       });
-      expect(result.text).toBe(case_.expect_text);
+      if (case_.expect_text !== undefined) {
+        expect(result.text).toBe(case_.expect_text);
+      }
       for (const [key, want] of Object.entries(case_.expect_counts)) {
         expect(result.counts[key as keyof typeof result.counts]).toBe(want);
       }

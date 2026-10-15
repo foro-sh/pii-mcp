@@ -18,6 +18,7 @@ _LANGS = tuple(_PACK["default_languages"])
 @pytest.mark.parametrize("case", _CASES, ids=[c["id"] for c in _CASES])
 def test_foro_tier1_case(case: dict) -> None:
     result = scrub_text(case["input"], languages=_LANGS)
-    assert result["text"] == case["expect_text"]
+    if "expect_text" in case:
+        assert result["text"] == case["expect_text"]
     for key, want in case["expect_counts"].items():
         assert result["counts"][key] == want, key

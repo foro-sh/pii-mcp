@@ -112,7 +112,9 @@ pack (ported from platform `pii.test.ts`):
 python eval/foro_tier1.py
 ```
 
-Exit 0 and a `GO` line means every listed positive still masks and every
-listed clean sample is unchanged (or strictly improved, e.g. IP masking).
-The same JSON drives `tests/test_foro_tier1.py` and
+Exit 0 and a `GO` line means every case with `expect_text` still matches
+and every listed `expect_counts` key holds (positives mask; `negative`
+cases stay unmasked on those types). Strict improvements over foro-pii
+are recorded as separate `positive` cases (e.g. `ip-not-phone`). The
+same JSON drives `tests/test_foro_tier1.py` and
 `typescript/tests/foro-tier1.test.ts` in CI.

@@ -40,9 +40,10 @@ def main() -> None:
     start = time.perf_counter()
     for case in cases:
         result = scrub_text(case["input"], languages=languages)
-        if result["text"] != case["expect_text"]:
+        expect_text = case.get("expect_text")
+        if expect_text is not None and result["text"] != expect_text:
             failures.append(
-                f"{case['id']}: text {result['text']!r} != {case['expect_text']!r}"
+                f"{case['id']}: text {result['text']!r} != {expect_text!r}"
             )
             continue
         for key, want in case["expect_counts"].items():
