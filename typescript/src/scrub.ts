@@ -45,6 +45,20 @@ export type ScrubOptions = {
   languages?: readonly string[] | null | undefined;
 };
 
+const NER_REMOVED =
+  "ner was removed from pii-mcp; use Presidio or another out-of-process NER " +
+  "for person names in prose (see README Scope)";
+
+function rejectRemovedNer(options?: ScrubOptions): void {
+  if (
+    options !== undefined &&
+    options !== null &&
+    Object.prototype.hasOwnProperty.call(options, "ner")
+  ) {
+    throw new PiiScrubError(NER_REMOVED);
+  }
+}
+
 function normalizeCounts(raw: NativeCounts): PiiCounts {
   const counts = emptyPiiCounts();
   for (const t of PII_TYPES) {
@@ -139,6 +153,7 @@ export function scrubText(
   if (typeof text !== "string") {
     throw new TypeError("scrubText expects a string");
   }
+  rejectRemovedNer(options);
   if (resolveBackend() === "native") {
     const native = loadNative();
     if (native === null) {
@@ -175,6 +190,7 @@ export function scrubPayload(
   payload: unknown,
   options?: ScrubOptions,
 ): ScrubPayloadResult {
+  rejectRemovedNer(options);
   if (resolveBackend() === "native") {
     const native = loadNative();
     if (native === null) {

@@ -1029,6 +1029,16 @@ describe("native backend", () => {
     expect(result.counts.email).toBe(1);
   });
 
+  it("rejects removed ner option with a migration error", () => {
+    const reason = /ner was removed/;
+    expect(() =>
+      scrubText("Ada Lovelace", { ner: true } as never),
+    ).toThrow(reason);
+    expect(() =>
+      scrubPayload({ to: "Ada Lovelace" }, { ner: true } as never),
+    ).toThrow(reason);
+  });
+
   it("forces js backend even when native is present", () => {
     process.env.PII_MCP_BACKEND = "js";
     resetNativeCache();

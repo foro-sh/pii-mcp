@@ -11,12 +11,10 @@ def scrub_text(
     text: str,
     *,
     languages: Sequence[str] | None = ...,
-    ner: bool = ...,
 ) -> ScrubTextResult: ...
 
 def scrub_payload(
     payload: Any,
     *,
     languages: Sequence[str] | None = ...,
-    ner: bool = ...,
 ) -> ScrubPayloadResult: ...
