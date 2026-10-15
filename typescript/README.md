@@ -36,9 +36,9 @@ When the napi addon is loadable, `scrubText` / `scrubPayload` use it.
 Force the JS path with `PII_MCP_BACKEND=js`. Require native with
 `PII_MCP_BACKEND=native`.
 
-Person names in prose are out of band (Presidio or another NER sidecar). The
-`person` count stays `0` until key-aware masking lands (issue #52). See the
-[main README](../README.md#scope).
+`person` is pattern / key-aware when available; prose NER is out of band
+(Presidio sidecar). See
+[Using with foro / Presidio](../README.md#using-with-foro--presidio).
 
 #### Performance (TypeScript vs Rust release)
 Medians from `scripts/bench_backends.mjs` on macOS arm64 / Node 22

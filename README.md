@@ -69,12 +69,21 @@ reach. Aligned with
 where that layer applies. Free-text health data (allergies), photos/audio/
 video, and unstructured klant-/personeelsnummers stay out of scope.
 
-Person names in prose are out of band: this package does not ship an
-in-process NER model. Consumers that need named-entity PERSON (and place
-names in free text) on API paths — for example foro — should run Presidio
-or another NER sidecar. Decimal/DMS `location` coordinates stay in this
-package. The `person` count key stays in results as `0` until key-aware
-masking lands (issue #52).
+`person` is pattern / key-aware when available (issue #52); until then the
+count stays `0`. Prose name NER is out of band — this package does not ship
+an in-process NER model. Decimal/DMS `location` coordinates stay here;
+free-text place names do not.
+
+### Using with foro / Presidio
+
+| Layer | Owner |
+| ----- | ----- |
+| Pattern / checksum / language packs / MCP middleware | this package (Tier 1) |
+| PERSON / LOCATION NER on API paths | Presidio or another NER sidecar (Tier 2) |
+
+Live MCP gates in user containers should run Tier 1 only (no model). On
+platforms such as foro, keep NER in one Presidio sidecar on API paths — do
+not stack a second in-process NER beside it.
 
 ### AP coverage (pattern layer)
 
@@ -90,7 +99,7 @@ masking lands (issue #52).
 | Online / device IDs                           | `mac`, `imei`                          | IMEI: grouped forms + Luhn      |
 | Adres                                         | `address`                              | Street + number; NL/UK postcode |
 | Kenteken                                      | `license_plate`                        | nl pack                         |
-| Naam                                          | `person`                               | 0 until key-aware (#52); NER OOB |
+| Naam                                          | `person`                               | Pattern/key-aware when available (#52); prose NER out of band |
 | Pasfoto, allergieën, koopgedrag, camera       |                                        | Media / free text               |
 
 ## Packages
