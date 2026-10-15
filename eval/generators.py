@@ -432,25 +432,8 @@ def street_en(r: R) -> str:
     return f"{number}{_number_gap(r)}{name} {kind}"
 
 
-_NAMES = {
-    "en": (["Ada", "John", "Emily", "Michael", "Sarah", "James"], ["Lovelace", "Smith", "Johnson", "Brown", "Taylor", "Wilson"]),
-    "nl": (["Jan", "Pieter", "Sanne", "Emma", "Daan", "Lotte"], ["de Vries", "Jansen", "van den Berg", "Bakker", "Visser", "de Jong"]),
-    "de": (["Anna", "Lukas", "Sophie", "Felix", "Marie", "Jonas"], ["Müller", "Schmidt", "Schneider", "Fischer", "Weber", "Becker"]),
-}
 
-
-def _person(lang: str) -> Callable[[R], str]:
-    first, last = _NAMES[lang]
-
-    def gen(r: R) -> str:
-        return f"{r.choice(first)} {r.choice(last)}"
-
-    gen.__name__ = f"person_{lang}"
-    return gen
-
-
-# (category, generator, languages the detector needs). ``person`` needs the
-# NER pass and is only scored by ``score.py --ner``.
+# (category, generator, languages the detector needs).
 PII: list[tuple[str, Callable[[R], str], tuple[str, ...]]] = [
     ("email", email, ()),
     ("iban", iban, ()),
@@ -478,9 +461,6 @@ PII: list[tuple[str, Callable[[R], str], tuple[str, ...]]] = [
     ("address", street_en, ("en",)),
     ("address", street_de, ("de",)),
     ("license_plate", license_plate_nl, ("nl",)),
-    ("person", _person("en"), ()),
-    ("person", _person("nl"), ()),
-    ("person", _person("de"), ()),
 ]
 
 

@@ -19,11 +19,8 @@ Artifacts per release:
 | `py3-none-any` wheel + sdist | hatchling (`uv build`) | Pure Python fallback |
 
 Pip prefers a matching platform wheel; otherwise it installs the pure wheel or
-sdist (no Rust toolchain required).
-
-Published wheels are built without the `ner` cargo feature, so they carry no
-candle or tokenizer code. NER builds are not published; users build them from
-source (see the README).
+sdist (no Rust toolchain required). Published artifacts are pattern Tier 1
+only; in-process NER is not part of this package.
 
 ## What happens on merge to main
 
