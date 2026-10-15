@@ -84,3 +84,93 @@ def test_languages_de_masks_tax_id() -> None:
     result = scrub_payload({"id": "36574261809"}, languages=["de"])
     assert result["payload"] == {"id": "[TAX_ID]"}
     assert result["counts"]["tax_id"] == 1
+
+
+# Base64 with digit runs that would false-positive as phone/BSN if scrubbed.
+_IMAGE_B64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="
+_AUDIO_B64 = "UklGRiQAAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQAAAAA="
+_BLOB_B64 = "AAAAHGZ0eXBpc29tAAACAGlzb21pc28yYXZjMW1wNDEAAAAIZnJlZQAA"
+
+
+def test_skips_image_and_audio_data_scrubs_siblings() -> None:
+    """MCP image/audio ``data`` is left as-is; sibling text still scrubbed."""
+    result = scrub_payload(
+        {
+            "content": [
+                {
+                    "type": "image",
+                    "mimeType": "image/png",
+                    "data": _IMAGE_B64,
+                    "alt": "mail ada@example.com",
+                },
+                {
+                    "type": "audio",
+                    "mimeType": "audio/wav",
+                    "data": _AUDIO_B64,
+                    "transcript": "iban NL91ABNA0417164300",
+                },
+                {"type": "text", "text": "reach me at +31 6 12345678"},
+            ]
+        }
+    )
+    assert result["payload"] == {
+        "content": [
+            {
+                "type": "image",
+                "mimeType": "image/png",
+                "data": _IMAGE_B64,
+                "alt": "mail [EMAIL]",
+            },
+            {
+                "type": "audio",
+                "mimeType": "audio/wav",
+                "data": _AUDIO_B64,
+                "transcript": "iban [IBAN]",
+            },
+            {"type": "text", "text": "reach me at [PHONE]"},
+        ]
+    }
+    assert result["counts"]["email"] == 1
+    assert result["counts"]["iban"] == 1
+    assert result["counts"]["phone"] == 1
+
+
+def test_skips_resource_blob_scrubs_siblings() -> None:
+    """Resource ``blob`` with string ``uri`` is left as-is; siblings scrubbed."""
+    result = scrub_payload(
+        {
+            "contents": [
+                {
+                    "uri": "file:///secret.bin",
+                    "mimeType": "application/octet-stream",
+                    "blob": _BLOB_B64,
+                    "name": "contact ada@example.com",
+                }
+            ]
+        }
+    )
+    assert result["payload"] == {
+        "contents": [
+            {
+                "uri": "file:///secret.bin",
+                "mimeType": "application/octet-stream",
+                "blob": _BLOB_B64,
+                "name": "contact [EMAIL]",
+            }
+        ]
+    }
+    assert result["counts"]["email"] == 1
+
+
+def test_data_without_media_type_is_scrubbed() -> None:
+    """A ``data`` key is only skipped for image/audio shapes, not by key alone."""
+    result = scrub_payload({"data": "mail ada@example.com", "type": "text"})
+    assert result["payload"] == {"data": "mail [EMAIL]", "type": "text"}
+    assert result["counts"]["email"] == 1
+
+
+def test_blob_without_uri_is_scrubbed() -> None:
+    """``blob`` alone (no string ``uri``) is scrubbed like any other leaf."""
+    result = scrub_payload({"blob": "mail ada@example.com"})
+    assert result["payload"] == {"blob": "mail [EMAIL]"}
+    assert result["counts"]["email"] == 1
