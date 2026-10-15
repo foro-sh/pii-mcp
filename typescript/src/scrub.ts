@@ -50,11 +50,8 @@ const NER_REMOVED =
   "for person names in prose (see README Scope)";
 
 function rejectRemovedNer(options?: ScrubOptions): void {
-  if (
-    options !== undefined &&
-    options !== null &&
-    Object.prototype.hasOwnProperty.call(options, "ner")
-  ) {
+  const ner = (options as { ner?: boolean } | undefined)?.ner;
+  if (ner) {
     throw new PiiScrubError(NER_REMOVED);
   }
 }

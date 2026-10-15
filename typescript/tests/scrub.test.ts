@@ -1037,6 +1037,9 @@ describe("native backend", () => {
     expect(() =>
       scrubPayload({ to: "Ada Lovelace" }, { ner: true } as never),
     ).toThrow(reason);
+    expect(scrubText("Ada Lovelace", { ner: false } as never).text).toBe(
+      "Ada Lovelace",
+    );
   });
 
   it("forces js backend even when native is present", () => {

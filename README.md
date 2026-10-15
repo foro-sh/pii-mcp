@@ -70,9 +70,11 @@ where that layer applies. Free-text health data (allergies), photos/audio/
 video, and unstructured klant-/personeelsnummers stay out of scope.
 
 Person names in prose are out of band: this package does not ship an
-in-process NER model. Consumers that need PERSON/LOCATION on API paths (for
-example foro) should run Presidio or another NER sidecar. The `person` count
-key stays in results as `0` until key-aware masking lands (issue #52).
+in-process NER model. Consumers that need named-entity PERSON (and place
+names in free text) on API paths — for example foro — should run Presidio
+or another NER sidecar. Decimal/DMS `location` coordinates stay in this
+package. The `person` count key stays in results as `0` until key-aware
+masking lands (issue #52).
 
 ### AP coverage (pattern layer)
 
