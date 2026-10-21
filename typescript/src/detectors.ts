@@ -107,9 +107,31 @@
  *   hex-glue guard). All phone forms also accept nbsp, thin / narrow nbsp, and
  *   unicode dashes between groups.
  * - BSN spaced/dotted/hyphenated ``111-222-333`` groups.
+ * - Key-aware masking (``person``, ``address``; issue #52): a value that sits
+ *   right after a recognized field name is masked whole, with no format
+ *   check — most names and address parts in tool output
+ *   (``"last_name": "Grabbe"``, ``Nachname: Eckerlin``, ``PLZ: 33613``) give
+ *   pattern detectors nothing else to key off. Runs on ``key: value``,
+ *   ``key=value`` and ``"key": "value"`` on one line; a key normalizes case,
+ *   ``_``/``-``/space separators, and a trailing numeric suffix
+ *   (``LastName1``, ``lastName2``) before an exact match against the EN/NL/DE
+ *   field-name list (``name``/``vorname``/``naam``,
+ *   ``street``/``straße``/``straat``, ``postcode``/``plz``/``zip``,
+ *   ``city``/``stadt``/``plaats``, …) — a compound key such as
+ *   ``city_count`` or ``street_view`` normalizes to something else entirely
+ *   and is left alone. The value runs to the matching closing quote or,
+ *   unquoted, to the end of the line (trailing sentence punctuation stays
+ *   outside the mask; a comma does not end it, so
+ *   ``Straat: Kerkstraat, 12`` stays one value — see ``kvValueSpan``).
+ *   ``name`` and ``state`` are ambiguous (``name: "build-cache"``,
+ *   ``state: "active"``) and are gated: the value must look like one or more
+ *   capitalized words (Dutch/German particles — ``van``, ``der``, ``von``,
+ *   … — stay lowercase). ``scrubPayloadJs`` applies the same dictionary
+ *   structurally, by object key, in ``scrubWalk``.
  *
- * ``UNIVERSAL_DETECTORS`` (email, IBAN, credit card, BIC, MAC, IMEI, IP, location)
- * always run; locale detectors are selected by ``languages=`` in the scrub layer.
+ * ``UNIVERSAL_DETECTORS`` (key-aware person/address, email, IBAN, credit
+ * card, BIC, MAC, IMEI, IP, location) always run; locale detectors are
+ * selected by ``languages=`` in the scrub layer.
  */
 
 import { isIP } from "node:net";
@@ -129,6 +151,7 @@ export type PiiCategory =
   | "vat_id"
   | "passport"
   | "phone"
+  | "person"
   | "address"
   | "license_plate";
 
@@ -1447,7 +1470,240 @@ export const nlLicensePlateDetector: Detector = {
   scrub: scrubNlLicensePlate,
 };
 
+// --- Key-aware masking (person / address; issue #52) ------------------------
+//
+// EN/NL/DE field names collected from tool-output samples where pattern
+// detectors have nothing to key off (a lone ``"Grabbe"`` or ``"33613"``).
+// Canonical keys use a space to mark a word break; ``keyAlternation`` turns
+// that into a separator class so ``first_name`` / ``First Name`` /
+// ``firstname`` all match the same entry.
+const PERSON_KEYS: readonly string[] = [
+  "name",
+  "first_name",
+  "given name",
+  "last_name",
+  "vorname",
+  "nachname",
+  "voornaam",
+  "achternaam",
+  "naam",
+];
+const ADDRESS_KEYS: readonly string[] = [
+  "street",
+  "straße",
+  "strasse",
+  "straat",
+  "straatnaam",
+  "address",
+  "adresse",
+  "adres",
+  "building number",
+  "huisnummer",
+  "gebäude",
+  "gebaeude",
+  "postcode",
+  "postal code",
+  "postleitzahl",
+  "plz",
+  "zip",
+  "city",
+  "stadt",
+  "stad",
+  "plaats",
+  "ort",
+  "state",
+  "bundesland",
+  "provincie",
+];
+// Bare ``name`` doubles as a resource/build-artifact field (``name: "build-
+// cache"``) and ``state`` as a job/resource status (``state: "active"``), far
+// more often than either means a person or a US state in tool output; every
+// other key above is specific enough to skip the value gate.
+const AMBIGUOUS_KEYS = new Set(["name", "state"]);
+
+function splitKeyWords(key: string): string[] {
+  return key.split(/[\s_-]+/).filter((word) => word.length > 0);
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/**
+ * Case/separator-insensitive key id: drop ``_``/``-``/space separators,
+ * lowercase, then drop a trailing numeric suffix (``LastName1`` ->
+ * ``lastname``). Used for an exact match so a compound key (``city_count``,
+ * ``street_view``, ``username``) never collides with a bare one.
+ */
+export function normalizeKey(key: string): string {
+  const compact = key.replace(/[\s_-]+/g, "").toLowerCase();
+  return compact.replace(/\d+$/, "");
+}
+
+const PERSON_KEY_IDS = new Set(PERSON_KEYS.map(normalizeKey));
+const ADDRESS_KEY_IDS = new Set(ADDRESS_KEYS.map(normalizeKey));
+
+/**
+ * ``[category, ambiguous]`` for a recognized person/address field name,
+ * ``null`` otherwise. ``ambiguous`` marks a key (``name``, ``state``) whose
+ * value needs ``looksLikeName`` before it is masked.
+ */
+export function keyFieldCategory(key: string): ["person" | "address", boolean] | null {
+  const keyId = normalizeKey(key);
+  if (PERSON_KEY_IDS.has(keyId)) {
+    return ["person", AMBIGUOUS_KEYS.has(keyId)];
+  }
+  if (ADDRESS_KEY_IDS.has(keyId)) {
+    return ["address", AMBIGUOUS_KEYS.has(keyId)];
+  }
+  return null;
+}
+
+const NAME_PARTICLES = new Set([
+  "van", "der", "de", "den", "het", "ten", "ter", "von", "zu", "el", "al", "bin", "da",
+]);
+
+/**
+ * True when every word is a capitalized name/place part or a lowercase name
+ * particle (``Jan van Dijk``), and at least one word is capitalized. Gates
+ * the ambiguous ``name`` and ``state`` keys: ``build-cache``, ``true`` and
+ * ``active`` fail this; ``Grabbe``, ``O'Brien`` and ``California`` pass.
+ */
+export function looksLikeName(value: string): boolean {
+  const words = value.split(/\s+/).filter((word) => word.length > 0);
+  if (words.length === 0) {
+    return false;
+  }
+  let foundCapitalized = false;
+  for (const word of words) {
+    const core = word.replace(/^[.,;:'"]+|[.,;:'"]+$/g, "");
+    if (core.length === 0) {
+      continue;
+    }
+    if (NAME_PARTICLES.has(core.toLowerCase())) {
+      continue;
+    }
+    const letters = core.replace(/[-']/g, "");
+    const first = core.charAt(0);
+    if (first.toUpperCase() !== first || !/^\p{L}+$/u.test(letters)) {
+      return false;
+    }
+    foundCapitalized = true;
+  }
+  return foundCapitalized;
+}
+
+function keyAlternation(keys: readonly string[]): string {
+  return keys
+    .map((key) => splitKeyWords(key).map(escapeRegExp).join("[\\s_-]*"))
+    .join("|");
+}
+
+const PERSON_KEY_RE = new RegExp(
+  `\\b(?<key>${keyAlternation(PERSON_KEYS)})\\d*"?[ \\t]*[:=][ \\t]*`,
+  "gi",
+);
+const ADDRESS_KEY_RE = new RegExp(
+  `\\b(?<key>${keyAlternation(ADDRESS_KEYS)})\\d*"?[ \\t]*[:=][ \\t]*`,
+  "gi",
+);
+
+/**
+ * Value span right after a matched ``key:``/``key=``: to the matching
+ * closing quote, or, unquoted, up to the end of the line (trailing
+ * spaces/tabs and one run of trailing sentence punctuation trimmed, so
+ * ``adres: Hoofdstraat 12.`` keeps the ``.`` outside the mask). A comma does
+ * not end an unquoted value — ``Straat: Kerkstraat, 12`` must stay one value
+ * for the existing street + house-number masking to keep seeing it whole —
+ * so a single line holding more than one bare ``key: value`` pair
+ * (``a: 1, b: 2``) over-masks past the first comma; quoted values do not
+ * have this gap.
+ *
+ * The key text itself is left in place (only the value is replaced), so a
+ * later detector still scans it: a key glued with no separator before its
+ * digit suffix (``LastName2``) can coincidentally match the loose NL
+ * passport shape and get labeled ``[PASSPORT]``. Running first, so this
+ * detector claims the value before anything else can, is safer than the
+ * alternative (running last risks a coincidental key match hiding the
+ * value from this detector entirely, leaking it).
+ */
+function kvValueSpan(text: string, start: number): [number, number] {
+  const n = text.length;
+  const startChar = text.charAt(start);
+  if (start < n && (startChar === '"' || startChar === "'")) {
+    const after = start + 1;
+    const close = text.indexOf(startChar, after);
+    const newline = text.indexOf("\n", after);
+    if (close === -1 || (newline !== -1 && newline < close)) {
+      return [after, newline === -1 ? n : newline];
+    }
+    return [after, close];
+  }
+  const newline = text.indexOf("\n", start);
+  let end = newline === -1 ? n : newline;
+  while (end > start && (text.charAt(end - 1) === " " || text.charAt(end - 1) === "\t")) {
+    end -= 1;
+  }
+  while (end > start && ".,;:!?".includes(text.charAt(end - 1))) {
+    end -= 1;
+  }
+  while (end > start && (text.charAt(end - 1) === " " || text.charAt(end - 1) === "\t")) {
+    end -= 1;
+  }
+  return [start, end];
+}
+
+function scrubKeyValue(
+  text: string,
+  keyRe: RegExp,
+  placeholder: string,
+  checkAmbiguous: boolean,
+): { text: string; count: number } {
+  const re = cloneRegExp(keyRe);
+  let count = 0;
+  let out = "";
+  let last = 0;
+  for (let m = re.exec(text); m !== null; m = re.exec(text)) {
+    const matchEnd = m.index + m[0].length;
+    const [innerStart, innerEnd] = kvValueSpan(text, matchEnd);
+    const value = text.slice(innerStart, innerEnd);
+    const keyText = m.groups?.key ?? "";
+    const ambiguous = checkAmbiguous && AMBIGUOUS_KEYS.has(normalizeKey(keyText));
+    if (value.length === 0 || (ambiguous && !looksLikeName(value))) {
+      re.lastIndex = matchEnd;
+      continue;
+    }
+    out += text.slice(last, innerStart) + placeholder;
+    last = innerEnd;
+    re.lastIndex = innerEnd;
+    count += 1;
+  }
+  if (count === 0) {
+    return { text, count: 0 };
+  }
+  return { text: out + text.slice(last), count };
+}
+
+function scrubKeyValuePerson(text: string): { text: string; count: number } {
+  return scrubKeyValue(text, PERSON_KEY_RE, "[PERSON]", true);
+}
+
+function scrubKeyValueAddress(text: string): { text: string; count: number } {
+  return scrubKeyValue(text, ADDRESS_KEY_RE, "[ADDRESS]", true);
+}
+
+export const keyValuePersonDetector: Detector = {
+  type: "person",
+  scrub: scrubKeyValuePerson,
+};
+export const keyValueAddressDetector: Detector = {
+  type: "address",
+  scrub: scrubKeyValueAddress,
+};
+
 export const UNIVERSAL_DETECTORS: readonly Detector[] = [
+  keyValuePersonDetector,
+  keyValueAddressDetector,
   emailDetector,
   ibanDetector,
   creditCardDetector,

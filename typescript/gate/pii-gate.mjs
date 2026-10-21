@@ -986,7 +986,183 @@ var nlLicensePlateDetector = {
   type: "license_plate",
   scrub: scrubNlLicensePlate
 };
+var PERSON_KEYS = [
+  "name",
+  "first_name",
+  "given name",
+  "last_name",
+  "vorname",
+  "nachname",
+  "voornaam",
+  "achternaam",
+  "naam"
+];
+var ADDRESS_KEYS = [
+  "street",
+  "stra\xDFe",
+  "strasse",
+  "straat",
+  "straatnaam",
+  "address",
+  "adresse",
+  "adres",
+  "building number",
+  "huisnummer",
+  "geb\xE4ude",
+  "gebaeude",
+  "postcode",
+  "postal code",
+  "postleitzahl",
+  "plz",
+  "zip",
+  "city",
+  "stadt",
+  "stad",
+  "plaats",
+  "ort",
+  "state",
+  "bundesland",
+  "provincie"
+];
+var AMBIGUOUS_KEYS = /* @__PURE__ */ new Set(["name", "state"]);
+function splitKeyWords(key) {
+  return key.split(/[\s_-]+/).filter((word) => word.length > 0);
+}
+function escapeRegExp(value) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+function normalizeKey(key) {
+  const compact = key.replace(/[\s_-]+/g, "").toLowerCase();
+  return compact.replace(/\d+$/, "");
+}
+var PERSON_KEY_IDS = new Set(PERSON_KEYS.map(normalizeKey));
+var ADDRESS_KEY_IDS = new Set(ADDRESS_KEYS.map(normalizeKey));
+function keyFieldCategory(key) {
+  const keyId = normalizeKey(key);
+  if (PERSON_KEY_IDS.has(keyId)) {
+    return ["person", AMBIGUOUS_KEYS.has(keyId)];
+  }
+  if (ADDRESS_KEY_IDS.has(keyId)) {
+    return ["address", AMBIGUOUS_KEYS.has(keyId)];
+  }
+  return null;
+}
+var NAME_PARTICLES = /* @__PURE__ */ new Set([
+  "van",
+  "der",
+  "de",
+  "den",
+  "het",
+  "ten",
+  "ter",
+  "von",
+  "zu",
+  "el",
+  "al",
+  "bin",
+  "da"
+]);
+function looksLikeName(value) {
+  const words = value.split(/\s+/).filter((word) => word.length > 0);
+  if (words.length === 0) {
+    return false;
+  }
+  let foundCapitalized = false;
+  for (const word of words) {
+    const core = word.replace(/^[.,;:'"]+|[.,;:'"]+$/g, "");
+    if (core.length === 0) {
+      continue;
+    }
+    if (NAME_PARTICLES.has(core.toLowerCase())) {
+      continue;
+    }
+    const letters = core.replace(/[-']/g, "");
+    const first = core.charAt(0);
+    if (first.toUpperCase() !== first || !new RegExp("^\\p{L}+$", "u").test(letters)) {
+      return false;
+    }
+    foundCapitalized = true;
+  }
+  return foundCapitalized;
+}
+function keyAlternation(keys) {
+  return keys.map((key) => splitKeyWords(key).map(escapeRegExp).join("[\\s_-]*")).join("|");
+}
+var PERSON_KEY_RE = new RegExp(
+  `\\b(?<key>${keyAlternation(PERSON_KEYS)})\\d*"?[ \\t]*[:=][ \\t]*`,
+  "gi"
+);
+var ADDRESS_KEY_RE = new RegExp(
+  `\\b(?<key>${keyAlternation(ADDRESS_KEYS)})\\d*"?[ \\t]*[:=][ \\t]*`,
+  "gi"
+);
+function kvValueSpan(text, start) {
+  const n = text.length;
+  const startChar = text.charAt(start);
+  if (start < n && (startChar === '"' || startChar === "'")) {
+    const after = start + 1;
+    const close = text.indexOf(startChar, after);
+    const newline2 = text.indexOf("\n", after);
+    if (close === -1 || newline2 !== -1 && newline2 < close) {
+      return [after, newline2 === -1 ? n : newline2];
+    }
+    return [after, close];
+  }
+  const newline = text.indexOf("\n", start);
+  let end = newline === -1 ? n : newline;
+  while (end > start && (text.charAt(end - 1) === " " || text.charAt(end - 1) === "	")) {
+    end -= 1;
+  }
+  while (end > start && ".,;:!?".includes(text.charAt(end - 1))) {
+    end -= 1;
+  }
+  while (end > start && (text.charAt(end - 1) === " " || text.charAt(end - 1) === "	")) {
+    end -= 1;
+  }
+  return [start, end];
+}
+function scrubKeyValue(text, keyRe, placeholder, checkAmbiguous) {
+  const re = cloneRegExp(keyRe);
+  let count = 0;
+  let out = "";
+  let last = 0;
+  for (let m = re.exec(text); m !== null; m = re.exec(text)) {
+    const matchEnd = m.index + m[0].length;
+    const [innerStart, innerEnd] = kvValueSpan(text, matchEnd);
+    const value = text.slice(innerStart, innerEnd);
+    const keyText = m.groups?.key ?? "";
+    const ambiguous = checkAmbiguous && AMBIGUOUS_KEYS.has(normalizeKey(keyText));
+    if (value.length === 0 || ambiguous && !looksLikeName(value)) {
+      re.lastIndex = matchEnd;
+      continue;
+    }
+    out += text.slice(last, innerStart) + placeholder;
+    last = innerEnd;
+    re.lastIndex = innerEnd;
+    count += 1;
+  }
+  if (count === 0) {
+    return { text, count: 0 };
+  }
+  return { text: out + text.slice(last), count };
+}
+function scrubKeyValuePerson(text) {
+  return scrubKeyValue(text, PERSON_KEY_RE, "[PERSON]", true);
+}
+function scrubKeyValueAddress(text) {
+  return scrubKeyValue(text, ADDRESS_KEY_RE, "[ADDRESS]", true);
+}
+var keyValuePersonDetector = {
+  type: "person",
+  scrub: scrubKeyValuePerson
+};
+var keyValueAddressDetector = {
+  type: "address",
+  scrub: scrubKeyValueAddress
+};
 var UNIVERSAL_DETECTORS = [
+  keyValuePersonDetector,
+  keyValueAddressDetector,
   emailDetector,
   ibanDetector,
   creditCardDetector,
@@ -1193,7 +1369,22 @@ function scrubWalk(value, counts, depth, languages) {
     const out = {};
     const skip = binaryKey(value);
     for (const [key, item] of Object.entries(value)) {
-      out[key] = key === skip ? item : scrubWalk(item, counts, depth + 1, languages);
+      if (key === skip) {
+        out[key] = item;
+        continue;
+      }
+      if (typeof item === "string" && item.length > 0) {
+        const field = keyFieldCategory(key);
+        if (field !== null) {
+          const [category, ambiguous] = field;
+          if (!ambiguous || looksLikeName(item)) {
+            counts[category] += 1;
+            out[key] = `[${category.toUpperCase()}]`;
+            continue;
+          }
+        }
+      }
+      out[key] = scrubWalk(item, counts, depth + 1, languages);
     }
     return out;
   }

@@ -2,8 +2,9 @@
  * Shared types and constants for pattern-based PII scrubbing.
  *
  * Sync, in-process, regex + checksum detectors, including street + house
- * number addresses. ``person`` counts stay 0 until key-aware masking (issue
- * #52); in-process NER is out of scope.
+ * number addresses. ``person`` is key-aware only (issue #52): a value right
+ * after a recognized field name (``last_name``, ``vorname``, ``naam``, …) is
+ * masked; in-process NER is out of scope.
  */
 
 export const PII_TYPES = [

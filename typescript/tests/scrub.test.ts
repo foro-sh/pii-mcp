@@ -881,10 +881,12 @@ describe("scrubText", () => {
   });
 
   it("masks a UK postcode inside JSON", () => {
+    // "city" is a key-aware address field (issue #52): its value is masked
+    // too, on top of the postcode the pattern detector alone finds.
     const result = scrubText('{"postcode": "EC1A 1BB", "city": "London"}', {
       languages: ["en"],
     });
-    expect(result.text).toBe('{"postcode": "[ADDRESS]", "city": "London"}');
+    expect(result.text).toBe('{"postcode": "[ADDRESS]", "city": "[ADDRESS]"}');
   });
 
   it("masks a UK postcode inside CSV", () => {
@@ -1067,6 +1069,107 @@ describe("scrubPayload", () => {
     const result = scrubPayload({ blob: "mail ada@example.com" });
     expect(result.payload).toEqual({ blob: "mail [EMAIL]" });
     expect(result.counts.email).toBe(1);
+  });
+
+  it("masks a value by its dict key (issue #52)", () => {
+    const result = scrubPayload(
+      {
+        last_name: "Grabbe",
+        city: "Amsterdam",
+        other: "ok",
+        name: "build-cache",
+        state: "active",
+      },
+      { languages: ["en", "nl", "de"] },
+    );
+    expect(result.payload).toEqual({
+      last_name: "[PERSON]",
+      city: "[ADDRESS]",
+      other: "ok",
+      name: "build-cache",
+      state: "active",
+    });
+    expect(result.counts.person).toBe(1);
+    expect(result.counts.address).toBe(1);
+  });
+
+  it("key-aware masking runs on siblings of a skipped binary field", () => {
+    const result = scrubPayload(
+      { type: "image", data: "AAAA", nachname: "Eckerlin" },
+      { languages: ["de"] },
+    );
+    expect((result.payload as Record<string, unknown>).data).toBe("AAAA");
+    expect((result.payload as Record<string, unknown>).nachname).toBe("[PERSON]");
+    expect(result.counts.person).toBe(1);
+  });
+});
+
+describe("key-aware masking", () => {
+  it.each([
+    ['"last_name": "Grabbe"', '"last_name": "[PERSON]"'],
+    ["Nachname: Eckerlin", "Nachname: [PERSON]"],
+    ["voornaam: Anne-Marie", "voornaam: [PERSON]"],
+    ["given name=Jan", "given name=[PERSON]"],
+    ['"last_name1": "Müller"', '"last_name1": "[PERSON]"'],
+    ["naam: Jan van Dijk", "naam: [PERSON]"],
+  ])("masks a person after a recognized key: %s", (text, expected) => {
+    const result = scrubText(text, { languages: ["en", "nl", "de"] });
+    expect(result.text).toBe(expected);
+    expect(result.counts.person).toBe(1);
+  });
+
+  it.each([
+    ["Straße: Jahnstraße", "Straße: [ADDRESS]"],
+    ["Postleitzahl: 33613", "Postleitzahl: [ADDRESS]"],
+    ['"city": "Rotterdam"', '"city": "[ADDRESS]"'],
+    ["stad: Utrecht", "stad: [ADDRESS]"],
+    ["zip=90210", "zip=[ADDRESS]"],
+    ["state: California", "state: [ADDRESS]"],
+  ])("masks an address after a recognized key: %s", (text, expected) => {
+    const result = scrubText(text, { languages: ["en", "nl", "de"] });
+    expect(result.text).toBe(expected);
+    expect(result.counts.address).toBe(1);
+  });
+
+  it("keeps a street + comma house number as one value", () => {
+    const result = scrubText("Straat: Kerkstraat, 12", { languages: ["nl"] });
+    expect(result.text).toBe("Straat: [ADDRESS]");
+    expect(result.counts.address).toBe(1);
+  });
+
+  it("keeps trailing sentence punctuation outside the mask", () => {
+    const result = scrubText("Nachname: Eckerlin.", { languages: ["de"] });
+    expect(result.text).toBe("Nachname: [PERSON].");
+  });
+
+  it.each([
+    'name: "build-cache"',
+    '"name": "build-cache"',
+    "city_count: 3",
+    "street_view: true",
+    "state: active",
+    "state: running",
+    "username: ada",
+  ])("does not mask an ambiguous or compound key: %s", (text) => {
+    const result = scrubText(text, { languages: ["en", "nl", "de"] });
+    expect(result.text).toBe(text);
+    expect(result.counts.person).toBe(0);
+    expect(result.counts.address).toBe(0);
+  });
+
+  it("masks a real name under the bare name key", () => {
+    const result = scrubText('"name": "Jan Jansen"', { languages: ["en", "nl"] });
+    expect(result.text).toBe('"name": "[PERSON]"');
+    expect(result.counts.person).toBe(1);
+  });
+
+  it("a glued digit-suffix key can collide with the NL passport shape", () => {
+    // Known gap: the key text itself is left in place, so a camelCase key
+    // with no separator before its digit suffix can coincidentally pass the
+    // format-only NL passport check. The value is still masked either way —
+    // no leak, just an odd label on the key.
+    const result = scrubText('"LastName1": "Müller"', { languages: ["nl"] });
+    expect(result.text).toBe('"[PASSPORT]": "[PERSON]"');
   });
 });
 

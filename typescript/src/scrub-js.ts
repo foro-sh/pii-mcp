@@ -1,12 +1,19 @@
 /**
  * Language packs and scrub walk for pattern-based detectors.
  *
- * Universal detectors (email, IBAN, credit card, BIC, MAC, IMEI, IP, location)
- * always run. Locale packs add national IDs / phone shapes / NL and UK
- * postcodes / kentekens / VAT IDs / passport numbers. Counts always include
- * every ``PiiType`` key (0 when unused). ``person`` stays 0 until key-aware
- * masking (issue #52). ``address`` counts street + house number hits and NL /
- * UK postcodes.
+ * Universal detectors (key-aware person/address, email, IBAN, credit card,
+ * BIC, MAC, IMEI, IP, location) always run. Locale packs add national IDs /
+ * phone shapes / NL and UK postcodes / kentekens / VAT IDs / passport
+ * numbers. Counts always include every ``PiiType`` key (0 when unused).
+ * ``person`` is pattern-free: it only fires when a value sits right after a
+ * recognized field name (issue #52). ``address`` counts street + house
+ * number hits, NL / UK postcodes, and key-aware street/postcode/place hits.
+ *
+ * ``scrubWalk`` applies the same field-name dictionary structurally: an
+ * object value is masked whole, by its key, before recursing (see
+ * ``keyFieldCategory`` in ``./detectors.js``), so ``{"last_name": "Grabbe"}``
+ * is caught even though the string leaf ``"Grabbe"`` alone carries no
+ * ``key:`` context for ``scrubTextJs``'s pattern pass to see.
  *
  * ``MAX_SCRUB_BYTES`` matches foro-proxy (32 MiB). Oversize raises
  * ``PiiScrubError`` so callers withhold rather than forward unscrubbed text.
@@ -34,6 +41,8 @@ import {
   bsnDetector,
   deVatDetector,
   itinDetector,
+  keyFieldCategory,
+  looksLikeName,
   nhsDetector,
   ninoDetector,
   nlLicensePlateDetector,
@@ -269,8 +278,22 @@ function scrubWalk(
     const out: Record<string, unknown> = {};
     const skip = binaryKey(value);
     for (const [key, item] of Object.entries(value)) {
-      out[key] =
-        key === skip ? item : scrubWalk(item, counts, depth + 1, languages);
+      if (key === skip) {
+        out[key] = item;
+        continue;
+      }
+      if (typeof item === "string" && item.length > 0) {
+        const field = keyFieldCategory(key);
+        if (field !== null) {
+          const [category, ambiguous] = field;
+          if (!ambiguous || looksLikeName(item)) {
+            counts[category] += 1;
+            out[key] = `[${category.toUpperCase()}]`;
+            continue;
+          }
+        }
+      }
+      out[key] = scrubWalk(item, counts, depth + 1, languages);
     }
     return out;
   }
