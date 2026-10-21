@@ -19,9 +19,10 @@
 //! masked.
 
 use crate::checksum::{
-    bsn_valid_grouped, iban_valid, imei_valid, is_group_sep, itin_valid_grouped, luhn_valid,
-    nhs_valid_grouped, nl_passport_valid, nl_postcode_valid, ssn_valid_grouped,
-    tax_id_valid_grouped, uk_postcode_valid, GROUP_DASHES, GROUP_SPACES,
+    bsn_valid_grouped, de_city_known, de_postcode_range_ok, iban_valid, imei_valid, is_group_sep,
+    itin_valid_grouped, luhn_valid, nhs_valid_grouped, nl_passport_valid, nl_postcode_valid,
+    ssn_valid_grouped, tax_id_valid_grouped, uk_postcode_valid, us_state_abbr_known, GROUP_DASHES,
+    GROUP_SPACES,
 };
 use regex::Regex;
 use std::sync::OnceLock;
@@ -1993,6 +1994,107 @@ fn scrub_street_en(text: &str) -> (Option<String>, u32) {
     scrub_street(text, &street_res()[2])
 }
 
+/// Shared with the DE postcode and US ZIP patterns, mirroring Python
+/// `_POSTCODE_LABEL`: bare 5-digit numbers are too common (order refs,
+/// counts) to mask without context. A DE postcode or US ZIP is only masked
+/// next to one of three hints: a PLZ/ZIP/postcode label, a city/state the
+/// postcode normally sits beside, or an `[ADDRESS]` placeholder the street
+/// detector already left nearby. One alternation per detector keeps this to
+/// a single scan; the three hints are told apart from the matched text
+/// alone (label text never starts with a digit, the state form's third
+/// character is always a separator), so one `accept` callback gates every
+/// branch.
+const POSTCODE_LABEL: &str = r"(?i:plz|postleitzahl|postal\s*code|postcode|zip(?:\s*code)?)";
+
+fn postcode_near_address(text: &str, start: usize, end: usize) -> bool {
+    const WINDOW: usize = 40;
+    let before_start = text[..start]
+        .char_indices()
+        .rev()
+        .nth(WINDOW)
+        .map_or(0, |(i, _)| i);
+    let after_end = text[end..]
+        .char_indices()
+        .nth(WINDOW)
+        .map_or(text.len(), |(i, _)| end + i);
+    text[before_start..start].contains("[ADDRESS]") || text[end..after_end].contains("[ADDRESS]")
+}
+
+fn de_postcode_re() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| {
+        let sep = format!("[{}]{{1,3}}", "\\x20\\t\\u{a0}\\u{202f}");
+        Regex::new(&format!(
+            r"\b{POSTCODE_LABEL}\s*[:\-]?\s*\d{{5}}\b|\b\d{{5}}{sep}[{STREET_UP}][{STREET_LOW}]+\b|\b\d{{5}}\b"
+        ))
+        .unwrap()
+    })
+}
+
+fn de_postcode_accept(text: &str, value: &str, start: usize, end: usize) -> bool {
+    let first = value.chars().next().unwrap();
+    if !first.is_ascii_digit() {
+        return de_postcode_range_ok(&value[value.len() - 5..]);
+    }
+    if value.len() == 5 {
+        return de_postcode_range_ok(value) && postcode_near_address(text, start, end);
+    }
+    de_postcode_range_ok(&value[..5]) && de_city_known(value[5..].trim())
+}
+
+fn scrub_de_postcode(text: &str) -> (Option<String>, u32) {
+    replace_matches(
+        text,
+        de_postcode_re(),
+        "[ADDRESS]",
+        |v, s, e| de_postcode_accept(text, v, s, e),
+        false,
+    )
+}
+
+fn us_zip_state_prefix_ok(value: &str) -> bool {
+    let mut chars = value.chars();
+    let (Some(a), Some(b), Some(c)) = (chars.next(), chars.next(), chars.next()) else {
+        return false;
+    };
+    a.is_ascii_uppercase()
+        && b.is_ascii_uppercase()
+        && matches!(c, ' ' | '\t' | '\u{a0}' | '\u{202f}')
+}
+
+fn us_zip_re() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| {
+        let sep = format!("[{}]{{1,3}}", "\\x20\\t\\u{a0}\\u{202f}");
+        let digits = r"\d{5}(?:-\d{4})?";
+        Regex::new(&format!(
+            r"\b{POSTCODE_LABEL}\s*[:\-]?\s*{digits}\b|\b[A-Z]{{2}}{sep}{digits}\b|\b{digits}\b"
+        ))
+        .unwrap()
+    })
+}
+
+fn us_zip_accept(text: &str, value: &str, start: usize, end: usize) -> bool {
+    let first = value.chars().next().unwrap();
+    if first.is_ascii_digit() {
+        return postcode_near_address(text, start, end);
+    }
+    if us_zip_state_prefix_ok(value) {
+        return us_state_abbr_known(&value[..2]);
+    }
+    true
+}
+
+fn scrub_us_zip(text: &str) -> (Option<String>, u32) {
+    replace_matches(
+        text,
+        us_zip_re(),
+        "[ADDRESS]",
+        |v, s, e| us_zip_accept(text, v, s, e),
+        false,
+    )
+}
+
 fn nl_vat_re() -> &'static Regex {
     static RE: OnceLock<Regex> = OnceLock::new();
     RE.get_or_init(|| Regex::new(r"\b[Nn][Ll][.\s]*\d{9}[.\s]*[Bb][.\s]*\d{2}\b").unwrap())
@@ -2222,11 +2324,19 @@ fn build_detectors(mask: u8) -> Vec<Detector> {
             category: PiiCategory::Address,
             scrub: scrub_uk_postcode,
         });
+        pack.push(Detector {
+            category: PiiCategory::Address,
+            scrub: scrub_us_zip,
+        });
     }
     if has_de {
         pack.push(Detector {
             category: PiiCategory::Address,
             scrub: scrub_street_de,
+        });
+        pack.push(Detector {
+            category: PiiCategory::Address,
+            scrub: scrub_de_postcode,
         });
     }
     if has_nl {

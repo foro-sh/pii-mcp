@@ -1,9 +1,9 @@
 //! Language packs and scrub walk for pattern-based detectors.
 //!
 //! Universal detectors always run. Locale packs add national IDs / phones /
-//! street addresses / NL and UK postcodes. Counts always include every
-//! [`PiiType`] key (0 when unused). `person` stays 0 until key-aware masking
-//! lands (issue #52); in-process NER is out of scope for this crate.
+//! street addresses / NL, UK, DE and US postcodes. Counts always include
+//! every [`PiiType`] key (0 when unused). `person` stays 0 until key-aware
+//! masking lands (issue #52); in-process NER is out of scope for this crate.
 //!
 //! MCP binary content is left unscrubbed (foro-pii `binaryKey` parity): on an
 //! object with `type` of `image` or `audio` and a string `data`, that `data`
@@ -782,6 +782,108 @@ mod tests {
             let r = scrub_text(text, Some(&langs), true).unwrap();
             assert_eq!(r.text, expected, "{text:?}");
         }
+    }
+
+    #[test]
+    fn masks_de_postcode_with_a_label() {
+        let langs = vec!["de".to_string()];
+        for value in ["Postleitzahl: 33613", "Postleitzahl 33613", "PLZ: 33613", "PLZ 33613"] {
+            let r = scrub_text(value, Some(&langs), true).unwrap();
+            assert_eq!(r.text, "[ADDRESS]", "{value}");
+            assert_eq!(r.counts["address"], 1, "{value}");
+        }
+    }
+
+    #[test]
+    fn masks_de_postcode_with_a_known_city() {
+        let langs = vec!["de".to_string()];
+        let r = scrub_text("10115 Berlin", Some(&langs), true).unwrap();
+        assert_eq!(r.text, "[ADDRESS]");
+        assert_eq!(r.counts["address"], 1);
+    }
+
+    #[test]
+    fn de_postcode_rejects_an_arbitrary_capitalized_word() {
+        // German nouns are always capitalized, so a city allowlist is required.
+        let langs = vec!["de".to_string()];
+        let r = scrub_text("12345 Dinge erledigt", Some(&langs), true).unwrap();
+        assert_eq!(r.text, "12345 Dinge erledigt");
+        assert_eq!(r.counts["address"], 0);
+    }
+
+    #[test]
+    fn masks_de_postcode_near_a_street_hit() {
+        let langs = vec!["de".to_string()];
+        let r = scrub_text("Lange Zandweg 12, 10115", Some(&langs), true).unwrap();
+        assert_eq!(r.text, "[ADDRESS], [ADDRESS]");
+        assert_eq!(r.counts["address"], 2);
+    }
+
+    #[test]
+    fn de_postcode_rejects_a_bare_number() {
+        let langs = vec!["de".to_string()];
+        let r = scrub_text("order 10115", Some(&langs), true).unwrap();
+        assert_eq!(r.text, "order 10115");
+        assert_eq!(r.counts["address"], 0);
+    }
+
+    #[test]
+    fn de_postcode_rejects_out_of_range_codes() {
+        let langs = vec!["de".to_string()];
+        for value in ["00501", "00999", "99999"] {
+            let text = format!("PLZ {value}");
+            let r = scrub_text(&text, Some(&langs), true).unwrap();
+            assert_eq!(r.counts["address"], 0, "{value}");
+        }
+    }
+
+    #[test]
+    fn masks_us_zip_with_a_label() {
+        let langs = vec!["en".to_string()];
+        for value in ["ZIP: 80920", "zip code 80920", "postal code: 80920"] {
+            let r = scrub_text(value, Some(&langs), true).unwrap();
+            assert_eq!(r.text, "[ADDRESS]", "{value}");
+            assert_eq!(r.counts["address"], 1, "{value}");
+        }
+    }
+
+    #[test]
+    fn masks_us_zip_plus_four() {
+        let langs = vec!["en".to_string()];
+        let r = scrub_text("ZIP: 80920-1406", Some(&langs), true).unwrap();
+        assert_eq!(r.text, "[ADDRESS]");
+        assert_eq!(r.counts["address"], 1);
+    }
+
+    #[test]
+    fn masks_us_zip_with_a_state_code() {
+        let langs = vec!["en".to_string()];
+        let r = scrub_text("Colorado Springs, CO 80920-1406", Some(&langs), true).unwrap();
+        assert_eq!(r.text, "Colorado Springs, [ADDRESS]");
+        assert_eq!(r.counts["address"], 1);
+    }
+
+    #[test]
+    fn us_zip_rejects_an_unknown_two_letter_prefix() {
+        let langs = vec!["en".to_string()];
+        let r = scrub_text("batch XX 80920", Some(&langs), true).unwrap();
+        assert_eq!(r.counts["address"], 0);
+    }
+
+    #[test]
+    fn masks_us_zip_near_a_street_hit() {
+        let langs = vec!["en".to_string()];
+        let r = scrub_text("474 Lexington Drive, 80920", Some(&langs), true).unwrap();
+        assert_eq!(r.text, "[ADDRESS], [ADDRESS]");
+        assert_eq!(r.counts["address"], 2);
+    }
+
+    #[test]
+    fn us_zip_rejects_a_bare_number() {
+        let langs = vec!["en".to_string()];
+        let r = scrub_text("count: 80920", Some(&langs), true).unwrap();
+        assert_eq!(r.text, "count: 80920");
+        assert_eq!(r.counts["address"], 0);
     }
 
     #[test]

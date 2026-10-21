@@ -429,6 +429,37 @@ pub fn uk_postcode_valid(value: &str) -> bool {
         .any(|a| a == area)
 }
 
+/// German postcodes run 01067-99998; nothing starts `00` or is `99999`.
+pub fn de_postcode_range_ok(digits: &str) -> bool {
+    !digits.starts_with("00") && digits != "99999"
+}
+
+/// Major German cities, mirroring `UK_POSTCODE_AREAS`: any capitalized word
+/// would also match ordinary German nouns (always capitalized), so a small
+/// allowlist is required, not just a bare pattern.
+const DE_CITIES: &str = "\
+Berlin Hamburg München Munich Köln Cologne Frankfurt Stuttgart Düsseldorf \
+Dortmund Essen Leipzig Bremen Dresden Hannover Nürnberg Duisburg Bochum \
+Wuppertal Bielefeld Bonn Münster Mannheim Karlsruhe Augsburg Wiesbaden \
+Mönchengladbach Gelsenkirchen Aachen Braunschweig Kiel Chemnitz Halle \
+Magdeburg Freiburg Krefeld Mainz Lübeck Erfurt Oberhausen Rostock Kassel \
+Potsdam Saarbrücken Heidelberg";
+
+pub fn de_city_known(city: &str) -> bool {
+    DE_CITIES.split_ascii_whitespace().any(|c| c == city)
+}
+
+/// US states, DC and the inhabited territories; mirrors `UK_POSTCODE_AREAS` so
+/// an arbitrary two-letter token glued to a number does not pass as a hint.
+const US_STATE_ABBR: &str = "\
+AL AK AZ AR CA CO CT DE FL GA HI ID IL IN IA KS KY LA ME MD MA MI MN MS \
+MO MT NE NV NH NJ NM NY NC ND OH OK OR PA RI SC SD TN TX UT VT VA WA WV \
+WI WY DC PR GU VI AS MP";
+
+pub fn us_state_abbr_known(code: &str) -> bool {
+    US_STATE_ABBR.split_ascii_whitespace().any(|c| c == code)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
