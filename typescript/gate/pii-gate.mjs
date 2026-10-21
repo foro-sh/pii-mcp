@@ -969,6 +969,72 @@ function streetDetector(pattern, isValid) {
 var streetNlDetector = streetDetector(STREET_NL_RE);
 var streetDeDetector = streetDetector(STREET_DE_RE, deStreetValid);
 var streetEnDetector = streetDetector(STREET_EN_RE);
+function caseInsensitiveLiteral(word) {
+  return word.replace(/[a-zA-Z]/g, (c) => `[${c.toLowerCase()}${c.toUpperCase()}]`);
+}
+var POSTCODE_LABEL = `(?:${caseInsensitiveLiteral("plz")}|${caseInsensitiveLiteral("postleitzahl")}|${caseInsensitiveLiteral("postal")}\\s*${caseInsensitiveLiteral("code")}|${caseInsensitiveLiteral("postcode")}|${caseInsensitiveLiteral("zip")}(?:\\s*${caseInsensitiveLiteral("code")})?)`;
+function postcodeNearAddress(text, start, end) {
+  const window = 40;
+  const before = text.slice(Math.max(0, start - window), start);
+  const after = text.slice(end, end + window);
+  return before.includes("[ADDRESS]") || after.includes("[ADDRESS]");
+}
+var DE_CITIES = new Set(
+  "Berlin Hamburg M\xFCnchen Munich K\xF6ln Cologne Frankfurt Stuttgart D\xFCsseldorf Dortmund Essen Leipzig Bremen Dresden Hannover N\xFCrnberg Duisburg Bochum Wuppertal Bielefeld Bonn M\xFCnster Mannheim Karlsruhe Augsburg Wiesbaden M\xF6nchengladbach Gelsenkirchen Aachen Braunschweig Kiel Chemnitz Halle Magdeburg Freiburg Krefeld Mainz L\xFCbeck Erfurt Oberhausen Rostock Kassel Potsdam Saarbr\xFCcken Heidelberg".split(" ")
+);
+var DE_POSTCODE_RE = new RegExp(
+  String.raw`\b${POSTCODE_LABEL}\s*[:\-]?\s*\d{5}\b` + `|\\b\\d{5}${STREET_SEP}[${STREET_UP}][${STREET_LOW}]+\\b` + String.raw`|\b\d{5}\b`,
+  "g"
+);
+function dePostcodeRangeOk(digits) {
+  return digits.slice(0, 2) !== "00" && digits !== "99999";
+}
+function dePostcodeAccept(text, start, end) {
+  const value = text.slice(start, end);
+  const accept = (() => {
+    if (!/^\d/.test(value)) {
+      return dePostcodeRangeOk(value.slice(-5));
+    }
+    if (value.length === 5) {
+      return dePostcodeRangeOk(value) && postcodeNearAddress(text, start, end);
+    }
+    return dePostcodeRangeOk(value.slice(0, 5)) && DE_CITIES.has(value.slice(5).trim());
+  })();
+  return accept ? end : start;
+}
+function scrubDePostcode(text) {
+  return replaceMatches(text, DE_POSTCODE_RE, "[ADDRESS]", void 0, false, dePostcodeAccept);
+}
+var dePostcodeDetector = { type: "address", scrub: scrubDePostcode };
+var US_STATE_ABBR = new Set(
+  "AL AK AZ AR CA CO CT DE FL GA HI ID IL IN IA KS KY LA ME MD MA MI MN MS MO MT NE NV NH NJ NM NY NC ND OH OK OR PA RI SC SD TN TX UT VT VA WA WV WI WY DC PR GU VI AS MP".split(" ")
+);
+var US_ZIP_DIGITS = String.raw`\d{5}(?:-\d{4})?`;
+var US_ZIP_RE = new RegExp(
+  String.raw`\b${POSTCODE_LABEL}\s*[:\-]?\s*${US_ZIP_DIGITS}\b` + `|\\b[A-Z]{2}${STREET_SEP}${US_ZIP_DIGITS}\\b` + String.raw`|\b${US_ZIP_DIGITS}\b`,
+  "g"
+);
+var US_ZIP_STATE_PREFIX_RE = new RegExp(`^[A-Z]{2}[${STREET_SEP_CHARS}]`);
+function usZipStatePrefixOk(value) {
+  return US_ZIP_STATE_PREFIX_RE.test(value);
+}
+function usZipAccept(text, start, end) {
+  const value = text.slice(start, end);
+  const accept = (() => {
+    if (/^\d/.test(value)) {
+      return postcodeNearAddress(text, start, end);
+    }
+    if (usZipStatePrefixOk(value)) {
+      return US_STATE_ABBR.has(value.slice(0, 2));
+    }
+    return true;
+  })();
+  return accept ? end : start;
+}
+function scrubUsZip(text) {
+  return replaceMatches(text, US_ZIP_RE, "[ADDRESS]", void 0, false, usZipAccept);
+}
+var usZipDetector = { type: "address", scrub: scrubUsZip };
 var NL_LICENSE_PLATE_RE = /(?<![\w-])(?:[A-Z]{2}-\d{2}-\d{2}|\d{2}-\d{2}-[A-Z]{2}|\d{2}-[A-Z]{2}-\d{2}|[A-Z]{2}-\d{2}-[A-Z]{2}|[A-Z]{2}-[A-Z]{2}-\d{2}|\d{2}-[A-Z]{2}-[A-Z]{2}|\d{2}-[A-Z]{3}-\d|\d-[A-Z]{3}-\d{2}|[A-Z]{2}-\d{3}-[A-Z]|[A-Z]-\d{3}-[A-Z]{2}|[A-Z]{3}-\d{2}-[A-Z]|[A-Z]-\d{2}-[A-Z]{3}|\d-[A-Z]{2}-\d{3}|\d{3}-[A-Z]{2}-\d)(?![\w-])/gi;
 var NL_PLATE_LETTER_REJECTS = /* @__PURE__ */ new Set(["SA", "SD", "SS"]);
 function nlLicensePlateValid(value) {
@@ -1097,10 +1163,17 @@ function detectorsFor(languages) {
     pack.push(nlVatDetector, bsnDetector, nlPassportDetector);
   }
   if (langs.includes("en")) {
-    pack.push(ninoDetector, itinDetector, ssnDetector, streetEnDetector, ukPostcodeDetector);
+    pack.push(
+      ninoDetector,
+      itinDetector,
+      ssnDetector,
+      streetEnDetector,
+      ukPostcodeDetector,
+      usZipDetector
+    );
   }
   if (langs.includes("de")) {
-    pack.push(streetDeDetector);
+    pack.push(streetDeDetector, dePostcodeDetector);
   }
   if (langs.includes("nl")) {
     pack.push(streetNlDetector, nlPostcodeDetector, nlLicensePlateDetector);

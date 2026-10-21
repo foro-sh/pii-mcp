@@ -1417,6 +1417,122 @@ export const streetNlDetector = streetDetector(STREET_NL_RE);
 export const streetDeDetector = streetDetector(STREET_DE_RE, deStreetValid);
 export const streetEnDetector = streetDetector(STREET_EN_RE);
 
+// Bare 5-digit numbers are too common (order refs, counts) to mask on their
+// own. A DE postcode or US ZIP is only masked next to one of three hints: a
+// PLZ/ZIP/postcode label, a city/state the postcode normally sits beside, or
+// an ``[ADDRESS]`` placeholder the street detector already left nearby. One
+// alternation per detector keeps this to a single scan; the three hints are
+// told apart from the matched text alone (label text never starts with a
+// digit, the state form's third character is always a separator), so one
+// ``acceptEnd`` callback gates every branch.
+//
+// JS has no inline case-insensitive group (Python ``(?i:...)``), and a
+// pattern-wide ``i`` flag would also case-fold ``STREET_UP``/``STREET_LOW``
+// and the state form's ``[A-Z]{2}``, so the label words are spelled out
+// letter-by-letter as ``[xX]`` instead.
+function caseInsensitiveLiteral(word: string): string {
+  return word.replace(/[a-zA-Z]/g, (c) => `[${c.toLowerCase()}${c.toUpperCase()}]`);
+}
+
+const POSTCODE_LABEL = `(?:${caseInsensitiveLiteral("plz")}|${caseInsensitiveLiteral("postleitzahl")}|${caseInsensitiveLiteral("postal")}\\s*${caseInsensitiveLiteral("code")}|${caseInsensitiveLiteral("postcode")}|${caseInsensitiveLiteral("zip")}(?:\\s*${caseInsensitiveLiteral("code")})?)`;
+
+function postcodeNearAddress(text: string, start: number, end: number): boolean {
+  const window = 40;
+  const before = text.slice(Math.max(0, start - window), start);
+  const after = text.slice(end, end + window);
+  return before.includes("[ADDRESS]") || after.includes("[ADDRESS]");
+}
+
+// Major German cities, mirroring the UK postcode-area allowlist: any
+// capitalized word would also match ordinary German nouns (always
+// capitalized), so a small allowlist is required, not just a bare pattern.
+const DE_CITIES = new Set(
+  (
+    "Berlin Hamburg München Munich Köln Cologne Frankfurt Stuttgart Düsseldorf " +
+    "Dortmund Essen Leipzig Bremen Dresden Hannover Nürnberg Duisburg Bochum " +
+    "Wuppertal Bielefeld Bonn Münster Mannheim Karlsruhe Augsburg Wiesbaden " +
+    "Mönchengladbach Gelsenkirchen Aachen Braunschweig Kiel Chemnitz Halle " +
+    "Magdeburg Freiburg Krefeld Mainz Lübeck Erfurt Oberhausen Rostock Kassel " +
+    "Potsdam Saarbrücken Heidelberg"
+  ).split(" "),
+);
+
+const DE_POSTCODE_RE = new RegExp(
+  String.raw`\b${POSTCODE_LABEL}\s*[:\-]?\s*\d{5}\b` +
+    `|\\b\\d{5}${STREET_SEP}[${STREET_UP}][${STREET_LOW}]+\\b` +
+    String.raw`|\b\d{5}\b`,
+  "g",
+);
+
+function dePostcodeRangeOk(digits: string): boolean {
+  return digits.slice(0, 2) !== "00" && digits !== "99999";
+}
+
+function dePostcodeAccept(text: string, start: number, end: number): number {
+  const value = text.slice(start, end);
+  const accept = (() => {
+    if (!/^\d/.test(value)) {
+      return dePostcodeRangeOk(value.slice(-5));
+    }
+    if (value.length === 5) {
+      return dePostcodeRangeOk(value) && postcodeNearAddress(text, start, end);
+    }
+    return dePostcodeRangeOk(value.slice(0, 5)) && DE_CITIES.has(value.slice(5).trim());
+  })();
+  return accept ? end : start;
+}
+
+function scrubDePostcode(text: string): { text: string; count: number } {
+  return replaceMatches(text, DE_POSTCODE_RE, "[ADDRESS]", undefined, false, dePostcodeAccept);
+}
+
+export const dePostcodeDetector: Detector = { type: "address", scrub: scrubDePostcode };
+
+// US states, DC and the inhabited territories; mirrors the UK/DE allowlists
+// so an arbitrary two-letter token glued to a number does not pass as a hint.
+const US_STATE_ABBR = new Set(
+  (
+    "AL AK AZ AR CA CO CT DE FL GA HI ID IL IN IA KS KY LA ME MD MA MI MN MS " +
+    "MO MT NE NV NH NJ NM NY NC ND OH OK OR PA RI SC SD TN TX UT VT VA WA WV " +
+    "WI WY DC PR GU VI AS MP"
+  ).split(" "),
+);
+
+const US_ZIP_DIGITS = String.raw`\d{5}(?:-\d{4})?`;
+
+const US_ZIP_RE = new RegExp(
+  String.raw`\b${POSTCODE_LABEL}\s*[:\-]?\s*${US_ZIP_DIGITS}\b` +
+    `|\\b[A-Z]{2}${STREET_SEP}${US_ZIP_DIGITS}\\b` +
+    String.raw`|\b${US_ZIP_DIGITS}\b`,
+  "g",
+);
+
+const US_ZIP_STATE_PREFIX_RE = new RegExp(`^[A-Z]{2}[${STREET_SEP_CHARS}]`);
+
+function usZipStatePrefixOk(value: string): boolean {
+  return US_ZIP_STATE_PREFIX_RE.test(value);
+}
+
+function usZipAccept(text: string, start: number, end: number): number {
+  const value = text.slice(start, end);
+  const accept = (() => {
+    if (/^\d/.test(value)) {
+      return postcodeNearAddress(text, start, end);
+    }
+    if (usZipStatePrefixOk(value)) {
+      return US_STATE_ABBR.has(value.slice(0, 2));
+    }
+    return true;
+  })();
+  return accept ? end : start;
+}
+
+function scrubUsZip(text: string): { text: string; count: number } {
+  return replaceMatches(text, US_ZIP_RE, "[ADDRESS]", undefined, false, usZipAccept);
+}
+
+export const usZipDetector: Detector = { type: "address", scrub: scrubUsZip };
+
 const NL_LICENSE_PLATE_RE =
   /(?<![\w-])(?:[A-Z]{2}-\d{2}-\d{2}|\d{2}-\d{2}-[A-Z]{2}|\d{2}-[A-Z]{2}-\d{2}|[A-Z]{2}-\d{2}-[A-Z]{2}|[A-Z]{2}-[A-Z]{2}-\d{2}|\d{2}-[A-Z]{2}-[A-Z]{2}|\d{2}-[A-Z]{3}-\d|\d-[A-Z]{3}-\d{2}|[A-Z]{2}-\d{3}-[A-Z]|[A-Z]-\d{3}-[A-Z]{2}|[A-Z]{3}-\d{2}-[A-Z]|[A-Z]-\d{2}-[A-Z]{3}|\d-[A-Z]{2}-\d{3}|\d{3}-[A-Z]{2}-\d)(?![\w-])/gi;
 

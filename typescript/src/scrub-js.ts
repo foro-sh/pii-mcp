@@ -2,11 +2,11 @@
  * Language packs and scrub walk for pattern-based detectors.
  *
  * Universal detectors (email, IBAN, credit card, BIC, MAC, IMEI, IP, location)
- * always run. Locale packs add national IDs / phone shapes / NL and UK
+ * always run. Locale packs add national IDs / phone shapes / NL, UK, DE and US
  * postcodes / kentekens / VAT IDs / passport numbers. Counts always include
  * every ``PiiType`` key (0 when unused). ``person`` stays 0 until key-aware
  * masking (issue #52). ``address`` counts street + house number hits and NL /
- * UK postcodes.
+ * UK / DE / US postcodes.
  *
  * ``MAX_SCRUB_BYTES`` matches foro-proxy (32 MiB). Oversize raises
  * ``PiiScrubError`` so callers withhold rather than forward unscrubbed text.
@@ -19,7 +19,8 @@
  * checksum/rule-backed national IDs (DE IdNr before BSN, BSN before SSN when
  * both packs are on, US ITIN before SSN; DE USt-IdNr and NL BTW before BSN,
  * passport after) → street + house number per pack (en, de, nl) → postcode
- * per pack → kenteken when ``nl``.
+ * per pack (UK and hinted US ZIP for en, hinted postcode for de, bare
+ * postcode for nl) → kenteken when ``nl``.
  *
  * MCP binary content is left unscrubbed (foro-pii ``binaryKey`` parity): on an
  * object with ``type`` of ``image`` or ``audio`` and a string ``data``, that
@@ -32,6 +33,7 @@
 import {
   UNIVERSAL_DETECTORS,
   bsnDetector,
+  dePostcodeDetector,
   deVatDetector,
   itinDetector,
   nhsDetector,
@@ -50,6 +52,7 @@ import {
   streetNlDetector,
   taxIdDetector,
   ukPostcodeDetector,
+  usZipDetector,
   type Detector,
 } from "./detectors.js";
 import {
@@ -138,10 +141,17 @@ function detectorsFor(
     pack.push(nlVatDetector, bsnDetector, nlPassportDetector);
   }
   if (langs.includes("en")) {
-    pack.push(ninoDetector, itinDetector, ssnDetector, streetEnDetector, ukPostcodeDetector);
+    pack.push(
+      ninoDetector,
+      itinDetector,
+      ssnDetector,
+      streetEnDetector,
+      ukPostcodeDetector,
+      usZipDetector,
+    );
   }
   if (langs.includes("de")) {
-    pack.push(streetDeDetector);
+    pack.push(streetDeDetector, dePostcodeDetector);
   }
   if (langs.includes("nl")) {
     pack.push(streetNlDetector, nlPostcodeDetector, nlLicensePlateDetector);

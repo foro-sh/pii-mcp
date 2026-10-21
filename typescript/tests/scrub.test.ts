@@ -491,7 +491,7 @@ describe("scrubText", () => {
     ["1600 Pennsylvania Avenue NW", "en", "[ADDRESS] NW"],
     ["at 10 Downing St. today", "en", "at [ADDRESS] today"],
     ["12 Baker Street Station", "en", "[ADDRESS] Station"],
-    ["Hauptstraße 5a, 10115 Berlin", "de", "[ADDRESS], 10115 Berlin"],
+    ["Hauptstraße 5a, 10115 Berlin", "de", "[ADDRESS], [ADDRESS]"],
     ["Kölner Str. 5", "de", "[ADDRESS]"],
     ["Frankfurter Allee 12", "de", "[ADDRESS]"],
     ["Johann-Sebastian-Bach-Straße 5", "de", "[ADDRESS]"],
@@ -939,6 +939,106 @@ describe("scrubText", () => {
   it("disables the UK postcode detector without the en pack", () => {
     const result = scrubText("postcode NW1 6XE", { languages: ["nl"] });
     expect(result.text).toBe("postcode NW1 6XE");
+    expect(result.counts.address).toBe(0);
+  });
+
+  it.each([
+    ["Postleitzahl: 33613"],
+    ["Postleitzahl 33613"],
+    ["PLZ: 33613"],
+    ["PLZ 33613"],
+  ])("masks a DE postcode with a label (%s)", (value) => {
+    const result = scrubText(value, { languages: ["de"] });
+    expect(result.text).toBe("[ADDRESS]");
+    expect(result.counts.address).toBe(1);
+  });
+
+  it("masks a DE postcode with a known city", () => {
+    const result = scrubText("10115 Berlin", { languages: ["de"] });
+    expect(result.text).toBe("[ADDRESS]");
+    expect(result.counts.address).toBe(1);
+  });
+
+  it("does not mask an arbitrary capitalized word after a DE postcode", () => {
+    // German nouns are always capitalized, so a city allowlist is required.
+    const result = scrubText("12345 Dinge erledigt", { languages: ["de"] });
+    expect(result.counts.address).toBe(0);
+    expect(result.text).toBe("12345 Dinge erledigt");
+  });
+
+  it("masks a DE postcode near a street hit", () => {
+    const result = scrubText("Lange Zandweg 12, 10115", { languages: ["de"] });
+    expect(result.text).toBe("[ADDRESS], [ADDRESS]");
+    expect(result.counts.address).toBe(2);
+  });
+
+  it("does not mask a bare DE postcode", () => {
+    const result = scrubText("order 10115", { languages: ["de"] });
+    expect(result.text).toBe("order 10115");
+    expect(result.counts.address).toBe(0);
+  });
+
+  it.each([["00501"], ["00999"], ["99999"]])(
+    "rejects out-of-range DE postcodes (%s)",
+    (value) => {
+      const result = scrubText(`PLZ ${value}`, { languages: ["de"] });
+      expect(result.counts.address).toBe(0);
+    },
+  );
+
+  it("disables the DE postcode detector without the de pack", () => {
+    const result = scrubText("10115 Berlin", { languages: ["en", "nl"] });
+    expect(result.text).toBe("10115 Berlin");
+    expect(result.counts.address).toBe(0);
+  });
+
+  it.each([["ZIP: 80920"], ["zip code 80920"], ["postal code: 80920"]])(
+    "masks a US ZIP with a label (%s)",
+    (value) => {
+      const result = scrubText(value, { languages: ["en"] });
+      expect(result.text).toBe("[ADDRESS]");
+      expect(result.counts.address).toBe(1);
+    },
+  );
+
+  it("masks a German label with the en pack's US ZIP detector", () => {
+    const result = scrubText("Postleitzahl: 33613", { languages: ["en"] });
+    expect(result.text).toBe("[ADDRESS]");
+    expect(result.counts.address).toBe(1);
+  });
+
+  it("masks a US ZIP+4", () => {
+    const result = scrubText("ZIP: 80920-1406", { languages: ["en"] });
+    expect(result.text).toBe("[ADDRESS]");
+    expect(result.counts.address).toBe(1);
+  });
+
+  it("masks a US ZIP with a state code", () => {
+    const result = scrubText("Colorado Springs, CO 80920-1406", { languages: ["en"] });
+    expect(result.text).toBe("Colorado Springs, [ADDRESS]");
+    expect(result.counts.address).toBe(1);
+  });
+
+  it("rejects an unknown two-letter prefix before a US ZIP", () => {
+    const result = scrubText("batch XX 80920", { languages: ["en"] });
+    expect(result.counts.address).toBe(0);
+  });
+
+  it("masks a US ZIP near a street hit", () => {
+    const result = scrubText("474 Lexington Drive, 80920", { languages: ["en"] });
+    expect(result.text).toBe("[ADDRESS], [ADDRESS]");
+    expect(result.counts.address).toBe(2);
+  });
+
+  it("does not mask a bare US ZIP", () => {
+    const result = scrubText("count: 80920", { languages: ["en"] });
+    expect(result.text).toBe("count: 80920");
+    expect(result.counts.address).toBe(0);
+  });
+
+  it("disables the US ZIP detector without the en pack", () => {
+    const result = scrubText("CO 80920", { languages: ["nl", "de"] });
+    expect(result.text).toBe("CO 80920");
     expect(result.counts.address).toBe(0);
   });
 
