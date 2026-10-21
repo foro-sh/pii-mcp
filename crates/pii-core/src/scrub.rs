@@ -1,9 +1,17 @@
 //! Language packs and scrub walk for pattern-based detectors.
 //!
-//! Universal detectors always run. Locale packs add national IDs / phones /
-//! street addresses / NL and UK postcodes. Counts always include every
-//! [`PiiType`] key (0 when unused). `person` stays 0 until key-aware masking
-//! lands (issue #52); in-process NER is out of scope for this crate.
+//! Universal detectors (key-aware person/address, email, IBAN, credit card,
+//! BIC, MAC, IMEI, IP, location) always run. Locale packs add national IDs /
+//! phones / street addresses / NL and UK postcodes. Counts always include
+//! every [`PiiType`] key (0 when unused). `person` is pattern-free: it only
+//! fires when a value sits right after a recognized field name (issue #52);
+//! in-process NER is out of scope for this crate.
+//!
+//! `scrub_walk` applies the same field-name dictionary structurally: a dict
+//! value is masked whole, by its key, before recursing (see
+//! [`crate::detectors::key_field_category`]), so `{"last_name": "Grabbe"}` is
+//! caught even though the string leaf `"Grabbe"` alone carries no `key:`
+//! context for `scrub_text_langs`'s pattern pass to see.
 //!
 //! MCP binary content is left unscrubbed (foro-pii `binaryKey` parity): on an
 //! object with `type` of `image` or `audio` and a string `data`, that `data`
@@ -12,7 +20,7 @@
 //! by shape, not key alone. Binary leaves are excluded from the
 //! `MAX_SCRUB_BYTES` string-leaf sum.
 
-use crate::detectors::{detectors_for, PiiCategory};
+use crate::detectors::{detectors_for, key_field_category, looks_like_name, PiiCategory};
 use std::borrow::Cow;
 use std::collections::BTreeMap;
 use thiserror::Error;
@@ -262,9 +270,26 @@ mod payload {
                 for (key, item) in map {
                     if skip.as_deref() == Some(key.as_str()) {
                         out.insert(key, item);
-                    } else {
-                        out.insert(key, scrub_walk(item, counts, depth + 1, langs)?);
+                        continue;
                     }
+                    if let Value::String(s) = &item {
+                        if !s.is_empty() {
+                            if let Some((category, ambiguous)) = key_field_category(&key) {
+                                if !ambiguous || looks_like_name(s) {
+                                    bump_count(counts, category, 1);
+                                    out.insert(
+                                        key,
+                                        Value::String(format!(
+                                            "[{}]",
+                                            category.as_str().to_uppercase()
+                                        )),
+                                    );
+                                    continue;
+                                }
+                            }
+                        }
+                    }
+                    out.insert(key, scrub_walk(item, counts, depth + 1, langs)?);
                 }
                 Ok(Value::Object(out))
             }
@@ -980,5 +1005,136 @@ mod tests {
         .unwrap();
         assert_eq!(r.payload, serde_json::json!({"blob": "mail [EMAIL]"}));
         assert_eq!(r.counts["email"], 1);
+    }
+
+    #[test]
+    fn masks_person_after_a_recognized_key() {
+        let langs = [LanguageCode::En, LanguageCode::Nl, LanguageCode::De];
+        for (text, expected) in [
+            (r#""last_name": "Grabbe""#, r#""last_name": "[PERSON]""#),
+            ("Nachname: Eckerlin", "Nachname: [PERSON]"),
+            ("voornaam: Anne-Marie", "voornaam: [PERSON]"),
+            ("given name=Jan", "given name=[PERSON]"),
+            (r#""last_name1": "Müller""#, r#""last_name1": "[PERSON]""#),
+            ("naam: Jan van Dijk", "naam: [PERSON]"),
+        ] {
+            let r = scrub_text_langs(text, &langs, true).unwrap();
+            assert_eq!(r.text, expected, "{text:?}");
+            assert_eq!(r.counts["person"], 1, "{text:?}");
+        }
+    }
+
+    #[test]
+    fn masks_address_after_a_recognized_key() {
+        let langs = [LanguageCode::En, LanguageCode::Nl, LanguageCode::De];
+        for (text, expected) in [
+            ("Straße: Jahnstraße", "Straße: [ADDRESS]"),
+            ("Postleitzahl: 33613", "Postleitzahl: [ADDRESS]"),
+            (r#""city": "Rotterdam""#, r#""city": "[ADDRESS]""#),
+            ("stad: Utrecht", "stad: [ADDRESS]"),
+            ("zip=90210", "zip=[ADDRESS]"),
+            ("state: California", "state: [ADDRESS]"),
+        ] {
+            let r = scrub_text_langs(text, &langs, true).unwrap();
+            assert_eq!(r.text, expected, "{text:?}");
+            assert_eq!(r.counts["address"], 1, "{text:?}");
+        }
+    }
+
+    #[test]
+    fn street_plus_comma_house_number_stays_one_value() {
+        let nl = [LanguageCode::Nl];
+        let r = scrub_text_langs("Straat: Kerkstraat, 12", &nl, true).unwrap();
+        assert_eq!(r.text, "Straat: [ADDRESS]");
+        assert_eq!(r.counts["address"], 1);
+    }
+
+    #[test]
+    fn trailing_sentence_punctuation_stays_outside_the_mask() {
+        let de = [LanguageCode::De];
+        let r = scrub_text_langs("Nachname: Eckerlin.", &de, true).unwrap();
+        assert_eq!(r.text, "Nachname: [PERSON].");
+    }
+
+    #[test]
+    fn ambiguous_or_compound_keys_are_not_masked() {
+        let langs = [LanguageCode::En, LanguageCode::Nl, LanguageCode::De];
+        for text in [
+            r#"name: "build-cache""#,
+            r#""name": "build-cache""#,
+            "city_count: 3",
+            "street_view: true",
+            "state: active",
+            "state: running",
+            "username: ada",
+        ] {
+            let r = scrub_text_langs(text, &langs, true).unwrap();
+            assert_eq!(r.text, text, "{text:?}");
+            assert_eq!(r.counts["person"], 0, "{text:?}");
+            assert_eq!(r.counts["address"], 0, "{text:?}");
+        }
+    }
+
+    #[test]
+    fn bare_name_key_masks_a_real_name() {
+        let langs = [LanguageCode::En, LanguageCode::Nl];
+        let r = scrub_text_langs(r#""name": "Jan Jansen""#, &langs, true).unwrap();
+        assert_eq!(r.text, r#""name": "[PERSON]""#);
+        assert_eq!(r.counts["person"], 1);
+    }
+
+    #[test]
+    fn glued_digit_suffix_key_can_collide_with_nl_passport_shape() {
+        // Known gap (see `kv_value_span`): the key text itself is left in
+        // place, so a camelCase key with no separator before its digit
+        // suffix can coincidentally pass the format-only NL passport check.
+        // The value is still masked either way — no leak, just an odd label
+        // on the key.
+        let nl = [LanguageCode::Nl];
+        let r = scrub_text_langs(r#""LastName1": "Müller""#, &nl, true).unwrap();
+        assert_eq!(r.text, r#""[PASSPORT]": "[PERSON]""#);
+    }
+
+    #[cfg(feature = "payload")]
+    #[test]
+    fn key_aware_masking_by_dict_key() {
+        let langs = vec!["en".to_string(), "nl".to_string(), "de".to_string()];
+        let r = scrub_payload(
+            serde_json::json!({
+                "last_name": "Grabbe",
+                "city": "Amsterdam",
+                "other": "ok",
+                "name": "build-cache",
+                "state": "active",
+            }),
+            Some(&langs),
+        )
+        .unwrap();
+        assert_eq!(
+            r.payload,
+            serde_json::json!({
+                "last_name": "[PERSON]",
+                "city": "[ADDRESS]",
+                "other": "ok",
+                "name": "build-cache",
+                "state": "active",
+            })
+        );
+        assert_eq!(r.counts["person"], 1);
+        assert_eq!(r.counts["address"], 1);
+    }
+
+    #[cfg(feature = "payload")]
+    #[test]
+    fn key_aware_masking_runs_on_siblings_of_a_skipped_binary_field() {
+        let langs = vec!["de".to_string()];
+        let r = scrub_payload(
+            serde_json::json!({"type": "image", "data": "AAAA", "nachname": "Eckerlin"}),
+            Some(&langs),
+        )
+        .unwrap();
+        assert_eq!(r.payload["data"], "AAAA");
+        assert_eq!(r.payload["nachname"], "[PERSON]");
+        assert_eq!(r.counts["person"], 1);
     }
 }

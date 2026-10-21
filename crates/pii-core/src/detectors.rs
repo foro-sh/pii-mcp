@@ -17,6 +17,15 @@
 //! uppercase prefix. A compact hit next to `-` or before `=`, or a suffixless
 //! hit followed by another digit group, is left alone; URL path segments are
 //! masked.
+//! Key-aware masking (`person`, `address`; issue #52): a value right after a
+//! recognized EN/NL/DE field name (`name`/`vorname`/`naam`,
+//! `street`/`straße`/`straat`, `postcode`/`plz`/`zip`, `city`/`stadt`/
+//! `plaats`, …) is masked whole, with no format check. A key normalizes
+//! case, `_`/`-`/space separators and a trailing numeric suffix
+//! (`LastName1`) before an exact match, so a compound key (`city_count`,
+//! `street_view`, `username`) is left alone. `name` and `state` are
+//! ambiguous (`name: "build-cache"`, `state: "active"`) and are gated on the
+//! value looking like one or more capitalized words. See `scrub_key_value`.
 
 use crate::checksum::{
     bsn_valid_grouped, iban_valid, imei_valid, is_group_sep, itin_valid_grouped, luhn_valid,
@@ -2091,7 +2100,268 @@ fn scrub_nl_license_plate(text: &str) -> (Option<String>, u32) {
     )
 }
 
+// --- Key-aware masking (person / address; issue #52) ------------------------
+//
+// EN/NL/DE field names collected from tool-output samples where pattern
+// detectors have nothing to key off (a lone `"Grabbe"` or `"33613"`).
+// Canonical keys use a space to mark a word break; `key_alternation` turns
+// that into a separator class so `first_name` / `First Name` / `firstname`
+// all match the same entry.
+const PERSON_KEYS: &[&str] = &[
+    "name",
+    "first_name",
+    "given name",
+    "last_name",
+    "vorname",
+    "nachname",
+    "voornaam",
+    "achternaam",
+    "naam",
+];
+const ADDRESS_KEYS: &[&str] = &[
+    "street",
+    "straße",
+    "strasse",
+    "straat",
+    "straatnaam",
+    "address",
+    "adresse",
+    "adres",
+    "building number",
+    "huisnummer",
+    "gebäude",
+    "gebaeude",
+    "postcode",
+    "postal code",
+    "postleitzahl",
+    "plz",
+    "zip",
+    "city",
+    "stadt",
+    "stad",
+    "plaats",
+    "ort",
+    "state",
+    "bundesland",
+    "provincie",
+];
+// Bare `name` doubles as a resource/build-artifact field (`name: "build-
+// cache"`) and `state` as a job/resource status (`state: "active"`), far
+// more often than either means a person or a US state in tool output; every
+// other key above is specific enough to skip the value gate.
+const AMBIGUOUS_KEYS: &[&str] = &["name", "state"];
+
+fn split_key_words(key: &str) -> Vec<&str> {
+    key.split(|c: char| c.is_whitespace() || c == '_' || c == '-')
+        .filter(|w| !w.is_empty())
+        .collect()
+}
+
+/// Case/separator-insensitive key id: drop `_`/`-`/space separators,
+/// lowercase, then drop a trailing numeric suffix (`LastName1` ->
+/// `lastname`). Used for an exact match so a compound key (`city_count`,
+/// `street_view`, `username`) never collides with a bare one.
+pub fn normalize_key(key: &str) -> String {
+    let compact: String = key
+        .chars()
+        .filter(|c| !(c.is_whitespace() || *c == '_' || *c == '-'))
+        .collect::<String>()
+        .to_lowercase();
+    compact
+        .trim_end_matches(|c: char| c.is_ascii_digit())
+        .to_string()
+}
+
+fn person_key_ids() -> &'static [String] {
+    static IDS: OnceLock<Vec<String>> = OnceLock::new();
+    IDS.get_or_init(|| PERSON_KEYS.iter().map(|k| normalize_key(k)).collect())
+}
+
+fn address_key_ids() -> &'static [String] {
+    static IDS: OnceLock<Vec<String>> = OnceLock::new();
+    IDS.get_or_init(|| ADDRESS_KEYS.iter().map(|k| normalize_key(k)).collect())
+}
+
+/// `(category, ambiguous)` for a recognized person/address field name,
+/// `None` otherwise. `ambiguous` marks a key (`name`, `state`) whose value
+/// needs `looks_like_name` before it is masked.
+pub fn key_field_category(key: &str) -> Option<(PiiCategory, bool)> {
+    let key_id = normalize_key(key);
+    if person_key_ids().contains(&key_id) {
+        return Some((PiiCategory::Person, AMBIGUOUS_KEYS.contains(&key_id.as_str())));
+    }
+    if address_key_ids().contains(&key_id) {
+        return Some((PiiCategory::Address, AMBIGUOUS_KEYS.contains(&key_id.as_str())));
+    }
+    None
+}
+
+const NAME_PARTICLES: &[&str] = &[
+    "van", "der", "de", "den", "het", "ten", "ter", "von", "zu", "el", "al", "bin", "da",
+];
+
+/// True when every word is a capitalized name/place part or a lowercase name
+/// particle (`Jan van Dijk`), and at least one word is capitalized. Gates the
+/// ambiguous `name` and `state` keys: `build-cache`, `true` and `active` fail
+/// this; `Grabbe`, `O'Brien` and `California` pass.
+pub fn looks_like_name(value: &str) -> bool {
+    let mut found_capitalized = false;
+    for word in value.split_whitespace() {
+        let core = word.trim_matches(|c: char| ".,;:'\"".contains(c));
+        if core.is_empty() {
+            continue;
+        }
+        if NAME_PARTICLES.contains(&core.to_lowercase().as_str()) {
+            continue;
+        }
+        let first = match core.chars().next() {
+            Some(c) => c,
+            None => continue,
+        };
+        let letters: String = core.chars().filter(|&c| c != '-' && c != '\'').collect();
+        if !first.is_uppercase() || letters.is_empty() || !letters.chars().all(char::is_alphabetic)
+        {
+            return false;
+        }
+        found_capitalized = true;
+    }
+    found_capitalized
+}
+
+fn key_alternation(keys: &[&str]) -> String {
+    keys.iter()
+        .map(|key| {
+            split_key_words(key)
+                .iter()
+                .map(|w| regex::escape(w))
+                .collect::<Vec<_>>()
+                .join(r"[\s_-]*")
+        })
+        .collect::<Vec<_>>()
+        .join("|")
+}
+
+fn person_key_re() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| {
+        Regex::new(&format!(
+            r#"(?i)(?-u:\b)(?P<key>{})\d*"?[ \t]*[:=][ \t]*"#,
+            key_alternation(PERSON_KEYS)
+        ))
+        .unwrap()
+    })
+}
+
+fn address_key_re() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| {
+        Regex::new(&format!(
+            r#"(?i)(?-u:\b)(?P<key>{})\d*"?[ \t]*[:=][ \t]*"#,
+            key_alternation(ADDRESS_KEYS)
+        ))
+        .unwrap()
+    })
+}
+
+/// Value span right after a matched `key:`/`key=`: to the matching closing
+/// quote, or, unquoted, up to the end of the line (trailing spaces/tabs and
+/// one run of trailing sentence punctuation trimmed, so
+/// `adres: Hoofdstraat 12.` keeps the `.` outside the mask). A comma does not
+/// end an unquoted value — `Straat: Kerkstraat, 12` must stay one value for
+/// the existing street + house-number masking to keep seeing it whole — so a
+/// single line holding more than one bare `key: value` pair (`a: 1, b: 2`)
+/// over-masks past the first comma; quoted values do not have this gap.
+///
+/// The key text itself is left in place (only the value is replaced), so a
+/// later detector still scans it: a key glued with no separator before its
+/// digit suffix (`LastName2`) can coincidentally match the loose NL passport
+/// shape and get labeled `[PASSPORT]`. Running first, so this detector
+/// claims the value before anything else can, is safer than the alternative
+/// (running last risks a coincidental key match hiding the value from this
+/// detector entirely, leaking it).
+fn kv_value_span(text: &str, start: usize) -> (usize, usize) {
+    let n = text.len();
+    let bytes = text.as_bytes();
+    if start < n && (bytes[start] == b'"' || bytes[start] == b'\'') {
+        let quote = bytes[start] as char;
+        let after = start + 1;
+        let close = text[after..].find(quote).map(|i| after + i);
+        let newline = text[after..].find('\n').map(|i| after + i);
+        return match (close, newline) {
+            (Some(c), Some(nl)) if nl < c => (after, nl),
+            (Some(c), _) => (after, c),
+            (None, Some(nl)) => (after, nl),
+            (None, None) => (after, n),
+        };
+    }
+    let newline = text[start..].find('\n').map(|i| start + i);
+    let mut end = newline.unwrap_or(n);
+    while end > start && matches!(bytes[end - 1], b' ' | b'\t') {
+        end -= 1;
+    }
+    while end > start && matches!(bytes[end - 1], b'.' | b',' | b';' | b':' | b'!' | b'?') {
+        end -= 1;
+    }
+    while end > start && matches!(bytes[end - 1], b' ' | b'\t') {
+        end -= 1;
+    }
+    (start, end)
+}
+
+fn scrub_key_value(
+    text: &str,
+    key_re: &Regex,
+    placeholder: &str,
+    check_ambiguous: bool,
+) -> (Option<String>, u32) {
+    let mut count = 0u32;
+    let mut out: Option<String> = None;
+    let mut last = 0usize;
+    let mut pos = 0usize;
+    while let Some(caps) = key_re.captures_at(text, pos) {
+        let whole = caps.get(0).unwrap();
+        let key_text = caps.name("key").unwrap().as_str();
+        let (inner_start, inner_end) = kv_value_span(text, whole.end());
+        let value = &text[inner_start..inner_end];
+        let ambiguous =
+            check_ambiguous && AMBIGUOUS_KEYS.contains(&normalize_key(key_text).as_str());
+        if value.is_empty() || (ambiguous && !looks_like_name(value)) {
+            pos = whole.end();
+            continue;
+        }
+        let buf = out.get_or_insert_with(|| String::with_capacity(text.len()));
+        buf.push_str(&text[last..inner_start]);
+        buf.push_str(placeholder);
+        last = inner_end;
+        pos = inner_end;
+        count += 1;
+    }
+    match out {
+        None => (None, 0),
+        Some(mut buf) => {
+            buf.push_str(&text[last..]);
+            (Some(buf), count)
+        }
+    }
+}
+
+fn scrub_key_value_person(text: &str) -> (Option<String>, u32) {
+    scrub_key_value(text, person_key_re(), "[PERSON]", true)
+}
+
+fn scrub_key_value_address(text: &str) -> (Option<String>, u32) {
+    scrub_key_value(text, address_key_re(), "[ADDRESS]", true)
+}
+
 const UNIVERSAL: &[Detector] = &[
+    Detector {
+        category: PiiCategory::Person,
+        scrub: scrub_key_value_person,
+    },
+    Detector {
+        category: PiiCategory::Address,
+        scrub: scrub_key_value_address,
+    },
     Detector {
         category: PiiCategory::Email,
         scrub: scrub_email,
