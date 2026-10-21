@@ -2195,6 +2195,15 @@ fn build_detectors(mask: u8) -> Vec<Detector> {
             scrub: scrub_phone_en,
         });
     }
+    // Before DE phone: a grouped BE rijksregisternummer is an 11-digit run
+    // with single-char separators, the same shape `scrub_phone_de` scans for
+    // once a `0` digit turns up in it.
+    if has_nl {
+        pack.push(Detector {
+            category: PiiCategory::Bsn,
+            scrub: scrub_be_nrn,
+        });
+    }
     if has_de {
         pack.push(Detector {
             category: PiiCategory::Phone,
@@ -2220,10 +2229,6 @@ fn build_detectors(mask: u8) -> Vec<Detector> {
         pack.push(Detector {
             category: PiiCategory::Bsn,
             scrub: scrub_bsn,
-        });
-        pack.push(Detector {
-            category: PiiCategory::Bsn,
-            scrub: scrub_be_nrn,
         });
         pack.push(Detector {
             category: PiiCategory::Passport,

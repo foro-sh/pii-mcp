@@ -716,6 +716,16 @@ mod tests {
     }
 
     #[test]
+    fn be_nrn_preferred_over_de_phone_when_both_packs() {
+        // A leading-zero birth year is also a DE national phone shape.
+        let langs = vec!["de".to_string(), "nl".to_string()];
+        let r = scrub_text("rrn 05.07.15-123.95 on file", Some(&langs), true).unwrap();
+        assert_eq!(r.text, "rrn [BSN] on file");
+        assert_eq!(r.counts["bsn"], 1);
+        assert_eq!(r.counts["phone"], 0);
+    }
+
+    #[test]
     fn masks_uk_postcode_in_every_outward_shape() {
         let langs = vec!["en".to_string()];
         for value in [
