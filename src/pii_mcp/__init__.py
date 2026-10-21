@@ -1,9 +1,10 @@
 """Pattern-based PII scrubbing for MCP tool/resource/prompt results.
 
 Sync, in-process, regex + checksum detectors, including street + house
-number addresses. ``person`` counts stay 0 until key-aware masking (issue
-#52); in-process NER is out of scope — use Presidio or another out-of-process
-NER for names in prose.
+number addresses. ``person`` is key-aware only (issue #52): a value right
+after a recognized field name (``last_name``, ``vorname``, ``naam``, …) is
+masked; in-process NER is out of scope — use Presidio or another
+out-of-process NER for names in prose.
 """
 
 from __future__ import annotations

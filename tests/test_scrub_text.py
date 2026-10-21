@@ -753,10 +753,12 @@ class TestUkPostcode:
         assert result["counts"]["address"] == 2
 
     def test_masks_inside_json(self) -> None:
+        # "city" is a key-aware address field (issue #52): its value is
+        # masked too, on top of the postcode the pattern detector alone finds.
         result = scrub_text(
             '{"postcode": "EC1A 1BB", "city": "London"}', languages=["en"]
         )
-        assert result["text"] == '{"postcode": "[ADDRESS]", "city": "London"}'
+        assert result["text"] == '{"postcode": "[ADDRESS]", "city": "[ADDRESS]"}'
 
     def test_masks_inside_csv(self) -> None:
         result = scrub_text("id,SW1A 1AA,2024-01-15,active", languages=["en"])
@@ -1022,3 +1024,77 @@ class TestSizeCap:
     def test_unknown_language(self) -> None:
         with pytest.raises(ValueError, match="unknown language"):
             scrub_text("hi", languages=["fr"])
+
+
+class TestKeyAwareMasking:
+    @pytest.mark.parametrize(
+        ("text", "expected"),
+        [
+            ('"last_name": "Grabbe"', '"last_name": "[PERSON]"'),
+            ("Nachname: Eckerlin", "Nachname: [PERSON]"),
+            ("voornaam: Anne-Marie", "voornaam: [PERSON]"),
+            ("given name=Jan", "given name=[PERSON]"),
+            ('"last_name1": "Müller"', '"last_name1": "[PERSON]"'),
+            ("naam: Jan van Dijk", "naam: [PERSON]"),
+        ],
+    )
+    def test_masks_person_after_a_recognized_key(self, text: str, expected: str) -> None:
+        result = scrub_text(text, languages=["en", "nl", "de"])
+        assert result["text"] == expected
+        assert result["counts"]["person"] == 1
+
+    @pytest.mark.parametrize(
+        ("text", "expected"),
+        [
+            ("Straße: Jahnstraße", "Straße: [ADDRESS]"),
+            ("Postleitzahl: 33613", "Postleitzahl: [ADDRESS]"),
+            ('"city": "Rotterdam"', '"city": "[ADDRESS]"'),
+            ("stad: Utrecht", "stad: [ADDRESS]"),
+            ("zip=90210", "zip=[ADDRESS]"),
+            ("state: California", "state: [ADDRESS]"),
+        ],
+    )
+    def test_masks_address_after_a_recognized_key(self, text: str, expected: str) -> None:
+        result = scrub_text(text, languages=["en", "nl", "de"])
+        assert result["text"] == expected
+        assert result["counts"]["address"] == 1
+
+    def test_street_plus_comma_house_number_stays_one_value(self) -> None:
+        result = scrub_text("Straat: Kerkstraat, 12", languages=["nl"])
+        assert result["text"] == "Straat: [ADDRESS]"
+        assert result["counts"]["address"] == 1
+
+    def test_trailing_sentence_punctuation_stays_outside_the_mask(self) -> None:
+        result = scrub_text("Nachname: Eckerlin.", languages=["de"])
+        assert result["text"] == "Nachname: [PERSON]."
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            'name: "build-cache"',
+            '"name": "build-cache"',
+            "city_count: 3",
+            "street_view: true",
+            "state: active",
+            "state: running",
+            "username: ada",
+        ],
+    )
+    def test_ambiguous_or_compound_keys_are_not_masked(self, text: str) -> None:
+        result = scrub_text(text, languages=["en", "nl", "de"])
+        assert result["text"] == text
+        assert result["counts"]["person"] == 0
+        assert result["counts"]["address"] == 0
+
+    def test_bare_name_key_masks_a_real_name(self) -> None:
+        result = scrub_text('"name": "Jan Jansen"', languages=["en", "nl"])
+        assert result["text"] == '"name": "[PERSON]"'
+        assert result["counts"]["person"] == 1
+
+    def test_glued_digit_suffix_key_can_collide_with_nl_passport_shape(self) -> None:
+        """Known gap (see ``_kv_value_span``): the key text itself is left in
+        place, so a camelCase key with no separator before its digit suffix
+        can coincidentally pass the format-only NL passport check. The value
+        is still masked either way — no leak, just an odd label on the key."""
+        result = scrub_text('"LastName1": "Müller"', languages=["nl"])
+        assert result["text"] == '"[PASSPORT]": "[PERSON]"'

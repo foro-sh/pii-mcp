@@ -179,3 +179,42 @@ def test_blob_without_uri_is_scrubbed() -> None:
     result = scrub_payload({"blob": "mail ada@example.com"})
     assert result["payload"] == {"blob": "mail [EMAIL]"}
     assert result["counts"]["email"] == 1
+
+
+def test_key_aware_masking_by_dict_key() -> None:
+    """A key-aware field is masked whole by its dict key (issue #52): the
+    bare string leaf alone (``"Grabbe"``) carries no ``key:`` context for
+    ``scrub_text``'s pattern pass to see."""
+    result = scrub_payload(
+        {
+            "last_name": "Grabbe",
+            "city": "Amsterdam",
+            "other": "ok",
+            "name": "build-cache",
+            "state": "active",
+        },
+        languages=["en", "nl", "de"],
+    )
+    assert result["payload"] == {
+        "last_name": "[PERSON]",
+        "city": "[ADDRESS]",
+        "other": "ok",
+        "name": "build-cache",
+        "state": "active",
+    }
+    assert result["counts"]["person"] == 1
+    assert result["counts"]["address"] == 1
+
+
+def test_key_aware_masking_runs_on_siblings_of_a_skipped_binary_field() -> None:
+    result = scrub_payload(
+        {
+            "type": "image",
+            "data": "AAAA",
+            "nachname": "Eckerlin",
+        },
+        languages=["de"],
+    )
+    assert result["payload"]["data"] == "AAAA"
+    assert result["payload"]["nachname"] == "[PERSON]"
+    assert result["counts"]["person"] == 1

@@ -112,9 +112,30 @@ Patterns:
   12-digit UPC collisions; same hex-glue guard). All phone forms also accept
   nbsp, thin / narrow nbsp, and unicode dashes between groups.
 - BSN spaced/dotted/hyphenated ``111-222-333`` groups.
+- Key-aware masking (``person``, ``address``; issue #52): a value that sits
+  right after a recognized field name is masked whole, with no format check —
+  most names and address parts in tool output (``"last_name": "Grabbe"``,
+  ``Nachname: Eckerlin``, ``PLZ: 33613``) give pattern detectors nothing else
+  to key off. Runs on ``key: value``, ``key=value`` and ``"key": "value"``
+  on one line; a key normalizes case, ``_``/``-``/space separators, and a
+  trailing numeric suffix (``LastName1``, ``lastName2``) before an exact
+  match against the EN/NL/DE field-name list (``name``/``vorname``/``naam``,
+  ``street``/``straße``/``straat``, ``postcode``/``plz``/``zip``,
+  ``city``/``stadt``/``plaats``, …) — a compound key such as ``city_count`` or
+  ``street_view`` normalizes to something else entirely and is left alone. The
+  value runs to the matching closing quote or, unquoted, to the end of the
+  line (trailing sentence punctuation stays outside the mask; a comma does
+  not end it, so ``Straat: Kerkstraat, 12`` stays one value — see
+  ``_kv_value_span``). ``name``
+  (resource/build names, ``name: "build-cache"``) and ``state`` (job/resource
+  status, ``state: "active"``) are ambiguous and gated: the value must look
+  like one or more capitalized words (Dutch/German particles — ``van``,
+  ``der``, ``von``, … — stay lowercase). ``scrub_payload`` applies the same
+  dictionary structurally, by dict key, in ``_scrub_walk``.
 
-``UNIVERSAL_DETECTORS`` (email, IBAN, credit card, BIC, MAC, IMEI, IP, location)
-always run; locale detectors are selected by ``languages=`` in the scrub layer.
+``UNIVERSAL_DETECTORS`` (key-aware person/address, email, IBAN, credit card,
+BIC, MAC, IMEI, IP, location) always run; locale detectors are selected by
+``languages=`` in the scrub layer.
 """
 
 from __future__ import annotations
@@ -140,6 +161,7 @@ PiiCategory = Literal[
     "vat_id",
     "passport",
     "phone",
+    "person",
     "address",
     "license_plate",
 ]
@@ -1381,7 +1403,205 @@ nl_license_plate_detector = Detector(
     type="license_plate", scrub=_scrub_nl_license_plate
 )
 
+# --- Key-aware masking (person / address; issue #52) ------------------------
+#
+# EN/NL/DE field names collected from tool-output samples where pattern
+# detectors have nothing to key off (a lone ``"Grabbe"`` or ``"33613"``).
+# Canonical keys use a space to mark a word break; ``_key_alternation`` turns
+# that into a separator class so ``first_name`` / ``First Name`` / ``firstname``
+# all match the same entry.
+_PERSON_KEYS: tuple[str, ...] = (
+    "name",
+    "first_name",
+    "given name",
+    "last_name",
+    "vorname",
+    "nachname",
+    "voornaam",
+    "achternaam",
+    "naam",
+)
+_ADDRESS_KEYS: tuple[str, ...] = (
+    "street",
+    "straße",
+    "strasse",
+    "straat",
+    "straatnaam",
+    "address",
+    "adresse",
+    "adres",
+    "building number",
+    "huisnummer",
+    "gebäude",
+    "gebaeude",
+    "postcode",
+    "postal code",
+    "postleitzahl",
+    "plz",
+    "zip",
+    "city",
+    "stadt",
+    "stad",
+    "plaats",
+    "ort",
+    "state",
+    "bundesland",
+    "provincie",
+)
+# Bare ``name`` doubles as a resource/build-artifact field (``name: "build-
+# cache"``) and ``state`` as a job/resource status (``state: "active"``), far
+# more often than either means a person or a US state in tool output; every
+# other key above is specific enough to skip the value gate.
+_AMBIGUOUS_KEYS = frozenset({"name", "state"})
+
+_KEY_SEP_RE = re.compile(r"[\s_-]+")
+_KEY_TRAILING_DIGITS_RE = re.compile(r"\d+$")
+
+
+def normalize_key(key: str) -> str:
+    """Case/separator-insensitive key id: drop ``_``/``-``/space separators,
+    lowercase, then drop a trailing numeric suffix (``LastName1`` ->
+    ``lastname``). Used for an exact match so a compound key (``city_count``,
+    ``street_view``, ``username``) never collides with a bare one."""
+    compact = _KEY_SEP_RE.sub("", key).lower()
+    return _KEY_TRAILING_DIGITS_RE.sub("", compact)
+
+
+PERSON_KEY_IDS = frozenset(normalize_key(k) for k in _PERSON_KEYS)
+ADDRESS_KEY_IDS = frozenset(normalize_key(k) for k in _ADDRESS_KEYS)
+KeyCategory = Literal["person", "address"]
+
+
+def key_field_category(key: str) -> tuple[KeyCategory, bool] | None:
+    """``(category, ambiguous)`` for a recognized person/address field name,
+    ``None`` otherwise. ``ambiguous`` marks a key (``name``) whose value needs
+    ``looks_like_name`` before it is masked."""
+    key_id = normalize_key(key)
+    if key_id in PERSON_KEY_IDS:
+        return "person", key_id in _AMBIGUOUS_KEYS
+    if key_id in ADDRESS_KEY_IDS:
+        return "address", key_id in _AMBIGUOUS_KEYS
+    return None
+
+
+_NAME_PARTICLES = frozenset(
+    {"van", "der", "de", "den", "het", "ten", "ter", "von", "zu", "el", "al", "bin", "da"}
+)
+
+
+def looks_like_name(value: str) -> bool:
+    """True when every word is a capitalized name/place part or a lowercase
+    name particle (``Jan van Dijk``), and at least one word is capitalized.
+    Gates the ambiguous ``name`` and ``state`` keys: ``build-cache``,
+    ``true`` and ``active`` fail this; ``Grabbe``, ``O'Brien`` and
+    ``California`` pass."""
+    words = value.split()
+    if not words:
+        return False
+    found_capitalized = False
+    for word in words:
+        core = word.strip(".,;:'\"")
+        if not core:
+            continue
+        if core.lower() in _NAME_PARTICLES:
+            continue
+        letters = core.replace("-", "").replace("'", "")
+        if not core[0].isupper() or not letters.isalpha():
+            return False
+        found_capitalized = True
+    return found_capitalized
+
+
+def _key_alternation(keys: tuple[str, ...]) -> str:
+    return "|".join(
+        r"[\s_-]*".join(re.escape(word) for word in _KEY_SEP_RE.split(key) if word)
+        for key in keys
+    )
+
+
+_KEY_VALUE_FLAGS = re.ASCII | re.IGNORECASE
+PERSON_KEY_RE = re.compile(
+    rf'\b(?P<key>{_key_alternation(_PERSON_KEYS)})\d*"?[ \t]*[:=][ \t]*', _KEY_VALUE_FLAGS
+)
+ADDRESS_KEY_RE = re.compile(
+    rf'\b(?P<key>{_key_alternation(_ADDRESS_KEYS)})\d*"?[ \t]*[:=][ \t]*', _KEY_VALUE_FLAGS
+)
+
+
+def _kv_value_span(text: str, start: int) -> tuple[int, int]:
+    """Value span right after a matched ``key:``/``key=``: to the matching
+    closing quote, or, unquoted, up to the end of the line (trailing
+    spaces/tabs and one run of trailing sentence punctuation trimmed, so
+    ``adres: Hoofdstraat 12.`` keeps the ``.`` outside the mask). A comma does
+    not end an unquoted value — ``Straat: Kerkstraat, 12`` must stay one
+    value for the existing street + house-number masking to keep seeing it
+    whole — so a single line holding more than one bare ``key: value`` pair
+    (``a: 1, b: 2``) over-masks past the first comma; quoted values do not
+    have this gap.
+
+    The key text itself is left in place (only the value is replaced), so a
+    later detector still scans it: a key glued with no separator before its
+    digit suffix (``LastName2``) can coincidentally match the loose NL
+    passport shape and get labeled ``[PASSPORT]``. Running first, so this
+    detector claims the value before anything else can, is safer than the
+    alternative (running last risks a coincidental key match hiding the
+    value from this detector entirely, leaking it)."""
+    n = len(text)
+    if start < n and text[start] in "\"'":
+        quote = text[start]
+        close = text.find(quote, start + 1)
+        newline = text.find("\n", start + 1)
+        if close == -1 or (newline != -1 and newline < close):
+            return start + 1, (newline if newline != -1 else n)
+        return start + 1, close
+    newline = text.find("\n", start)
+    end = n if newline == -1 else newline
+    while end > start and text[end - 1] in " \t":
+        end -= 1
+    while end > start and text[end - 1] in ".,;:!?":
+        end -= 1
+    while end > start and text[end - 1] in " \t":
+        end -= 1
+    return start, end
+
+
+def _scrub_key_value(
+    text: str, key_re: re.Pattern[str], placeholder: str, check_ambiguous: bool
+) -> tuple[str, int]:
+    count = 0
+    parts: list[str] = []
+    last = pos = 0
+    while (match := key_re.search(text, pos)) is not None:
+        inner_start, inner_end = _kv_value_span(text, match.end())
+        value = text[inner_start:inner_end]
+        ambiguous = check_ambiguous and normalize_key(match.group("key")) in _AMBIGUOUS_KEYS
+        if not value or (ambiguous and not looks_like_name(value)):
+            pos = match.end()
+            continue
+        parts.append(text[last:inner_start])
+        parts.append(placeholder)
+        last = pos = inner_end
+        count += 1
+    if count == 0:
+        return text, 0
+    parts.append(text[last:])
+    return "".join(parts), count
+
+
+def _scrub_key_value_person(text: str) -> tuple[str, int]:
+    return _scrub_key_value(text, PERSON_KEY_RE, "[PERSON]", check_ambiguous=True)
+
+
+def _scrub_key_value_address(text: str) -> tuple[str, int]:
+    return _scrub_key_value(text, ADDRESS_KEY_RE, "[ADDRESS]", check_ambiguous=True)
+
+
+key_value_person_detector = Detector(type="person", scrub=_scrub_key_value_person)
+key_value_address_detector = Detector(type="address", scrub=_scrub_key_value_address)
+
 UNIVERSAL_DETECTORS: tuple[Detector, ...] = (
+    key_value_person_detector,
+    key_value_address_detector,
     email_detector,
     iban_detector,
     credit_card_detector,

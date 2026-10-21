@@ -1,11 +1,19 @@
 """Language packs and scrub walk for pattern-based detectors.
 
-Universal detectors (email, IBAN, credit card, BIC, MAC, IMEI, IP, location)
-always run. Locale packs add national IDs / phone shapes / NL and UK postcodes /
-kentekens / VAT IDs / passport numbers. Counts always include every
-``PiiType`` key (0 when unused). ``person`` stays 0 until key-aware masking
-lands (issue #52); in-process NER is out of scope. ``address`` counts street
-+ house number hits and NL / UK postcodes.
+Universal detectors (key-aware person/address, email, IBAN, credit card, BIC,
+MAC, IMEI, IP, location) always run. Locale packs add national IDs / phone
+shapes / NL and UK postcodes / kentekens / VAT IDs / passport numbers. Counts
+always include every ``PiiType`` key (0 when unused). ``person`` is pattern-
+free: it only fires when a value sits right after a recognized field name
+(issue #52); in-process NER is out of scope. ``address`` counts street +
+house number hits, NL / UK postcodes, and key-aware street/postcode/place
+hits.
+
+``_scrub_walk`` applies the same field-name dictionary structurally: a dict
+value is masked whole, by its key, before recursing (see
+``detectors.key_field_category``), so ``{"last_name": "Grabbe"}`` is caught
+even though the string leaf ``"Grabbe"`` alone carries no ``key:`` context
+for ``scrub_text``'s pattern pass to see.
 
 ``MAX_SCRUB_BYTES`` matches foro-proxy (32 MiB). Oversize raises
 ``PiiScrubError`` so callers withhold rather than forward unscrubbed text.
@@ -47,6 +55,8 @@ from pii_mcp.detectors import (
     bsn_detector,
     de_vat_detector,
     itin_detector,
+    key_field_category,
+    looks_like_name,
     nhs_detector,
     nino_detector,
     nl_license_plate_detector,
@@ -339,14 +349,21 @@ def _scrub_walk(
         return [_scrub_walk(item, counts, depth + 1, languages) for item in value]
     if isinstance(value, dict):
         skip = _binary_key(value)
-        return {
-            key: (
-                item
-                if key == skip
-                else _scrub_walk(item, counts, depth + 1, languages)
-            )
-            for key, item in value.items()
-        }
+        out: dict[str, Any] = {}
+        for key, item in value.items():
+            if key == skip:
+                out[key] = item
+                continue
+            if isinstance(item, str) and item:
+                field = key_field_category(key)
+                if field is not None:
+                    category, ambiguous = field
+                    if not ambiguous or looks_like_name(item):
+                        counts[category] += 1
+                        out[key] = f"[{category.upper()}]"
+                        continue
+            out[key] = _scrub_walk(item, counts, depth + 1, languages)
+        return out
     if value is None or isinstance(value, (bool, int, float)):
         return value
     raise PiiScrubError(
