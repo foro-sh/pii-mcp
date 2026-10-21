@@ -17,8 +17,8 @@ an NL trunk-``0`` phone match can start in its middle group) → locale phone
 forms (before BSN takes the subscriber part of ``040 78703244``) →
 checksum/rule-backed national IDs (DE IdNr before BSN, BSN before SSN when
 both packs are on, US ITIN before SSN; DE USt-IdNr and NL BTW before BSN,
-passport after) → street + house number per pack (en, de, nl) → postcode
-per pack → kenteken when ``nl``.
+DE/NL passport after) → street + house number per pack (en, de, nl) →
+postcode per pack → kenteken when ``nl``.
 
 MCP binary content is left unscrubbed (foro-pii ``binaryKey`` parity): on an
 object with ``type`` of ``image`` or ``audio`` and a string ``data``, that
@@ -45,6 +45,7 @@ from pii_mcp.detectors import (
     UNIVERSAL_DETECTORS,
     Detector,
     bsn_detector,
+    de_passport_detector,
     de_vat_detector,
     itin_detector,
     nhs_detector,
@@ -227,6 +228,7 @@ def _detectors_for(languages: Sequence[str] | None) -> tuple[Detector, ...]:
         # spaced 9-digit BSN candidate.
         pack.append(tax_id_detector)
         pack.append(de_vat_detector)
+        pack.append(de_passport_detector)
     if "nl" in langs:
         # BTW-id first: its 9-digit body can itself pass the BSN elfproef.
         pack.append(nl_vat_detector)

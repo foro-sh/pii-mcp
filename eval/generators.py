@@ -297,6 +297,39 @@ def passport_nl(r: R) -> str:
     )
 
 
+# Copied, not imported: the eval must not share logic with the code it scores.
+_DE_DOC_FIRST = "LMNPRTVWXY" + "CFGHJK"  # id-card first letters ∪ passport first letters
+_DE_DOC_REST = "CFGHJKLMNPRTVWXYZ" + string.digits
+
+
+def _de_doc_check_digit(nine: str) -> int:
+    weights = (7, 3, 1)
+    total = 0
+    for i, ch in enumerate(nine):
+        value = int(ch) if ch.isdigit() else 10 + (ord(ch) - ord("A"))
+        total += weights[i % 3] * value
+    return total % 10
+
+
+def passport_de(r: R) -> str:
+    nine = (
+        r.choice(_DE_DOC_FIRST)
+        + "".join(r.choice(_DE_DOC_REST) for _ in range(7))
+        + r.choice(string.digits)
+    )
+    value = nine if r.random() < 0.5 else nine + str(_de_doc_check_digit(nine))
+    return value.lower() if r.random() < 0.2 else value
+
+
+def _passport_de_no_digit(r: R) -> str:
+    return r.choice(_DE_DOC_FIRST) + "".join(r.choice("CFGHJKLMNPRTVWXYZ") for _ in range(8))
+
+
+def _passport_de_bad_check_digit(r: R) -> str:
+    nine = r.choice(_DE_DOC_FIRST) + "".join(r.choice(_DE_DOC_REST) for _ in range(7)) + r.choice(string.digits)
+    return nine + str((_de_doc_check_digit(nine) + 1) % 10)
+
+
 def phone_nl(r: R) -> str:
     mobile = "6" + _digits(r, 8)
     return r.choice(
@@ -451,6 +484,7 @@ PII: list[tuple[str, Callable[[R], str], tuple[str, ...]]] = [
     ("vat_id", vat_nl, ("nl",)),
     ("vat_id", vat_de, ("de",)),
     ("passport", passport_nl, ("nl",)),
+    ("passport", passport_de, ("de",)),
     ("phone", phone_nl, ("nl",)),
     ("phone", phone_en, ("en",)),
     ("phone", phone_de, ("de",)),
@@ -490,6 +524,10 @@ CLEAN: list[tuple[str, Callable[[R], str]]] = [
     ("nino_padding", lambda r: f"JG{_digits(r, 6)}{r.choice('ABCD')}=="),
     ("vat_de_bad_checksum", lambda r: "DE136695977"),
     ("vat_de_leading_zero", lambda r: "DE036695976"),
+    ("de_passport_no_digit", _passport_de_no_digit),
+    ("de_passport_bad_check_digit", _passport_de_bad_check_digit),
+    ("de_passport_base64", lambda r: f"aGVsbG8{passport_de(r)}d29ybGQ="),
+    ("de_passport_order_ref", lambda r: f"ORD-2024-{r.randint(1, 999999):06d}"),
     ("uuid", lambda r: str(uuid.UUID(int=r.getrandbits(128), version=4))),
     ("sha256", lambda r: f"{r.getrandbits(256):064x}"),
     ("git_sha", lambda r: f"commit {r.getrandbits(160):040x}"),

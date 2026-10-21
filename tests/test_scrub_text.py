@@ -221,6 +221,86 @@ class TestDeVat:
         assert result["text"] == '{"vat":"[VAT_ID]"}'
 
 
+class TestDePassport:
+    @pytest.mark.parametrize("value", ["L01X00T47", "M12X00T47", "Y99X00T47"])
+    def test_masks_id_card_number_format_only(self, value: str) -> None:
+        result = scrub_text(f"Ausweisnummer {value} gültig", languages=["de"])
+        assert result["text"] == "Ausweisnummer [PASSPORT] gültig"
+        assert result["counts"]["passport"] == 1
+
+    @pytest.mark.parametrize("value", ["C01X00T47", "F12X00T47", "K99X00T47"])
+    def test_masks_passport_number_format_only(self, value: str) -> None:
+        result = scrub_text(f"Reisepass {value} gültig", languages=["de"])
+        assert result["text"] == "Reisepass [PASSPORT] gültig"
+        assert result["counts"]["passport"] == 1
+
+    def test_masks_with_valid_mrz_check_digit(self) -> None:
+        # Specimens from BSI/ICAO 9303: document number + check digit.
+        for value in ("L01X00T471", "C01X00T478"):
+            result = scrub_text(f"MRZ {value} end", languages=["de"])
+            assert result["text"] == "MRZ [PASSPORT] end", value
+            assert result["counts"]["passport"] == 1, value
+
+    def test_masks_lowercased(self) -> None:
+        result = scrub_text("ausweis l01x00t471 gültig", languages=["de"])
+        assert result["text"] == "ausweis [PASSPORT] gültig"
+        assert result["counts"]["passport"] == 1
+
+    def test_rejects_wrong_check_digit(self) -> None:
+        result = scrub_text("MRZ L01X00T470 end", languages=["de"])
+        assert result["text"] == "MRZ L01X00T470 end"
+        assert result["counts"]["passport"] == 0
+
+    def test_rejects_forbidden_letters(self) -> None:
+        for value in ("LA1X00T47", "LE1X00T47", "LO1X00T47", "LS1X00T47", "LU1X00T47"):
+            result = scrub_text(f"doc {value}", languages=["de"])
+            assert result["counts"]["passport"] == 0, value
+
+    def test_rejects_first_letter_outside_either_set(self) -> None:
+        for value in ("Z01X00T47", "S01X00T47", "A01X00T47"):
+            result = scrub_text(f"doc {value}", languages=["de"])
+            assert result["counts"]["passport"] == 0, value
+
+    def test_requires_at_least_one_digit(self) -> None:
+        result = scrub_text("doc LMNPRTVWX", languages=["de"])
+        assert result["text"] == "doc LMNPRTVWX"
+        assert result["counts"]["passport"] == 0
+
+    def test_disabled_without_de(self) -> None:
+        result = scrub_text("Ausweisnummer L01X00T47 gültig", languages=["en"])
+        assert result["text"] == "Ausweisnummer L01X00T47 gültig"
+        assert result["counts"]["passport"] == 0
+
+    def test_masks_inside_json_and_csv(self) -> None:
+        result = scrub_text('{"ausweis": "L01X00T47"}', languages=["de"])
+        assert result["text"] == '{"ausweis": "[PASSPORT]"}'
+        result = scrub_text("id,L01X00T47,2024-01-15,active", languages=["de"])
+        assert result["text"] == "id,[PASSPORT],2024-01-15,active"
+
+    def test_ignores_glued_tokens(self) -> None:
+        for value in (
+            "xL01X00T47",
+            "L01X00T47x",
+            "sku_L01X00T47",
+            "ORD-L01X00T47",
+            "L01X00T47-2",
+            "aGVsbG8L01X00T47d29ybGQ=",
+            "L01X00T47=",
+        ):
+            result = scrub_text(f"ref {value}", languages=["de"])
+            assert result["text"] == f"ref {value}", value
+
+    def test_leaves_base64_order_ref_and_sha256_noise_clean(self) -> None:
+        for value in (
+            "aGVsbG8gd29ybGQgdGVzdCBkYXRhIQ==",
+            "ORD-2024-048213",
+            "c0ffee00deadbeef1234567890abcdef00112233445566778899aabbccddee",
+        ):
+            result = scrub_text(f"ref {value} end", languages=["de"])
+            assert result["text"] == f"ref {value} end", value
+            assert result["counts"]["passport"] == 0, value
+
+
 class TestNlVat:
     def test_masks_btw_id(self) -> None:
         result = scrub_text("factuur NL000099998B57", languages=["nl"])
