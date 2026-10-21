@@ -211,6 +211,13 @@ class TestBeNrn:
             result = scrub_text(f"ref {bad}", languages=["nl"])
             assert result["counts"]["bsn"] == 0, bad
 
+    def test_masks_incomplete_birth_date(self) -> None:
+        """MM/DD 00 marks an incomplete birth date and is still accepted."""
+        for value in ("85.00.30-033.76", "85.07.00-028.60"):
+            result = scrub_text(f"rrn {value} on file", languages=["nl"])
+            assert result["text"] == "rrn [BSN] on file", value
+            assert result["counts"]["bsn"] == 1
+
     def test_ignores_compact(self) -> None:
         result = scrub_text("ref 85073003328", languages=["nl"])
         assert result["text"] == "ref 85073003328"

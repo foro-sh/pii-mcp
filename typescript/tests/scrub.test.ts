@@ -270,6 +270,15 @@ describe("scrubText", () => {
     }
   });
 
+  it("masks an incomplete BE rijksregisternummer birth date", () => {
+    // MM/DD 00 marks an incomplete birth date and is still accepted.
+    for (const value of ["85.00.30-033.76", "85.07.00-028.60"]) {
+      const result = scrubText(`rrn ${value} on file`, { languages: ["nl"] });
+      expect(result.text).toBe("rrn [BSN] on file");
+      expect(result.counts.bsn).toBe(1);
+    }
+  });
+
   it("skips BE rijksregisternummer without nl", () => {
     const text = "rrn 85.07.30-033.28 on file";
     const result = scrubText(text, { languages: ["en"] });
