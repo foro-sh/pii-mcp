@@ -20,8 +20,10 @@ reuse with attribution. Credit: AI4Privacy, ai4privacy/pii-masking-openpii-1m,
 https://huggingface.co/datasets/ai4privacy/pii-masking-openpii-1m (CC BY 4.0).
 
 Its 19-label set has no IP/MAC/IBAN/coordinate labels, so this benchmark
-cannot score those categories; ``eval/score.py``'s synthetic generators
-already cover them.
+cannot score recall for those categories; ``eval/score.py``'s synthetic
+generators already cover them. Masked runs pii-mcp labels IP, email, IBAN,
+BIC, MAC, IMEI or location also carry no per-group precision here, for the
+same reason; they still count in ``no_gold_overlap_rate``.
 
 Scoring: for each text, pii-mcp's output is aligned back to the source by
 anchoring the literal (non-placeholder) chunks of the output onto the source
@@ -31,9 +33,13 @@ is the span the placeholder between them replaced. A character-level
 ``[ADDRESS]`` can share a letter with nearby source text (``...Street`` /
 ``...[ADDRE``), and ``SequenceMatcher`` then aligns on that coincidence,
 splitting one masked span into two and losing its placeholder label.
-Anchoring on whole literal chunks has no such failure mode. A gold span
-counts as caught when none of its alphanumeric characters survive unchanged
-in the output. Gold labels are
+Anchoring on whole literal chunks avoids that failure mode; its own
+remaining edge case (two placeholders with nothing between them) is
+documented on ``_diff_runs``. A gold span counts as caught when none of its
+alphanumeric characters survive unchanged in the output; a gold span with no
+alphanumeric characters at all (an empty or punctuation-only annotation, a
+known noise pattern in crowd-labeled PII datasets) is not scored either way.
+Gold labels are
 grouped: ``person`` (GIVENNAME, SURNAME), ``street_address`` (STREET,
 BUILDINGNUM, ZIPCODE), ``place`` (CITY), ``phone`` (TELEPHONENUM) and
 ``structured_id`` (SOCIALNUM, TAXNUM, IDCARDNUM, PASSPORTNUM,
@@ -162,22 +168,27 @@ def _diff_runs(source: str, output: str) -> tuple[list[bool], list[tuple[int, in
 
     ``output`` is split on ``[LABEL]`` placeholders; each literal chunk
     between them is anchored onto ``source`` in order with ``str.find``, and
-    the gap before an anchor is the span its preceding placeholder replaced.
-    A literal chunk that cannot be found downstream (the detector damaged
-    surrounding text) ends anchoring early: the remainder of ``source`` is
-    reported as one masked run under the last seen label.
+    the gap before an anchor is the span its preceding placeholder(s)
+    replaced. A literal chunk that cannot be found downstream (the detector
+    damaged surrounding text) ends anchoring early: the remainder of
+    ``source`` is reported as one masked run under the last seen label(s).
+
+    Two placeholders with no literal text between them (the source had two
+    PII values back to back, with nothing to anchor on in between) cannot be
+    told apart positionally: both get a run over the same shared span rather
+    than one silently losing its label.
     """
     kept = [True] * len(source)
     runs: list[tuple[int, int, str | None]] = []
     parts = _SPLIT_RE.split(output)
     last_idx = len(parts) - 1
     pos = 0
-    label: str | None = None
+    pending_labels: list[str] = []
     for idx, part in enumerate(parts):
         if idx % 2 == 1:
-            label = part[1:-1]
+            pending_labels.append(part[1:-1])
             continue
-        if idx == last_idx and part == "" and label is not None:
+        if idx == last_idx and part == "" and pending_labels:
             found = len(source)
         elif part:
             found = source.find(part, pos)
@@ -188,13 +199,21 @@ def _diff_runs(source: str, output: str) -> tuple[list[bool], list[tuple[int, in
         if found > pos:
             for i in range(pos, found):
                 kept[i] = False
-            runs.append((pos, found, label))
+            for label in pending_labels or [None]:
+                runs.append((pos, found, label))
+            pending_labels = []
         pos = found + len(part)
-        label = None
     return kept, runs
 
 
 def score_sample(sample: list[tuple[str, dict]]) -> dict:
+    """Score a ``[(language, row)]`` sample; ``row`` has the dataset's shape.
+
+    A gold span with no alphanumeric characters (an empty or
+    punctuation-only annotation) is excluded from every total: it carries no
+    signal either way, and counting it as automatically "caught" would
+    inflate recall whenever the dataset mislabels a span like that.
+    """
     group_totals: dict[str, int] = dict.fromkeys(GROUPS, 0)
     group_leaks: dict[str, int] = dict.fromkeys(GROUPS, 0)
     group_hits: dict[str, int] = dict.fromkeys(GROUPS, 0)
@@ -211,16 +230,22 @@ def score_sample(sample: list[tuple[str, dict]]) -> dict:
         latencies_ms.append((time.perf_counter() - t0) * 1000)
 
         kept, runs = _diff_runs(source, output)
-        gold_spans = [(g["start"], g["end"]) for g in gold]
+        gold_alnum = {
+            (g["start"], g["end"]): [i for i in range(g["start"], g["end"]) if source[i].isalnum()]
+            for g in gold
+        }
+        gold_spans = [span for span, alnum in gold_alnum.items() if alnum]
         gold_spans_by_group: dict[str, list[tuple[int, int]]] = {g: [] for g in GROUPS}
         for g in gold:
             group = LABEL_TO_GROUP.get(g["label"])
             if group is None:
                 continue
             span = (g["start"], g["end"])
+            alnum = gold_alnum[span]
+            if not alnum:
+                continue
             gold_spans_by_group[group].append(span)
             group_totals[group] += 1
-            alnum = [i for i in range(span[0], span[1]) if source[i].isalnum()]
             if any(kept[i] for i in alnum):
                 group_leaks[group] += 1
 

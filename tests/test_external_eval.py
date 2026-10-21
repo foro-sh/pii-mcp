@@ -46,6 +46,27 @@ def test_diff_runs_marks_only_the_masked_span() -> None:
     assert runs == [(masked_start, masked_end, "PHONE")]
 
 
+def test_diff_runs_keeps_both_labels_for_adjacent_placeholders() -> None:
+    """Two PII values back to back share a span; neither label is dropped."""
+    source = "Janedoe0612345678bye"
+    output = "[PERSON][PHONE]bye"
+    kept, runs = _diff_runs(source, output)
+    masked_end = len("Janedoe0612345678")
+    assert not any(kept[:masked_end])
+    assert all(kept[masked_end:])
+    assert runs == [(0, masked_end, "PERSON"), (0, masked_end, "PHONE")]
+
+
+def test_empty_gold_span_is_excluded_not_auto_caught() -> None:
+    """A zero-width or punctuation-only annotation carries no signal."""
+    sample = [("en", {
+        "source_text": "ticket --- open",
+        "privacy_mask": [{"label": "SOCIALNUM", "value": "---", "start": 7, "end": 10}],
+    })]
+    result = score_sample(sample)
+    assert result["per_group"]["structured_id"] == {"n": 0, "recall": None, "precision": None}
+
+
 def test_recall_counts_a_caught_structured_id() -> None:
     sample = [_row("BSN 111222333 on file", [("SOCIALNUM", "111222333")])]
     result = score_sample(sample)
