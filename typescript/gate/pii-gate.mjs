@@ -1112,11 +1112,14 @@ function detectorsFor(languages) {
   if (langs.includes("en")) {
     pack.push(phoneEnDetector);
   }
+  if (langs.includes("nl")) {
+    pack.push(beNrnDetector);
+  }
   if (langs.includes("de")) {
     pack.push(phoneDeDetector, taxIdDetector, deVatDetector);
   }
   if (langs.includes("nl")) {
-    pack.push(nlVatDetector, bsnDetector, beNrnDetector, nlPassportDetector);
+    pack.push(nlVatDetector, bsnDetector, nlPassportDetector);
   }
   if (langs.includes("en")) {
     pack.push(ninoDetector, itinDetector, ssnDetector, streetEnDetector, ukPostcodeDetector);

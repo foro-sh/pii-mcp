@@ -277,6 +277,14 @@ describe("scrubText", () => {
     expect(result.counts.bsn).toBe(0);
   });
 
+  it("prefers BE rijksregisternummer over DE phone with both packs", () => {
+    // A leading-zero birth year is also a DE national phone shape.
+    const result = scrubText("rrn 05.07.15-123.95 on file", { languages: ["de", "nl"] });
+    expect(result.text).toBe("rrn [BSN] on file");
+    expect(result.counts.bsn).toBe(1);
+    expect(result.counts.phone).toBe(0);
+  });
+
   it("masks grouped UK NHS numbers as ssn with en pack", () => {
     for (const value of [
       "943 476 5919",
