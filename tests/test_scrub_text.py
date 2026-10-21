@@ -220,6 +220,13 @@ class TestBeNrn:
         assert result["text"] == "rrn 85.07.30-033.28 on file"
         assert result["counts"]["bsn"] == 0
 
+    def test_preferred_over_de_phone_when_both_packs(self) -> None:
+        """A leading-zero birth year is also a DE national phone shape."""
+        result = scrub_text("rrn 05.07.15-123.95 on file", languages=["de", "nl"])
+        assert result["text"] == "rrn [BSN] on file"
+        assert result["counts"]["bsn"] == 1
+        assert result["counts"]["phone"] == 0
+
 
 class TestDeVat:
     @pytest.mark.parametrize("value", ["DE136695976", "DE 136 695 976", "DE.136.695.976"])
