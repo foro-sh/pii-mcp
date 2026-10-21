@@ -183,6 +183,29 @@ def ssn(r: R) -> str:
     return number
 
 
+def be_nrn(r: R) -> str:
+    """A grouped BE rijksregisternummer: ``YY.MM.DD-SSS.CC`` with a mod-97 check.
+
+    Half the values use a post-2000 birth year, which prefixes the 9-digit
+    body with ``2`` before the check (nl.wikipedia.org/wiki/Rijksregisternummer).
+    Only the dotted/hyphenated grouping is emitted: the detector leaves the
+    compact form alone.
+    """
+    year = r.randint(0, 99)
+    month = r.randint(1, 12)
+    day = r.randint(1, 28)
+    seq = r.randint(1, 999)
+    body = f"{year:02d}{month:02d}{day:02d}{seq:03d}"
+    n = int(body)
+    post_2000 = r.random() < 0.5
+    checked = 2_000_000_000 + n if post_2000 else n
+    check = 97 - (checked % 97)
+    sep = r.choice([".", " ", "-"])
+    return (
+        f"{body[0:2]}{sep}{body[2:4]}{sep}{body[4:6]}{sep}{body[6:9]}{sep}{check:02d}"
+    )
+
+
 def itin(r: R) -> str:
     """A grouped US ITIN: ``9XX-XX-XXXX`` with a group the IRS issues.
 
@@ -443,6 +466,7 @@ PII: list[tuple[str, Callable[[R], str], tuple[str, ...]]] = [
     ("ip", ip, ()),
     ("location", location, ()),
     ("bsn", bsn, ("nl",)),
+    ("bsn", be_nrn, ("nl",)),
     ("ssn", ssn, ("en",)),
     ("tax_id", tax_id_de, ("de",)),
     ("tax_id", itin, ("en",)),
