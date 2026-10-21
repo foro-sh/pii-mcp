@@ -78,6 +78,16 @@ Patterns:
 - UK postcode (``address``): ``NW1 6XE`` / ``EC1A 1BB``, uppercase, spaced
   (compact ``NW16XE`` collides with ordinary tokens). The outward letters must
   be a Royal Mail area, which rejects ``A4 2PK`` / ``PS5 1TB``.
+- DE postcode (``address``): a bare 5-digit number is too common to mask on
+  its own, so it needs one of three hints: a ``PLZ``/``Postleitzahl``/
+  ``postcode``/``ZIP`` label (``Postleitzahl: 33613``), a known city directly
+  after it (``10115 Berlin`` — a bare capitalized word is not enough, since
+  German nouns are always capitalized), or a nearby ``[ADDRESS]`` placeholder
+  the street detector already left (same hint used for US ZIPs). 01067-99998
+  only; ``00000``-``00999`` and ``99999`` are rejected.
+- US ZIP (``address``): 5-digit or ZIP+4 (``80920-1406``), hinted the same way
+  as DE postcodes: a label, a real two-letter state/territory code right
+  before it (``CO 80920``), or a nearby ``[ADDRESS]`` placeholder.
 - Street address (``address``): street name + house number per pack. ``nl``: a
   capitalized word ending in ``straat``/``str.``/``laan``/``weg``/``gracht``/…
   then the number (``Kerkstraat 12``), ``Grote``/``Oude``/``Nieuwe``/… before
@@ -1337,6 +1347,100 @@ street_de_detector = Detector(
     type="address", scrub=_scrub_street(STREET_DE_RE, _de_street_valid)
 )
 street_en_detector = Detector(type="address", scrub=_scrub_street(STREET_EN_RE))
+
+# Bare 5-digit numbers are too common (order refs, counts) to mask on their
+# own. A DE postcode or US ZIP is only masked next to one of three hints: a
+# PLZ/ZIP/postcode label, a city/state the postcode normally sits beside, or
+# an ``[ADDRESS]`` placeholder the street detector already left nearby. One
+# alternation per detector keeps this to a single scan over ``text``; the
+# three hints are told apart from the matched text alone (label text never
+# starts with a digit, the state form's third character is always a
+# separator), so one ``context_ok`` callback can gate every branch.
+_POSTCODE_LABEL = r"(?i:plz|postleitzahl|postal\s*code|postcode|zip(?:\s*code)?)"
+
+
+def _postcode_near_address(text: str, start: int, end: int, window: int = 40) -> bool:
+    return (
+        "[ADDRESS]" in text[max(0, start - window) : start]
+        or "[ADDRESS]" in text[end : end + window]
+    )
+
+
+# Major German cities, mirroring the UK postcode-area allowlist: any
+# capitalized word would also match ordinary German nouns (always
+# capitalized), so a small allowlist is required, not just a bare pattern.
+_DE_CITIES = frozenset(
+    """
+    Berlin Hamburg München Munich Köln Cologne Frankfurt Stuttgart
+    Düsseldorf Dortmund Essen Leipzig Bremen Dresden Hannover Nürnberg
+    Duisburg Bochum Wuppertal Bielefeld Bonn Münster Mannheim Karlsruhe
+    Augsburg Wiesbaden Mönchengladbach Gelsenkirchen Aachen Braunschweig
+    Kiel Chemnitz Halle Magdeburg Freiburg Krefeld Mainz Lübeck Erfurt
+    Oberhausen Rostock Kassel Potsdam Saarbrücken Heidelberg
+    """.split()
+)
+
+DE_POSTCODE_RE = re.compile(
+    rf"\b{_POSTCODE_LABEL}\s*[:\-]?\s*\d{{5}}\b"
+    rf"|\b\d{{5}}{_STREET_SEP}[{_STREET_UP}][{_STREET_LOW}]+\b"
+    rf"|\b\d{{5}}\b"
+)
+
+
+def _de_postcode_range_ok(digits: str) -> bool:
+    """German postcodes run 01067-99998; nothing starts ``00`` or is ``99999``."""
+    return digits[:2] != "00" and digits != "99999"
+
+
+def _de_postcode_accept(text: str, start: int, end: int) -> bool:
+    value = text[start:end]
+    if not value[0].isdigit():
+        return _de_postcode_range_ok(value[-5:])
+    if len(value) == 5:
+        return _de_postcode_range_ok(value) and _postcode_near_address(text, start, end)
+    return _de_postcode_range_ok(value[:5]) and value[5:].strip() in _DE_CITIES
+
+
+def _scrub_de_postcode(text: str) -> tuple[str, int]:
+    return _replace_matches(text, DE_POSTCODE_RE, "[ADDRESS]", context_ok=_de_postcode_accept)
+
+
+de_postcode_detector = Detector(type="address", scrub=_scrub_de_postcode)
+
+# US states, DC and the inhabited territories; mirrors the UK/DE allowlists so
+# an arbitrary two-letter token glued to a number does not pass as a hint.
+_US_STATE_ABBR = frozenset(
+    """
+    AL AK AZ AR CA CO CT DE FL GA HI ID IL IN IA KS KY LA ME MD MA MI MN MS
+    MO MT NE NV NH NJ NM NY NC ND OH OK OR PA RI SC SD TN TX UT VT VA WA WV
+    WI WY DC PR GU VI AS MP
+    """.split()
+)
+
+_US_ZIP_DIGITS = r"\d{5}(?:-\d{4})?"
+_US_ZIP_STATE_PREFIX_RE = re.compile(rf"^[A-Z]{{2}}[{_STREET_SEP_CHARS}]")
+
+US_ZIP_RE = re.compile(
+    rf"\b{_POSTCODE_LABEL}\s*[:\-]?\s*{_US_ZIP_DIGITS}\b"
+    rf"|\b[A-Z]{{2}}{_STREET_SEP}{_US_ZIP_DIGITS}\b"
+    rf"|\b{_US_ZIP_DIGITS}\b"
+)
+
+
+def _us_zip_accept(text: str, start: int, end: int) -> bool:
+    value = text[start:end]
+    if value[0].isdigit():
+        return _postcode_near_address(text, start, end)
+    if _US_ZIP_STATE_PREFIX_RE.match(value):
+        return value[:2] in _US_STATE_ABBR
+    return True
+
+
+def _scrub_us_zip(text: str) -> tuple[str, int]:
+    return _replace_matches(text, US_ZIP_RE, "[ADDRESS]", context_ok=_us_zip_accept)
+
+
+us_zip_detector = Detector(type="address", scrub=_scrub_us_zip)
 
 # Hyphenated RDW sidecodes 1–14 only (compact forms are too collision-prone).
 NL_LICENSE_PLATE_RE = re.compile(

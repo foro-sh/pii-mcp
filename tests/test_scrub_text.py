@@ -832,7 +832,7 @@ class TestStreetAddress:
             ("1600 Pennsylvania Avenue NW", "en", "[ADDRESS] NW"),
             ("at 10 Downing St. today", "en", "at [ADDRESS] today"),
             ("12 Baker Street Station", "en", "[ADDRESS] Station"),
-            ("Hauptstraße 5a, 10115 Berlin", "de", "[ADDRESS], 10115 Berlin"),
+            ("Hauptstraße 5a, 10115 Berlin", "de", "[ADDRESS], [ADDRESS]"),
             ("Kölner Str. 5", "de", "[ADDRESS]"),
             ("Frankfurter Allee 12", "de", "[ADDRESS]"),
             ("Johann-Sebastian-Bach-Straße 5", "de", "[ADDRESS]"),
@@ -951,6 +951,93 @@ class TestStreetAddress:
         started = time.perf_counter()
         scrub_text(text, languages=["en", "nl", "de"])
         assert time.perf_counter() - started < 5
+
+
+class TestDePostcode:
+    @pytest.mark.parametrize(
+        "value",
+        ["Postleitzahl: 33613", "Postleitzahl 33613", "PLZ: 33613", "PLZ 33613"],
+    )
+    def test_masks_with_a_label(self, value: str) -> None:
+        result = scrub_text(value, languages=["de"])
+        assert result["text"] == "[ADDRESS]"
+        assert result["counts"]["address"] == 1
+
+    def test_masks_with_a_known_city(self) -> None:
+        result = scrub_text("10115 Berlin", languages=["de"])
+        assert result["text"] == "[ADDRESS]"
+        assert result["counts"]["address"] == 1
+
+    def test_does_not_mask_an_arbitrary_capitalized_word(self) -> None:
+        """German nouns are always capitalized, so a city allowlist is required."""
+        result = scrub_text("12345 Dinge erledigt", languages=["de"])
+        assert result["counts"]["address"] == 0
+        assert result["text"] == "12345 Dinge erledigt"
+
+    def test_masks_near_a_street_hit(self) -> None:
+        result = scrub_text("Lange Zandweg 12, 10115", languages=["de"])
+        assert result["text"] == "[ADDRESS], [ADDRESS]"
+        assert result["counts"]["address"] == 2
+
+    def test_does_not_mask_a_bare_number(self) -> None:
+        result = scrub_text("order 10115", languages=["de"])
+        assert result["text"] == "order 10115"
+        assert result["counts"]["address"] == 0
+
+    @pytest.mark.parametrize("value", ["00501", "00999", "99999"])
+    def test_rejects_out_of_range_codes(self, value: str) -> None:
+        result = scrub_text(f"PLZ {value}", languages=["de"])
+        assert result["counts"]["address"] == 0, value
+
+    def test_disabled_without_de(self) -> None:
+        """The label hint is shared across packs; the city hint is de-only."""
+        result = scrub_text("10115 Berlin", languages=["en", "nl"])
+        assert result["text"] == "10115 Berlin"
+        assert result["counts"]["address"] == 0
+
+
+class TestUsZip:
+    @pytest.mark.parametrize("value", ["ZIP: 80920", "zip code 80920", "postal code: 80920"])
+    def test_masks_with_a_label(self, value: str) -> None:
+        result = scrub_text(value, languages=["en"])
+        assert result["text"] == "[ADDRESS]"
+        assert result["counts"]["address"] == 1
+
+    def test_label_hint_is_shared_with_other_packs(self) -> None:
+        """A German label still gates the en-pack zip: labels are not locale-gated."""
+        result = scrub_text("Postleitzahl: 33613", languages=["en"])
+        assert result["text"] == "[ADDRESS]"
+        assert result["counts"]["address"] == 1
+
+    def test_masks_zip_plus_four(self) -> None:
+        result = scrub_text("ZIP: 80920-1406", languages=["en"])
+        assert result["text"] == "[ADDRESS]"
+        assert result["counts"]["address"] == 1
+
+    def test_masks_with_a_state_code(self) -> None:
+        result = scrub_text("Colorado Springs, CO 80920-1406", languages=["en"])
+        assert result["text"] == "Colorado Springs, [ADDRESS]"
+        assert result["counts"]["address"] == 1
+
+    def test_rejects_an_unknown_two_letter_prefix(self) -> None:
+        result = scrub_text("batch XX 80920", languages=["en"])
+        assert result["counts"]["address"] == 0
+
+    def test_masks_near_a_street_hit(self) -> None:
+        result = scrub_text("474 Lexington Drive, 80920", languages=["en"])
+        assert result["text"] == "[ADDRESS], [ADDRESS]"
+        assert result["counts"]["address"] == 2
+
+    def test_does_not_mask_a_bare_number(self) -> None:
+        result = scrub_text("count: 80920", languages=["en"])
+        assert result["text"] == "count: 80920"
+        assert result["counts"]["address"] == 0
+
+    def test_disabled_without_en(self) -> None:
+        """The label hint is shared across packs; the state-code hint is en-only."""
+        result = scrub_text("CO 80920", languages=["nl", "de"])
+        assert result["text"] == "CO 80920"
+        assert result["counts"]["address"] == 0
 
 
 class TestNlLicensePlate:

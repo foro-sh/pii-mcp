@@ -1,11 +1,11 @@
 """Language packs and scrub walk for pattern-based detectors.
 
 Universal detectors (email, IBAN, credit card, BIC, MAC, IMEI, IP, location)
-always run. Locale packs add national IDs / phone shapes / NL and UK postcodes /
-kentekens / VAT IDs / passport numbers. Counts always include every
-``PiiType`` key (0 when unused). ``person`` stays 0 until key-aware masking
-lands (issue #52); in-process NER is out of scope. ``address`` counts street
-+ house number hits and NL / UK postcodes.
+always run. Locale packs add national IDs / phone shapes / NL, UK, DE and US
+postcodes / kentekens / VAT IDs / passport numbers. Counts always include
+every ``PiiType`` key (0 when unused). ``person`` stays 0 until key-aware
+masking lands (issue #52); in-process NER is out of scope. ``address`` counts
+street + house number hits and NL / UK / DE / US postcodes.
 
 ``MAX_SCRUB_BYTES`` matches foro-proxy (32 MiB). Oversize raises
 ``PiiScrubError`` so callers withhold rather than forward unscrubbed text.
@@ -18,7 +18,8 @@ forms (before BSN takes the subscriber part of ``040 78703244``) →
 checksum/rule-backed national IDs (DE IdNr before BSN, BSN before SSN when
 both packs are on, US ITIN before SSN; DE USt-IdNr and NL BTW before BSN,
 passport after) → street + house number per pack (en, de, nl) → postcode
-per pack → kenteken when ``nl``.
+per pack (UK and hinted US ZIP for en, hinted postcode for de, bare postcode
+for nl) → kenteken when ``nl``.
 
 MCP binary content is left unscrubbed (foro-pii ``binaryKey`` parity): on an
 object with ``type`` of ``image`` or ``audio`` and a string ``data``, that
@@ -45,6 +46,7 @@ from pii_mcp.detectors import (
     UNIVERSAL_DETECTORS,
     Detector,
     bsn_detector,
+    de_postcode_detector,
     de_vat_detector,
     itin_detector,
     nhs_detector,
@@ -63,6 +65,7 @@ from pii_mcp.detectors import (
     street_nl_detector,
     tax_id_detector,
     uk_postcode_detector,
+    us_zip_detector,
 )
 
 PiiType = Literal[
@@ -238,8 +241,10 @@ def _detectors_for(languages: Sequence[str] | None) -> tuple[Detector, ...]:
         pack.append(ssn_detector)
         pack.append(street_en_detector)
         pack.append(uk_postcode_detector)
+        pack.append(us_zip_detector)
     if "de" in langs:
         pack.append(street_de_detector)
+        pack.append(de_postcode_detector)
     if "nl" in langs:
         pack.append(street_nl_detector)
         pack.append(nl_postcode_detector)

@@ -432,6 +432,57 @@ def street_en(r: R) -> str:
     return f"{number}{_number_gap(r)}{name} {kind}"
 
 
+# Copied, not imported: the eval must not share logic with the code it scores.
+_POSTCODE_LABELS = ("PLZ", "Postleitzahl", "postal code", "postcode", "zip code")
+_DE_CITIES = (
+    "Berlin Hamburg München Köln Frankfurt Stuttgart Düsseldorf Dortmund Essen "
+    "Leipzig Bremen Dresden Hannover Nürnberg Duisburg Bochum Wuppertal "
+    "Bielefeld Bonn Münster Mannheim Karlsruhe Augsburg Wiesbaden Aachen "
+    "Braunschweig Kiel Chemnitz Halle Magdeburg Freiburg Krefeld Mainz Lübeck "
+    "Erfurt Oberhausen Rostock Kassel Potsdam Heidelberg"
+).split()
+
+
+def _de_postcode_digits(r: R) -> str:
+    while True:
+        digits = _digits(r, 5)
+        if digits[:2] != "00" and digits != "99999":
+            return digits
+
+
+def postcode_de(r: R) -> str:
+    digits = _de_postcode_digits(r)
+    kind = r.random()
+    if kind < 1 / 3:
+        label = r.choice(_POSTCODE_LABELS)
+        return f"{label}: {digits}" if r.random() < 0.5 else f"{label} {digits}"
+    if kind < 2 / 3:
+        return f"{digits} {r.choice(_DE_CITIES)}"
+    return f"{street_de(r)}, {digits}"
+
+
+_US_STATE_ABBR = (
+    "AL AK AZ AR CA CO CT DE FL GA HI ID IL IN IA KS KY LA ME MD MA MI MN MS "
+    "MO MT NE NV NH NJ NM NY NC ND OH OK OR PA RI SC SD TN TX UT VT VA WA WV "
+    "WI WY DC PR GU VI AS MP"
+).split()
+
+
+def _us_zip_digits(r: R) -> str:
+    zip5 = _digits(r, 5)
+    return f"{zip5}-{_digits(r, 4)}" if r.random() < 0.4 else zip5
+
+
+def postcode_us(r: R) -> str:
+    digits = _us_zip_digits(r)
+    kind = r.random()
+    if kind < 1 / 3:
+        label = r.choice(_POSTCODE_LABELS)
+        return f"{label}: {digits}" if r.random() < 0.5 else f"{label} {digits}"
+    if kind < 2 / 3:
+        return f"{r.choice(_US_STATE_ABBR)} {digits}"
+    return f"{street_en(r)}, {digits}"
+
 
 # (category, generator, languages the detector needs).
 PII: list[tuple[str, Callable[[R], str], tuple[str, ...]]] = [
@@ -457,6 +508,8 @@ PII: list[tuple[str, Callable[[R], str], tuple[str, ...]]] = [
     ("phone", phone_intl, ("en",)),
     ("address", postcode_nl, ("nl",)),
     ("address", postcode_uk, ("en",)),
+    ("address", postcode_de, ("de",)),
+    ("address", postcode_us, ("en",)),
     ("address", street_nl, ("nl",)),
     ("address", street_en, ("en",)),
     ("address", street_de, ("de",)),
@@ -521,6 +574,13 @@ CLEAN: list[tuple[str, Callable[[R], str]]] = [
     ("uk_postcode_product", lambda r: r.choice(["A4 2PK", "PS5 1TB", "A1 2PK"])),
     # ITIN-shaped, but group 89 / 93 (other TINs) or outside the ITIN ranges.
     ("itin_shaped", lambda r: f"9{_digits(r, 2)}-{r.choice(['89', '93', '40', '69'])}-{_digits(r, 4)}"),
+    # Bare 5-digit numbers with no label, city, state code or address nearby.
+    ("postcode_bare_order", lambda r: f"order {_digits(r, 5)}"),
+    ("postcode_bare_count", lambda r: f"count: {_digits(r, 5)}"),
+    ("postcode_bare_de_order", lambda r: f"Bestellung {_digits(r, 5)}"),
+    # German nouns are always capitalized, so a bare digit + capitalized word
+    # is not enough to mean "postcode city" (unlike the DE_CITIES allowlist).
+    ("postcode_de_noun", lambda r: f"{_digits(r, 5)} {r.choice(['Dinge', 'Objekte', 'Einheiten', 'Stück'])}"),
 ]
 
 # Clean text that looks like PII to any pattern matcher (bare 9-digit ids vs
@@ -537,6 +597,9 @@ AMBIGUOUS: list[tuple[str, Callable[[R], str]]] = [
     # A comma before the house number masks like the comma-less form already
     # does: a chapter, a section, a year, or a version next to a street word.
     ("street_word_comma", lambda r: r.choice(["Chapter 12, Main Street", "Sections 3, Park Lane and 4", "Kerkstraat, 2024", "v1.2, Park Lane"])),
+    # A real two-letter state code glued to 5 digits also reads as "OR"/"IN";
+    # masked like the UK SSD-size postcode collision above.
+    ("us_state_code_word", lambda r: r.choice(["choose red OR 12345", "paid IN 90210 full"])),
 ]
 
 
