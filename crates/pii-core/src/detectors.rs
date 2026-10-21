@@ -2006,12 +2006,21 @@ fn scrub_street_en(text: &str) -> (Option<String>, u32) {
 /// branch.
 const POSTCODE_LABEL: &str = r"(?i:plz|postleitzahl|postal\s*code|postcode|zip(?:\s*code)?)";
 
+/// Any `[ADDRESS]` within `WINDOW` chars counts, regardless of source. A
+/// coincidental state/label/city hit can legitimize an unrelated bare number
+/// nearby (an accepted state-code collision a few words from an order
+/// number). Placeholders are not tagged by source category, so this cannot
+/// be told apart from a genuine street hit without a wider change.
 fn postcode_near_address(text: &str, start: usize, end: usize) -> bool {
-    const WINDOW: usize = 40;
+    const WINDOW: usize = 12;
+    // ``nth(WINDOW - 1)``, not ``nth(WINDOW)``: Python's ``text[start-WINDOW:start]``
+    // is exactly ``WINDOW`` chars, and the 0-indexed ``WINDOW - 1``th char back
+    // is its leftmost one. ``nth(WINDOW)`` is one char too far and let a hint
+    // one char past Python's window still count (a real parity mismatch).
     let before_start = text[..start]
         .char_indices()
         .rev()
-        .nth(WINDOW)
+        .nth(WINDOW.saturating_sub(1))
         .map_or(0, |(i, _)| i);
     let after_end = text[end..]
         .char_indices()

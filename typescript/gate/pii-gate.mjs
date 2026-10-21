@@ -974,7 +974,7 @@ function caseInsensitiveLiteral(word) {
 }
 var POSTCODE_LABEL = `(?:${caseInsensitiveLiteral("plz")}|${caseInsensitiveLiteral("postleitzahl")}|${caseInsensitiveLiteral("postal")}\\s*${caseInsensitiveLiteral("code")}|${caseInsensitiveLiteral("postcode")}|${caseInsensitiveLiteral("zip")}(?:\\s*${caseInsensitiveLiteral("code")})?)`;
 function postcodeNearAddress(text, start, end) {
-  const window = 40;
+  const window = 12;
   const before = text.slice(Math.max(0, start - window), start);
   const after = text.slice(end, end + window);
   return before.includes("[ADDRESS]") || after.includes("[ADDRESS]");

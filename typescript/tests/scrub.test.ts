@@ -1042,6 +1042,14 @@ describe("scrubText", () => {
     expect(result.counts.address).toBe(0);
   });
 
+  it("does not let a distant state-code collision legitimize a bare number", () => {
+    const result = scrubText("order 10115, batch OR 90210, count: 80920", {
+      languages: ["en", "de"],
+    });
+    expect(result.text).toBe("order 10115, batch [ADDRESS], count: 80920");
+    expect(result.counts.address).toBe(1);
+  });
+
   it("fails closed on oversize input", async () => {
     const { scrubTextJs } = await import("../src/scrub-js.js");
     const { MAX_SCRUB_BYTES, PiiScrubError: Err } = await import(

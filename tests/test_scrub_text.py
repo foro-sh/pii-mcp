@@ -995,6 +995,13 @@ class TestDePostcode:
         assert result["text"] == "10115 Berlin"
         assert result["counts"]["address"] == 0
 
+    def test_near_address_window_does_not_reach_a_distant_hit(self) -> None:
+        """An accepted state-code collision must not legitimize a distant,
+        unrelated bare number a full clause away."""
+        result = scrub_text("order 10115, batch OR 90210, count: 80920", languages=["en", "de"])
+        assert result["text"] == "order 10115, batch [ADDRESS], count: 80920"
+        assert result["counts"]["address"] == 1
+
 
 class TestUsZip:
     @pytest.mark.parametrize("value", ["ZIP: 80920", "zip code 80920", "postal code: 80920"])

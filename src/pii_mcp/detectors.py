@@ -1359,7 +1359,14 @@ street_en_detector = Detector(type="address", scrub=_scrub_street(STREET_EN_RE))
 _POSTCODE_LABEL = r"(?i:plz|postleitzahl|postal\s*code|postcode|zip(?:\s*code)?)"
 
 
-def _postcode_near_address(text: str, start: int, end: int, window: int = 40) -> bool:
+def _postcode_near_address(text: str, start: int, end: int, window: int = 12) -> bool:
+    """Any ``[ADDRESS]`` within ``window`` chars counts, regardless of source.
+
+    A coincidental state/label/city hit can legitimize an unrelated bare
+    number nearby (an accepted state-code collision a few words from an
+    order number). Placeholders are not tagged by source category, so this
+    cannot be told apart from a genuine street hit without a wider change.
+    """
     return (
         "[ADDRESS]" in text[max(0, start - window) : start]
         or "[ADDRESS]" in text[end : end + window]

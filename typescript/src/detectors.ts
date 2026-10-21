@@ -1436,8 +1436,15 @@ function caseInsensitiveLiteral(word: string): string {
 
 const POSTCODE_LABEL = `(?:${caseInsensitiveLiteral("plz")}|${caseInsensitiveLiteral("postleitzahl")}|${caseInsensitiveLiteral("postal")}\\s*${caseInsensitiveLiteral("code")}|${caseInsensitiveLiteral("postcode")}|${caseInsensitiveLiteral("zip")}(?:\\s*${caseInsensitiveLiteral("code")})?)`;
 
+/**
+ * Any ``[ADDRESS]`` within ``window`` chars counts, regardless of source. A
+ * coincidental state/label/city hit can legitimize an unrelated bare number
+ * nearby (an accepted state-code collision a few words from an order
+ * number). Placeholders are not tagged by source category, so this cannot be
+ * told apart from a genuine street hit without a wider change.
+ */
 function postcodeNearAddress(text: string, start: number, end: number): boolean {
-  const window = 40;
+  const window = 12;
   const before = text.slice(Math.max(0, start - window), start);
   const after = text.slice(end, end + window);
   return before.includes("[ADDRESS]") || after.includes("[ADDRESS]");

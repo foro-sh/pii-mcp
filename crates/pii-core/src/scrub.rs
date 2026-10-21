@@ -838,6 +838,21 @@ mod tests {
     }
 
     #[test]
+    fn near_address_window_does_not_reach_a_distant_hit() {
+        // An accepted state-code collision must not legitimize a distant,
+        // unrelated bare number a full clause away.
+        let langs = vec!["en".to_string(), "de".to_string()];
+        let r = scrub_text(
+            "order 10115, batch OR 90210, count: 80920",
+            Some(&langs),
+            true,
+        )
+        .unwrap();
+        assert_eq!(r.text, "order 10115, batch [ADDRESS], count: 80920");
+        assert_eq!(r.counts["address"], 1);
+    }
+
+    #[test]
     fn masks_us_zip_with_a_label() {
         let langs = vec!["en".to_string()];
         for value in ["ZIP: 80920", "zip code 80920", "postal code: 80920"] {
