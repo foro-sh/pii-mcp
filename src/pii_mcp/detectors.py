@@ -112,6 +112,12 @@ Patterns:
   12-digit UPC collisions; same hex-glue guard). All phone forms also accept
   nbsp, thin / narrow nbsp, and unicode dashes between groups.
 - BSN spaced/dotted/hyphenated ``111-222-333`` groups.
+- BE rijksregisternummer (``bsn``): grouped ``YY.MM.DD-SSS.CC`` only (dot,
+  space, nbsp, or hyphen between any of the five groups), mod-97 check
+  digit against either the pre- or post-2000 birth-year variant, with a
+  plausible month (0-12) and day (0-31). The compact 11-digit form is left
+  alone: it collides with German tax ids and 11-digit phone numbers too
+  often for the checksum alone to gate it.
 
 ``UNIVERSAL_DETECTORS`` (email, IBAN, credit card, BIC, MAC, IMEI, IP, location)
 always run; locale detectors are selected by ``languages=`` in the scrub layer.
@@ -829,6 +835,40 @@ def _scrub_bsn(text: str) -> tuple[str, int]:
 
 
 bsn_detector = Detector(type="bsn", scrub=_scrub_bsn)
+
+# Grouped ``YY.MM.DD-SSS.CC`` only (compact 11 digits collides with German
+# tax ids and 11-digit phone numbers too often to gate on checksum alone).
+BE_NRN_RE = re.compile(
+    rf"\b\d{{2}}(?:{_ID_SPACE}|{_ID_DASH}|\.)\d{{2}}(?:{_ID_SPACE}|{_ID_DASH}|\.)"
+    rf"\d{{2}}(?:{_ID_SPACE}|{_ID_DASH}|\.)\d{{3}}(?:{_ID_SPACE}|{_ID_DASH}|\.)\d{{2}}\b"
+)
+
+
+def _be_nrn_valid(value: str) -> bool:
+    """Rijksregisternummer mod-97 check, either century variant.
+
+    ``YY.MM.DD-SSS.CC``: ``CC`` must equal ``97 - (n % 97)`` where ``n`` is
+    the first 9 digits; for people born 2000 or later, ``n`` is prefixed
+    with a leading ``2`` (``2_000_000_000 + n``) before the check. ``MM`` and
+    ``DD`` only need to be plausible (0 is used for an incomplete birth
+    date): https://nl.wikipedia.org/wiki/Rijksregisternummer
+    """
+    digits = _strip_id_seps(value)
+    if len(digits) != 11 or not digits.isdigit():
+        return False
+    month, day = int(digits[2:4]), int(digits[4:6])
+    if month > 12 or day > 31:
+        return False
+    n = int(digits[:9])
+    check = int(digits[9:])
+    return check == 97 - (n % 97) or check == 97 - ((2_000_000_000 + n) % 97)
+
+
+def _scrub_be_nrn(text: str) -> tuple[str, int]:
+    return _replace_matches(text, BE_NRN_RE, "[BSN]", _be_nrn_valid)
+
+
+be_nrn_detector = Detector(type="bsn", scrub=_scrub_be_nrn)
 
 SSN_RES: tuple[re.Pattern[str], ...] = (
     re.compile(rf"\b\d{{3}}{_ID_DASH}\d{{2}}{_ID_DASH}\d{{4}}\b"),

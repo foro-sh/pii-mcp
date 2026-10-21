@@ -189,6 +189,38 @@ class TestBsn:
         assert result["counts"]["ssn"] == 0
 
 
+class TestBeNrn:
+    def test_masks_grouped(self) -> None:
+        for value in ("85.07.30-033.28", "85 07 30-033 28", "05.07.15-123.95"):
+            result = scrub_text(f"rrn {value} on file", languages=["nl"])
+            assert result["text"] == "rrn [BSN] on file", value
+            assert result["counts"]["bsn"] == 1
+
+    def test_masks_inside_json_and_csv(self) -> None:
+        assert scrub_text('{"rrn": "85.07.30-033.28"}', languages=["nl"])["text"] == (
+            '{"rrn": "[BSN]"}'
+        )
+        assert scrub_text("a,85.07.30-033.28,b", languages=["nl"])["text"] == "a,[BSN],b"
+
+    def test_rejects_bad_checksum(self) -> None:
+        result = scrub_text("rrn 85.07.30-033.29 on file", languages=["nl"])
+        assert result["counts"]["bsn"] == 0
+
+    def test_rejects_implausible_month_or_day(self) -> None:
+        for bad in ("85.13.30-033.28", "85.07.32-033.28"):
+            result = scrub_text(f"ref {bad}", languages=["nl"])
+            assert result["counts"]["bsn"] == 0, bad
+
+    def test_ignores_compact(self) -> None:
+        result = scrub_text("ref 85073003328", languages=["nl"])
+        assert result["text"] == "ref 85073003328"
+
+    def test_disabled_without_nl(self) -> None:
+        result = scrub_text("rrn 85.07.30-033.28 on file", languages=["en"])
+        assert result["text"] == "rrn 85.07.30-033.28 on file"
+        assert result["counts"]["bsn"] == 0
+
+
 class TestDeVat:
     @pytest.mark.parametrize("value", ["DE136695976", "DE 136 695 976", "DE.136.695.976"])
     def test_masks_valid_id(self, value: str) -> None:
