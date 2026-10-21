@@ -4,6 +4,16 @@ Every PII generator returns a value that is valid for its format (checksums
 included) in a randomly chosen surface form. Clean generators return text a
 tool result plausibly contains and that is *not* personal data. Nothing here
 imports ``pii_mcp``: the eval must not share logic with the code it scores.
+
+Issue #56 asked for harder name and address generators to stop a tuning loop
+from overfitting an easy synthetic set. Names are moot: the in-process NER
+pass and its name generator were removed entirely (#105, "remove optional
+candle NER backend"; prose names are Presidio's job on foro, see README
+"Scope"). Harder address shapes (reversed comma order, UK/DE/US postcodes,
+suffixless street names) are issue #54's own acceptance criteria; adding them
+here would duplicate that issue's deliverable before its detector changes
+land. ``eval/external.py`` is where #56's "harder than any generator can be"
+signal now comes from: real ai4privacy text instead of more synthetic shapes.
 """
 
 from __future__ import annotations

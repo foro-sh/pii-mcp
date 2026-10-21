@@ -67,6 +67,10 @@ python eval/score.py                         # loss, false positives, ReDoS, per
 
 `eval/score.py` must print `"ok": true`.
 
+Optional: `python eval/external.py` scores pii-mcp against a real-text sample
+(`pip install -e ".[eval]"`; needs network access on first run). See its
+module docstring for the dataset, license and scoring method.
+
 ## Commits and releases
 
 Commits follow [Conventional Commits](https://www.conventionalcommits.org/).
