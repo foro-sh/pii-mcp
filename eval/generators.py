@@ -190,6 +190,12 @@ def be_nrn(r: R) -> str:
     body with ``2`` before the check (nl.wikipedia.org/wiki/Rijksregisternummer).
     Only the dotted/hyphenated grouping is emitted: the detector leaves the
     compact form alone.
+
+    No invalid-checksum hard negative is added to ``CLEAN``: an 11-digit run
+    with single-char separators and a leading-zero group already matches
+    ``PHONE_DE_NATIONAL`` regardless of whether the BE checksum passes, so a
+    ``be_nrn``-shaped negative would score as a pre-existing DE-phone false
+    positive rather than exercise this detector.
     """
     year = r.randint(0, 99)
     month = r.randint(1, 12)

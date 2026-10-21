@@ -94,7 +94,7 @@ not stack a second in-process NER beside it.
 | IP-adres                                      | `ip`                                   | Indirect identifier             |
 | Locatiegegevens                               | `location`                             | Decimal and DMS lat/lon         |
 | Financiële gegevens                           | `iban`, `credit_card`, `bic`, `vat_id` | NL BTW / DE USt-IdNr            |
-| BSN / nationaal ID                            | `bsn`, `passport`                      | Passport/NIK, BE rijksregisternummer (nl pack) |
+| BSN / nationaal ID                            | `bsn`, `passport`                      | Passport/NIK; BE rijksregisternummer (nl pack) |
 | Nationaal ID (US / UK)                        | `ssn`, `tax_id`                        | US SSN/ITIN, UK NINO (en pack)  |
 | Gezondheidsgegevens (health ID)               | `ssn`                                  | UK NHS number, grouped (en)     |
 | Online / device IDs                           | `mac`, `imei`                          | IMEI: grouped forms + Luhn      |
