@@ -190,12 +190,6 @@ def be_nrn(r: R) -> str:
     body with ``2`` before the check (nl.wikipedia.org/wiki/Rijksregisternummer).
     Only the dotted/hyphenated grouping is emitted: the detector leaves the
     compact form alone.
-
-    No invalid-checksum hard negative is added to ``CLEAN``: an 11-digit run
-    with single-char separators and a leading-zero group already matches
-    ``PHONE_DE_NATIONAL`` regardless of whether the BE checksum passes, so a
-    ``be_nrn``-shaped negative would score as a pre-existing DE-phone false
-    positive rather than exercise this detector.
     """
     year = r.randint(0, 99)
     month = r.randint(1, 12)
@@ -551,6 +545,11 @@ CLEAN: list[tuple[str, Callable[[R], str]]] = [
     ("uk_postcode_product", lambda r: r.choice(["A4 2PK", "PS5 1TB", "A1 2PK"])),
     # ITIN-shaped, but group 89 / 93 (other TINs) or outside the ITIN ranges.
     ("itin_shaped", lambda r: f"9{_digits(r, 2)}-{r.choice(['89', '93', '40', '69'])}-{_digits(r, 4)}"),
+    # BE rijksregisternummer-shaped, but a wrong mod-97 check digit (``00``
+    # never validates). A leading-zero birth year is avoided here: that shape
+    # also matches ``PHONE_DE_NATIONAL`` regardless of checksum, which would
+    # score a pre-existing, unrelated DE-phone false positive instead.
+    ("be_nrn_shaped", lambda r: f"{r.randint(10, 99):02d}.{r.randint(1, 12):02d}.{r.randint(1, 28):02d}-{r.randint(1, 999):03d}.00"),
 ]
 
 # Clean text that looks like PII to any pattern matcher (bare 9-digit ids vs
