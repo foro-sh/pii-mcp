@@ -603,6 +603,93 @@ describe("scrubText", () => {
     expect(result.counts.passport).toBe(1);
   });
 
+  it.each([["L01X00T47"], ["M12X00T47"], ["Y99X00T47"]])(
+    "masks a German ID card document number, format only (%s)",
+    (value) => {
+      const result = scrubText(`Ausweisnummer ${value} gültig`, { languages: ["de"] });
+      expect(result.text).toBe("Ausweisnummer [PASSPORT] gültig");
+      expect(result.counts.passport).toBe(1);
+    },
+  );
+
+  it.each([["C01X00T47"], ["F12X00T47"], ["K99X00T47"]])(
+    "masks a German passport document number, format only (%s)",
+    (value) => {
+      const result = scrubText(`Reisepass ${value} gültig`, { languages: ["de"] });
+      expect(result.text).toBe("Reisepass [PASSPORT] gültig");
+      expect(result.counts.passport).toBe(1);
+    },
+  );
+
+  it.each([["L01X00T471"], ["C01X00T478"]])(
+    "masks a German document number with a valid MRZ check digit (%s)",
+    (value) => {
+      const result = scrubText(`MRZ ${value} end`, { languages: ["de"] });
+      expect(result.text).toBe("MRZ [PASSPORT] end");
+      expect(result.counts.passport).toBe(1);
+    },
+  );
+
+  it("masks a lowercased German document number", () => {
+    const result = scrubText("ausweis l01x00t471 gültig", { languages: ["de"] });
+    expect(result.text).toBe("ausweis [PASSPORT] gültig");
+    expect(result.counts.passport).toBe(1);
+  });
+
+  it("rejects a German document number with a wrong check digit", () => {
+    const result = scrubText("MRZ L01X00T470 end", { languages: ["de"] });
+    expect(result.text).toBe("MRZ L01X00T470 end");
+    expect(result.counts.passport).toBe(0);
+  });
+
+  it.each([["LA1X00T47"], ["LE1X00T47"], ["LO1X00T47"], ["LS1X00T47"], ["LU1X00T47"]])(
+    "rejects a German document number with a forbidden letter (%s)",
+    (value) => {
+      expect(scrubText(`doc ${value}`, { languages: ["de"] }).counts.passport).toBe(0);
+    },
+  );
+
+  it.each([["Z01X00T47"], ["S01X00T47"], ["A01X00T47"]])(
+    "rejects a German document number whose first letter is outside either set (%s)",
+    (value) => {
+      expect(scrubText(`doc ${value}`, { languages: ["de"] }).counts.passport).toBe(0);
+    },
+  );
+
+  it("requires at least one digit in a German document number", () => {
+    const result = scrubText("doc LMNPRTVWX", { languages: ["de"] });
+    expect(result.text).toBe("doc LMNPRTVWX");
+    expect(result.counts.passport).toBe(0);
+  });
+
+  it("disables the German passport detector without the de pack", () => {
+    const result = scrubText("Ausweisnummer L01X00T47 gültig", { languages: ["en"] });
+    expect(result.text).toBe("Ausweisnummer L01X00T47 gültig");
+    expect(result.counts.passport).toBe(0);
+  });
+
+  it("masks a German document number inside JSON and CSV", () => {
+    expect(
+      scrubText('{"ausweis": "L01X00T47"}', { languages: ["de"] }).text,
+    ).toBe('{"ausweis": "[PASSPORT]"}');
+    expect(
+      scrubText("id,L01X00T47,2024-01-15,active", { languages: ["de"] }).text,
+    ).toBe("id,[PASSPORT],2024-01-15,active");
+  });
+
+  it.each([
+    ["xL01X00T47"],
+    ["L01X00T47x"],
+    ["sku_L01X00T47"],
+    ["ORD-L01X00T47"],
+    ["L01X00T47-2"],
+    ["aGVsbG8L01X00T47d29ybGQ="],
+    ["L01X00T47="],
+  ])("ignores a German document number glued to other text (%s)", (value) => {
+    const result = scrubText(`ref ${value}`, { languages: ["de"] });
+    expect(result.text).toBe(`ref ${value}`);
+  });
+
   it("masks BSN and SSN groups split by nbsp or unicode dashes", () => {
     for (const text of ["111\xa0222\xa0333", "111\u202f222\u202f333", "111\u2013222\u2013333"]) {
       const result = scrubText(`BSN ${text}`, { languages: ["nl"] });

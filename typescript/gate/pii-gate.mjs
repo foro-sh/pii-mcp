@@ -744,6 +744,47 @@ function scrubDeVat(text) {
   return replaceMatches(text, DE_VAT_RE, "[VAT_ID]", deVatValid);
 }
 var deVatDetector = { type: "vat_id", scrub: scrubDeVat };
+var DE_PASSPORT_RE = /\b[CFGHJKLMNPRTVWXY][CFGHJKLMNPRTVWXYZ0-9]{8}[0-9]?\b/gi;
+function dePassportCheckDigit(nine) {
+  const weights = [7, 3, 1];
+  let total = 0;
+  for (let i = 0; i < nine.length; i++) {
+    const ch = nine[i];
+    const value = ch >= "0" && ch <= "9" ? Number(ch) : 10 + (ch.charCodeAt(0) - 65);
+    total += weights[i % 3] * value;
+  }
+  return total % 10;
+}
+function dePassportValid(value) {
+  const compact = value.toUpperCase();
+  if (compact.length !== 9 && compact.length !== 10) {
+    return false;
+  }
+  if (!/[0-9]/.test(compact.slice(0, 9))) {
+    return false;
+  }
+  if (compact.length === 10) {
+    return dePassportCheckDigit(compact.slice(0, 9)) === Number(compact[9]);
+  }
+  return true;
+}
+function dePassportEnd(text, start, end) {
+  if (text[start - 1] === "-") {
+    return start;
+  }
+  const after = text[end] ?? "";
+  if (after === "-" || after === "=") {
+    return start;
+  }
+  return dePassportValid(text.slice(start, end)) ? end : start;
+}
+function scrubDePassport(text) {
+  return replaceMatches(text, DE_PASSPORT_RE, "[PASSPORT]", void 0, false, dePassportEnd);
+}
+var dePassportDetector = {
+  type: "passport",
+  scrub: scrubDePassport
+};
 var NL_VAT_RE = /\b[Nn][Ll][.\s]*\d{9}[.\s]*[Bb][.\s]*\d{2}\b/g;
 function scrubNlVat(text) {
   return replaceMatches(text, NL_VAT_RE, "[VAT_ID]");
@@ -1091,7 +1132,7 @@ function detectorsFor(languages) {
     pack.push(phoneEnDetector);
   }
   if (langs.includes("de")) {
-    pack.push(phoneDeDetector, taxIdDetector, deVatDetector);
+    pack.push(phoneDeDetector, taxIdDetector, deVatDetector, dePassportDetector);
   }
   if (langs.includes("nl")) {
     pack.push(nlVatDetector, bsnDetector, nlPassportDetector);
