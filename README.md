@@ -4,7 +4,9 @@ Pattern-based PII redaction for MCP servers (regex + checksums). Masks emails,
 IBANs, cards, BICs, MACs, IMEIs, IPs, coordinates, BSNs, US SSNs and ITINs, UK
 National Insurance and NHS numbers, German tax IDs, Dutch BTW-ids, Dutch
 passport/ID numbers, phones, street + house number addresses, Dutch and UK
-postcodes, and Dutch license plates in tool results.
+postcodes, Dutch license plates, and names/addresses that sit right after a
+recognized EN/NL/DE field name (`last_name`, `vorname`, `straße`, `plz`, …)
+in tool results.
 Language packs: `en`, `nl`, and opt-in `de`.
 
 [![PyPI](https://img.shields.io/pypi/v/pii-mcp.svg)](https://pypi.org/project/pii-mcp/)
@@ -24,6 +26,9 @@ scrub_text(
     "Contact ada@example.com. IBAN NL91 ABNA 0417 1643 00. card 4111111111111111"
 )
 # Contact [EMAIL]. IBAN [IBAN]. card [CREDIT_CARD]
+
+scrub_text('"last_name": "Grabbe", "city": "Rotterdam"')
+# "last_name": "[PERSON]", "city": "[ADDRESS]"
 ```
 
 For runnable scripts including a FastMCP server and payload scrubbing, see the [`examples/`](examples/) directory.
@@ -69,10 +74,12 @@ reach. Aligned with
 where that layer applies. Free-text health data (allergies), photos/audio/
 video, and unstructured klant-/personeelsnummers stay out of scope.
 
-`person` is pattern / key-aware when available (issue #52); until then the
-count stays `0`. Prose name NER is out of band — this package does not ship
-an in-process NER model. Decimal/DMS `location` coordinates stay here;
-free-text place names do not.
+`person` is key-aware only (issue #52): a value right after a recognized
+field name (`name`, `first_name`, `vorname`, `naam`, …) is masked; there is
+no pattern for a bare name on its own. Prose name NER is out of band — this
+package does not ship an in-process NER model. Decimal/DMS `location`
+coordinates stay here; free-text place names do not, except when key-aware
+masking catches one after a `city`/`stadt`/`plaats` field.
 
 ### Using with foro / Presidio
 
@@ -97,9 +104,9 @@ not stack a second in-process NER beside it.
 | Nationaal ID (US / UK)                        | `ssn`, `tax_id`                        | US SSN/ITIN, UK NINO (en pack)  |
 | Gezondheidsgegevens (health ID)               | `ssn`                                  | UK NHS number, grouped (en)     |
 | Online / device IDs                           | `mac`, `imei`                          | IMEI: grouped forms + Luhn      |
-| Adres                                         | `address`                              | Street + number; NL/UK postcode |
+| Adres                                         | `address`                              | Street + number; NL/UK postcode; key-aware street/postcode/city |
 | Kenteken                                      | `license_plate`                        | nl pack                         |
-| Naam                                          | `person`                               | Pattern/key-aware when available (#52); prose NER out of band |
+| Naam                                          | `person`                               | Key-aware only (#52); prose NER out of band |
 | Pasfoto, allergieën, koopgedrag, camera       |                                        | Media / free text               |
 
 ## Packages
