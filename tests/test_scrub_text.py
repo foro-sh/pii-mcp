@@ -1091,6 +1091,24 @@ class TestKeyAwareMasking:
         assert result["text"] == '"name": "[PERSON]"'
         assert result["counts"]["person"] == 1
 
+    @pytest.mark.parametrize(
+        ("text", "expected"),
+        [
+            ('"name": "John Smith (verified)"', '"name": "[PERSON]"'),
+            ("name: John Smith (verified)", "name: [PERSON]"),
+            ("name: John Smith, verified", "name: [PERSON]"),
+        ],
+    )
+    def test_ambiguous_key_gate_does_not_leak_on_a_trailing_annotation(
+        self, text: str, expected: str
+    ) -> None:
+        """A real name followed by a parenthetical/suffix must still be
+        masked: requiring every word to look like a name let one trailing
+        annotation hide the whole value, unmasked."""
+        result = scrub_text(text, languages=["en", "nl", "de"])
+        assert result["text"] == expected
+        assert result["counts"]["person"] == 1
+
     def test_glued_digit_suffix_key_can_collide_with_nl_passport_shape(self) -> None:
         """Known gap (see ``_kv_value_span``): the key text itself is left in
         place, so a camelCase key with no separator before its digit suffix

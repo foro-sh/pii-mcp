@@ -2200,18 +2200,16 @@ const NAME_PARTICLES: &[&str] = &[
     "van", "der", "de", "den", "het", "ten", "ter", "von", "zu", "el", "al", "bin", "da",
 ];
 
-/// True when every word is a capitalized name/place part or a lowercase name
-/// particle (`Jan van Dijk`), and at least one word is capitalized. Gates the
-/// ambiguous `name` and `state` keys: `build-cache`, `true` and `active` fail
-/// this; `Grabbe`, `O'Brien` and `California` pass.
+/// True when at least one word looks like a capitalized name/place part
+/// (lowercase particles — `van`, `der`, `von`, … — don't count against it).
+/// Gates the ambiguous `name` and `state` keys: `build-cache`, `true` and
+/// `active` fail this; `Grabbe`, `O'Brien`, `California` and
+/// `John Smith (verified)` pass — requiring *every* word to look like a name
+/// let one trailing annotation hide the whole value, unmasked.
 pub fn looks_like_name(value: &str) -> bool {
-    let mut found_capitalized = false;
     for word in value.split_whitespace() {
         let core = word.trim_matches(|c: char| ".,;:'\"".contains(c));
-        if core.is_empty() {
-            continue;
-        }
-        if NAME_PARTICLES.contains(&core.to_lowercase().as_str()) {
+        if core.is_empty() || NAME_PARTICLES.contains(&core.to_lowercase().as_str()) {
             continue;
         }
         let first = match core.chars().next() {
@@ -2219,13 +2217,12 @@ pub fn looks_like_name(value: &str) -> bool {
             None => continue,
         };
         let letters: String = core.chars().filter(|&c| c != '-' && c != '\'').collect();
-        if !first.is_uppercase() || letters.is_empty() || !letters.chars().all(char::is_alphabetic)
+        if first.is_uppercase() && !letters.is_empty() && letters.chars().all(char::is_alphabetic)
         {
-            return false;
+            return true;
         }
-        found_capitalized = true;
     }
-    found_capitalized
+    false
 }
 
 /// ``word`` with its first letter as an upper/lower class, rest literal

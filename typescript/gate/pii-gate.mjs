@@ -1063,27 +1063,18 @@ var NAME_PARTICLES = /* @__PURE__ */ new Set([
   "da"
 ]);
 function looksLikeName(value) {
-  const words = value.split(/\s+/).filter((word) => word.length > 0);
-  if (words.length === 0) {
-    return false;
-  }
-  let foundCapitalized = false;
-  for (const word of words) {
+  for (const word of value.split(/\s+/)) {
     const core = word.replace(/^[.,;:'"]+|[.,;:'"]+$/g, "");
-    if (core.length === 0) {
-      continue;
-    }
-    if (NAME_PARTICLES.has(core.toLowerCase())) {
+    if (core.length === 0 || NAME_PARTICLES.has(core.toLowerCase())) {
       continue;
     }
     const letters = core.replace(/[-']/g, "");
     const first = core.charAt(0);
-    if (first.toUpperCase() !== first || !new RegExp("^\\p{L}+$", "u").test(letters)) {
-      return false;
+    if (first.toUpperCase() === first && new RegExp("^\\p{L}+$", "u").test(letters)) {
+      return true;
     }
-    foundCapitalized = true;
   }
-  return foundCapitalized;
+  return false;
 }
 function caseFlexWord(word) {
   const escaped = escapeRegExp(word);

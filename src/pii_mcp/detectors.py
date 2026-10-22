@@ -1490,26 +1490,20 @@ _NAME_PARTICLES = frozenset(
 
 
 def looks_like_name(value: str) -> bool:
-    """True when every word is a capitalized name/place part or a lowercase
-    name particle (``Jan van Dijk``), and at least one word is capitalized.
-    Gates the ambiguous ``name`` and ``state`` keys: ``build-cache``,
-    ``true`` and ``active`` fail this; ``Grabbe``, ``O'Brien`` and
-    ``California`` pass."""
-    words = value.split()
-    if not words:
-        return False
-    found_capitalized = False
-    for word in words:
+    """True when at least one word looks like a capitalized name/place part
+    (lowercase particles — ``van``, ``der``, ``von``, … — don't count against
+    it). Gates the ambiguous ``name`` and ``state`` keys: ``build-cache``,
+    ``true`` and ``active`` fail this; ``Grabbe``, ``O'Brien``, ``California``
+    and ``John Smith (verified)`` pass — requiring *every* word to look like
+    a name let one trailing annotation hide the whole value, unmasked."""
+    for word in value.split():
         core = word.strip(".,;:'\"")
-        if not core:
-            continue
-        if core.lower() in _NAME_PARTICLES:
+        if not core or core.lower() in _NAME_PARTICLES:
             continue
         letters = core.replace("-", "").replace("'", "")
-        if not core[0].isupper() or not letters.isalpha():
-            return False
-        found_capitalized = True
-    return found_capitalized
+        if core[0].isupper() and letters.isalpha():
+            return True
+    return False
 
 
 def _case_flex_word(word: str) -> str:

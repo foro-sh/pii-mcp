@@ -1084,6 +1084,26 @@ mod tests {
     }
 
     #[test]
+    fn ambiguous_key_gate_does_not_leak_on_a_trailing_annotation() {
+        // A real name followed by a parenthetical/suffix must still be
+        // masked: requiring every word to look like a name let one trailing
+        // annotation hide the whole value, unmasked.
+        let langs = [LanguageCode::En, LanguageCode::Nl, LanguageCode::De];
+        for (text, expected) in [
+            (
+                r#""name": "John Smith (verified)""#,
+                r#""name": "[PERSON]""#,
+            ),
+            ("name: John Smith (verified)", "name: [PERSON]"),
+            ("name: John Smith, verified", "name: [PERSON]"),
+        ] {
+            let r = scrub_text_langs(text, &langs, true).unwrap();
+            assert_eq!(r.text, expected, "{text:?}");
+            assert_eq!(r.counts["person"], 1, "{text:?}");
+        }
+    }
+
+    #[test]
     fn glued_digit_suffix_key_can_collide_with_nl_passport_shape() {
         // Known gap (see `kv_value_span`): the key text itself is left in
         // place, so a camelCase key with no separator before its digit
@@ -1122,6 +1142,19 @@ mod tests {
         );
         assert_eq!(r.counts["person"], 1);
         assert_eq!(r.counts["address"], 1);
+    }
+
+    #[cfg(feature = "payload")]
+    #[test]
+    fn payload_ambiguous_key_gate_does_not_leak_on_a_trailing_annotation() {
+        let langs = vec!["en".to_string(), "nl".to_string(), "de".to_string()];
+        let r = scrub_payload(
+            serde_json::json!({"name": "John Smith (verified)"}),
+            Some(&langs),
+        )
+        .unwrap();
+        assert_eq!(r.payload, serde_json::json!({"name": "[PERSON]"}));
+        assert_eq!(r.counts["person"], 1);
     }
 
     #[cfg(feature = "payload")]

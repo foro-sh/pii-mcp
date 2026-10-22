@@ -1093,6 +1093,15 @@ describe("scrubPayload", () => {
     expect(result.counts.address).toBe(1);
   });
 
+  it("the ambiguous key gate does not leak on a trailing annotation", () => {
+    const result = scrubPayload(
+      { name: "John Smith (verified)" },
+      { languages: ["en", "nl", "de"] },
+    );
+    expect(result.payload).toEqual({ name: "[PERSON]" });
+    expect(result.counts.person).toBe(1);
+  });
+
   it("key-aware masking runs on siblings of a skipped binary field", () => {
     const result = scrubPayload(
       { type: "image", data: "AAAA", nachname: "Eckerlin" },
@@ -1162,6 +1171,22 @@ describe("key-aware masking", () => {
     expect(result.text).toBe('"name": "[PERSON]"');
     expect(result.counts.person).toBe(1);
   });
+
+  it.each([
+    ['"name": "John Smith (verified)"', '"name": "[PERSON]"'],
+    ["name: John Smith (verified)", "name: [PERSON]"],
+    ["name: John Smith, verified", "name: [PERSON]"],
+  ])(
+    "the ambiguous key gate does not leak on a trailing annotation: %s",
+    (text, expected) => {
+      // A real name followed by a parenthetical/suffix must still be
+      // masked: requiring every word to look like a name let one trailing
+      // annotation hide the whole value, unmasked.
+      const result = scrubText(text, { languages: ["en", "nl", "de"] });
+      expect(result.text).toBe(expected);
+      expect(result.counts.person).toBe(1);
+    },
+  );
 
   it("a glued digit-suffix key can collide with the NL passport shape", () => {
     // Known gap: the key text itself is left in place, so a camelCase key

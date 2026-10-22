@@ -206,6 +206,17 @@ def test_key_aware_masking_by_dict_key() -> None:
     assert result["counts"]["address"] == 1
 
 
+def test_ambiguous_key_gate_does_not_leak_on_a_trailing_annotation() -> None:
+    """A real name with a trailing annotation must still be masked whole:
+    requiring every word to look like a name let one annotation hide the
+    whole value, unmasked."""
+    result = scrub_payload(
+        {"name": "John Smith (verified)"}, languages=["en", "nl", "de"]
+    )
+    assert result["payload"] == {"name": "[PERSON]"}
+    assert result["counts"]["person"] == 1
+
+
 def test_key_aware_masking_runs_on_siblings_of_a_skipped_binary_field() -> None:
     result = scrub_payload(
         {

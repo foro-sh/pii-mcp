@@ -1564,33 +1564,26 @@ const NAME_PARTICLES = new Set([
 ]);
 
 /**
- * True when every word is a capitalized name/place part or a lowercase name
- * particle (``Jan van Dijk``), and at least one word is capitalized. Gates
- * the ambiguous ``name`` and ``state`` keys: ``build-cache``, ``true`` and
- * ``active`` fail this; ``Grabbe``, ``O'Brien`` and ``California`` pass.
+ * True when at least one word looks like a capitalized name/place part
+ * (lowercase particles — ``van``, ``der``, ``von``, … — don't count against
+ * it). Gates the ambiguous ``name`` and ``state`` keys: ``build-cache``,
+ * ``true`` and ``active`` fail this; ``Grabbe``, ``O'Brien``, ``California``
+ * and ``John Smith (verified)`` pass — requiring *every* word to look like a
+ * name let one trailing annotation hide the whole value, unmasked.
  */
 export function looksLikeName(value: string): boolean {
-  const words = value.split(/\s+/).filter((word) => word.length > 0);
-  if (words.length === 0) {
-    return false;
-  }
-  let foundCapitalized = false;
-  for (const word of words) {
+  for (const word of value.split(/\s+/)) {
     const core = word.replace(/^[.,;:'"]+|[.,;:'"]+$/g, "");
-    if (core.length === 0) {
-      continue;
-    }
-    if (NAME_PARTICLES.has(core.toLowerCase())) {
+    if (core.length === 0 || NAME_PARTICLES.has(core.toLowerCase())) {
       continue;
     }
     const letters = core.replace(/[-']/g, "");
     const first = core.charAt(0);
-    if (first.toUpperCase() !== first || !/^\p{L}+$/u.test(letters)) {
-      return false;
+    if (first.toUpperCase() === first && /^\p{L}+$/u.test(letters)) {
+      return true;
     }
-    foundCapitalized = true;
   }
-  return foundCapitalized;
+  return false;
 }
 
 /**
