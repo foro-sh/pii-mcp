@@ -433,6 +433,24 @@ def street_en(r: R) -> str:
 
 
 
+_PERSON_FIRST_NAMES = (
+    "Jan", "Anne", "Lars", "Sven", "Maria", "Johanna", "Pieter", "Freya",
+    "Klaus", "Ingrid", "Noor", "Youssef", "Fatima", "Mei", "Xiaowen", "Aleksandr",
+)
+_PERSON_LAST_NAMES = (
+    "Grabbe", "Eckerlin", "de Vries", "van Dijk", "Müller", "Schmidt",
+    "Janssen", "Bakker", "Kowalski", "Ivanov", "Olaoluwa", "Haddad",
+)
+
+
+def person_name(r: R) -> str:
+    """A lone surname or a full ``First Last`` name — the shapes a
+    ``last_name``/``name`` field in tool output actually holds."""
+    if r.random() < 0.5:
+        return r.choice(_PERSON_LAST_NAMES)
+    return f"{r.choice(_PERSON_FIRST_NAMES)} {r.choice(_PERSON_LAST_NAMES)}"
+
+
 # (category, generator, languages the detector needs).
 PII: list[tuple[str, Callable[[R], str], tuple[str, ...]]] = [
     ("email", email, ()),
@@ -461,6 +479,28 @@ PII: list[tuple[str, Callable[[R], str], tuple[str, ...]]] = [
     ("address", street_en, ("en",)),
     ("address", street_de, ("de",)),
     ("license_plate", license_plate_nl, ("nl",)),
+]
+
+# Key-value contexts for EN/NL/DE field names (issue #52). A bare name has no
+# format of its own, so unlike ``PII`` above it is scored only against these
+# templates, not the generic ``TEMPLATES`` pool.
+KEY_VALUE_TEMPLATES: list[str] = [
+    '"first_name": "{}"',
+    '"last_name": "{}"',
+    "name: {}",
+    "Name: {}",
+    "Vorname: {}",
+    "Nachname: {}",
+    "voornaam: {}",
+    "achternaam: {}",
+    '{"naam": "{}"}',
+    "last_name={}",
+    "last_name1: {}",
+]
+
+# (category, generator, languages the detector needs, its own template pool).
+PII_KEYED: list[tuple[str, Callable[[R], str], tuple[str, ...], list[str]]] = [
+    ("person", person_name, (), KEY_VALUE_TEMPLATES),
 ]
 
 
@@ -521,6 +561,13 @@ CLEAN: list[tuple[str, Callable[[R], str]]] = [
     ("uk_postcode_product", lambda r: r.choice(["A4 2PK", "PS5 1TB", "A1 2PK"])),
     # ITIN-shaped, but group 89 / 93 (other TINs) or outside the ITIN ranges.
     ("itin_shaped", lambda r: f"9{_digits(r, 2)}-{r.choice(['89', '93', '40', '69'])}-{_digits(r, 4)}"),
+    # Hard negatives for key-aware masking (issue #52): "name", "state" and a
+    # compound key that only looks like a recognized one.
+    ("key_name_hard_negative", lambda r: f'name: "{r.choice(["build-cache", "staging", "default"])}"'),
+    ("key_state_hard_negative", lambda r: f"state: {r.choice(['active', 'running', 'completed', 'pending'])}"),
+    ("key_city_count_hard_negative", lambda r: f"city_count: {r.randint(1, 99)}"),
+    ("key_street_view_hard_negative", lambda r: f"street_view: {r.choice(['true', 'false'])}"),
+    ("key_username_hard_negative", lambda r: f"username: {r.choice(['ada', 'grabbe', 'jvandijk'])}"),
 ]
 
 # Clean text that looks like PII to any pattern matcher (bare 9-digit ids vs

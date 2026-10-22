@@ -12,8 +12,10 @@ loss = 3 * leak_rate + fp_rate + 0.5 * overreach_rate   (lower is better)
 - fp: a clean sample is changed at all (every pack on, so ``de`` is covered)
 - overreach: the surrounding template is damaged around a PII value
 
-``person`` is not scored here: counts stay 0 until key-aware masking (issue
-#52), and in-process NER is out of scope.
+``person`` (issue #52) has no format of its own, so it is scored only against
+``generators.KEY_VALUE_TEMPLATES`` (``PII_KEYED``), not the generic
+``TEMPLATES`` pool every other category also faces; in-process NER is out of
+scope.
 
 Per category, recall is the share of values with no leak, and precision is
 hits / (hits + clean samples that gained that category's placeholder).
@@ -39,7 +41,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "src"))
 sys.path.insert(0, str(ROOT / "eval"))
 
-from generators import AMBIGUOUS, CLEAN, PII, TEMPLATES  # noqa: E402
+from generators import AMBIGUOUS, CLEAN, PII, PII_KEYED, TEMPLATES  # noqa: E402
 
 from pii_mcp import scrub_text  # noqa: E402
 
@@ -87,10 +89,16 @@ def load_private_templates(path: str) -> list[str]:
 def build(seed: int, templates: list[str] = TEMPLATES) -> tuple[list[tuple], list[tuple], list[tuple]]:
     r = random.Random(seed)
     n = PER_GENERATOR
-    generators = list(PII)
     pii = [
         (cat, gen.__name__, r.choice(templates), gen(r), sorted(set(DEFAULT_LANGS) | set(langs)))
-        for cat, gen, langs in generators
+        for cat, gen, langs in PII
+        for _ in range(n)
+    ]
+    # Keyed generators (e.g. ``person``) have no format of their own: scored
+    # only against their own key-value template pool, never the generic one.
+    pii += [
+        (cat, gen.__name__, r.choice(key_templates), gen(r), sorted(set(DEFAULT_LANGS) | set(langs)))
+        for cat, gen, langs, key_templates in PII_KEYED
         for _ in range(n)
     ]
     clean = [(name, fill(r.choice(templates), gen(r))) for name, gen in CLEAN for _ in range(n)]
