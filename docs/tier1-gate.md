@@ -55,7 +55,7 @@ There is no `ner` option on the gate surface. Person-name NER stays Tier 2
 | credit card | `[CREDIT_CARD]` |
 | BSN | `[BSN]` |
 | phone | `[PHONE]` |
-| (other packs) | `[BIC]`, `[MAC]`, `[IMEI]`, `[IP]`, `[LOCATION]`, `[SSN]`, `[TAX_ID]`, `[VAT_ID]`, `[PASSPORT]`, `[ADDRESS]`, `[LICENSE_PLATE]`, … |
+| (other packs) | `[BIC]`, `[MAC]`, `[IMEI]`, `[IP]`, `[LOCATION]`, `[SSN]`, `[TAX_ID]`, `[VAT_ID]`, `[PASSPORT]`, `[ADDRESS]`, `[LICENSE_PLATE]`, `[PERSON]`, … |
 
 Coverage is a **superset** of current foro-pii Tier 1 (email, IBAN, card, BSN,
 phone). Adoption fixtures: `eval/fixtures/foro_tier1.json`.
@@ -63,7 +63,10 @@ phone). Adoption fixtures: `eval/fixtures/foro_tier1.json`.
 ## Counts shape
 
 `counts` is a `Record<PiiType, number>` with every `PII_TYPES` key present.
-`found` is `totalPiiCount(counts) > 0`. `person` stays `0` on the gate (no NER).
+`found` is `totalPiiCount(counts) > 0`. `person` is key-aware only (issue
+#52): it is `0` unless a value sits right after a recognized field name
+(`name`, `last_name`, `vorname`, `naam`, …) — there is no in-process NER on
+the gate.
 
 ## Binary field skip
 
