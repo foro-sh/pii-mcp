@@ -13,9 +13,11 @@ loss = 3 * leak_rate + fp_rate + 0.5 * overreach_rate   (lower is better)
 - overreach: the surrounding template is damaged around a PII value
 
 ``person`` (issue #52) has no format of its own, so it is scored only against
-``generators.KEY_VALUE_TEMPLATES`` (``PII_KEYED``), not the generic
-``TEMPLATES`` pool every other category also faces; in-process NER is out of
-scope.
+key-value context (``PII_KEYED``), not the generic ``TEMPLATES`` pool every
+other category also faces; in-process NER is out of scope. The key-aware
+``address`` pass (street/postcode/city after a recognized field name) is
+scored the same way, on top of the pattern-based street/postcode detectors
+already scored via ``PII``.
 
 Per category, recall is the share of values with no leak, and precision is
 hits / (hits + clean samples that gained that category's placeholder).
@@ -217,10 +219,20 @@ def gate_redos() -> str | None:
     return None
 
 
+# Byte length of the corpus ``perf_seconds`` measured against when the
+# checked-in ``.baseline.json`` was recorded. Fixed, not derived from
+# ``len(PII)``/``len(CLEAN)``, so a new eval generator (more test coverage,
+# not a detector change — e.g. ``PII_KEYED`` or a CLEAN hard negative) cannot
+# grow the blob and trip the perf gate on its own.
+PERF_BLOB_BYTES = 424_000
+
+
 def perf_seconds() -> float:
     pii, clean, _ = build(1234)
     texts = [fill(t, v) for _, _, t, v, _ in pii[::5]] + [t for _, t in clean[::5]]
     blob = "\n".join(texts) * 3
+    reps = PERF_BLOB_BYTES // len(blob) + 1
+    blob = (blob * reps)[:PERF_BLOB_BYTES]
     best = float("inf")
     for _ in range(5):
         t0 = time.perf_counter()

@@ -25,7 +25,7 @@ sys.path.insert(0, str(ROOT / "eval"))
 if importlib.util.find_spec("pii_mcp") is None:
     sys.path.insert(0, str(ROOT / "src"))
 
-from generators import CLEAN, PII  # noqa: E402
+from generators import CLEAN, PII, PII_KEYED  # noqa: E402
 
 from pii_mcp import scrub as backend  # noqa: E402
 
@@ -36,10 +36,16 @@ def sample(r: random.Random) -> str:
     parts = []
     for _ in range(r.randint(1, 4)):
         roll = r.random()
-        if roll < 0.4:
+        if roll < 0.35:
             parts.append(r.choice(PII)[1](r))
-        elif roll < 0.6:
+        elif roll < 0.55:
             parts.append(r.choice(CLEAN)[1](r))
+        elif roll < 0.7:
+            # Key-value context (issue #52): without this branch the
+            # key-aware regex/gate logic in every backend gets no coverage
+            # from this cross-backend fuzz harness at all.
+            _cat, gen, _langs, templates = r.choice(PII_KEYED)
+            parts.append(r.choice(templates).replace("{}", gen(r)))
         else:
             parts.append("".join(r.choice(NOISE) for _ in range(r.randint(0, 6))))
     return "".join(parts)
