@@ -1495,7 +1495,12 @@ def looks_like_name(value: str) -> bool:
     it). Gates the ambiguous ``name`` and ``state`` keys: ``build-cache``,
     ``true`` and ``active`` fail this; ``Grabbe``, ``O'Brien``, ``California``
     and ``John Smith (verified)`` pass — requiring *every* word to look like
-    a name let one trailing annotation hide the whole value, unmasked."""
+    a name let one trailing annotation hide the whole value, unmasked.
+
+    Known trade-off: a Title Case resource name also passes
+    (``name: "Production Cluster"``) — this pattern-only heuristic cannot
+    tell that from a real person name without semantic understanding, which
+    is out of scope (see the module docstring)."""
     for word in value.split():
         core = word.strip(".,;:'\"")
         if not core or core.lower() in _NAME_PARTICLES:
@@ -1538,12 +1543,13 @@ def _kv_value_span(text: str, start: int) -> tuple[int, int]:
     """Value span right after a matched ``key:``/``key=``: to the matching
     closing quote, or, unquoted, up to the end of the line (trailing
     spaces/tabs and one run of trailing sentence punctuation trimmed, so
-    ``adres: Hoofdstraat 12.`` keeps the ``.`` outside the mask). A comma does
-    not end an unquoted value — ``Straat: Kerkstraat, 12`` must stay one
-    value for the existing street + house-number masking to keep seeing it
-    whole — so a single line holding more than one bare ``key: value`` pair
-    (``a: 1, b: 2``) over-masks past the first comma; quoted values do not
-    have this gap.
+    ``adres: Hoofdstraat 12.`` keeps the ``.`` outside the mask). Nothing
+    short of a newline ends an unquoted value — not a comma, not a space —
+    because ``Straat: Kerkstraat, 12`` must stay one value for the existing
+    street + house-number masking to keep seeing it whole; so a single line
+    holding more than one bare ``key: value``/``key=value`` pair, comma- or
+    space-separated (``a: 1, b: 2``, ``first_name=Jan last_name=Jansen``),
+    over-masks past the first one. Quoted values do not have this gap.
 
     The key text itself is left in place (only the value is replaced), so a
     later detector still scans it: a key glued with no separator before its
