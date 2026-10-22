@@ -2228,12 +2228,33 @@ pub fn looks_like_name(value: &str) -> bool {
     found_capitalized
 }
 
+/// ``word`` with its first letter as an upper/lower class, rest literal
+/// lowercase: matches snake_case, PascalCase/camelCase and Title Case
+/// without a case-insensitive flag, which the Python backend measured at 3x
+/// slower in practice (full Unicode case folding on every alternative, at
+/// every word boundary in the input) for a feature that only needs ASCII
+/// first-letter case. Screaming-case keys (``NAME:``) are not matched — an
+/// accepted trade kept identical across backends.
+fn case_flex_word(word: &str) -> String {
+    let escaped = regex::escape(word);
+    let mut chars = escaped.chars();
+    match chars.next() {
+        Some(first) => format!(
+            "[{}{}]{}",
+            first.to_ascii_uppercase(),
+            first.to_ascii_lowercase(),
+            chars.as_str()
+        ),
+        None => escaped,
+    }
+}
+
 fn key_alternation(keys: &[&str]) -> String {
     keys.iter()
         .map(|key| {
             split_key_words(key)
                 .iter()
-                .map(|w| regex::escape(w))
+                .map(|w| case_flex_word(w))
                 .collect::<Vec<_>>()
                 .join(r"[\s_-]*")
         })
@@ -2245,7 +2266,7 @@ fn person_key_re() -> &'static Regex {
     static RE: OnceLock<Regex> = OnceLock::new();
     RE.get_or_init(|| {
         Regex::new(&format!(
-            r#"(?i)(?-u:\b)(?P<key>{})\d*"?[ \t]*[:=][ \t]*"#,
+            r#"(?-u:\b)(?P<key>{})\d*"?[ \t]*[:=][ \t]*"#,
             key_alternation(PERSON_KEYS)
         ))
         .unwrap()
@@ -2256,7 +2277,7 @@ fn address_key_re() -> &'static Regex {
     static RE: OnceLock<Regex> = OnceLock::new();
     RE.get_or_init(|| {
         Regex::new(&format!(
-            r#"(?i)(?-u:\b)(?P<key>{})\d*"?[ \t]*[:=][ \t]*"#,
+            r#"(?-u:\b)(?P<key>{})\d*"?[ \t]*[:=][ \t]*"#,
             key_alternation(ADDRESS_KEYS)
         ))
         .unwrap()

@@ -1085,16 +1085,21 @@ function looksLikeName(value) {
   }
   return foundCapitalized;
 }
+function caseFlexWord(word) {
+  const escaped = escapeRegExp(word);
+  const first = escaped.charAt(0);
+  return `[${first.toUpperCase()}${first.toLowerCase()}]${escaped.slice(1)}`;
+}
 function keyAlternation(keys) {
-  return keys.map((key) => splitKeyWords(key).map(escapeRegExp).join("[\\s_-]*")).join("|");
+  return keys.map((key) => splitKeyWords(key).map(caseFlexWord).join("[\\s_-]*")).join("|");
 }
 var PERSON_KEY_RE = new RegExp(
   `\\b(?<key>${keyAlternation(PERSON_KEYS)})\\d*"?[ \\t]*[:=][ \\t]*`,
-  "gi"
+  "g"
 );
 var ADDRESS_KEY_RE = new RegExp(
   `\\b(?<key>${keyAlternation(ADDRESS_KEYS)})\\d*"?[ \\t]*[:=][ \\t]*`,
-  "gi"
+  "g"
 );
 function kvValueSpan(text, start) {
   const n = text.length;

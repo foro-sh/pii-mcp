@@ -1593,19 +1593,34 @@ export function looksLikeName(value: string): boolean {
   return foundCapitalized;
 }
 
+/**
+ * ``word`` with its first letter as an upper/lower class, rest literal
+ * lowercase: matches snake_case, PascalCase/camelCase and Title Case without
+ * a case-insensitive flag, which the Python backend measured at 3x slower in
+ * practice (full Unicode case folding on every alternative, at every word
+ * boundary in the input) for a feature that only needs ASCII first-letter
+ * case. Screaming-case keys (``NAME:``) are not matched — an accepted trade
+ * kept identical across backends.
+ */
+function caseFlexWord(word: string): string {
+  const escaped = escapeRegExp(word);
+  const first = escaped.charAt(0);
+  return `[${first.toUpperCase()}${first.toLowerCase()}]${escaped.slice(1)}`;
+}
+
 function keyAlternation(keys: readonly string[]): string {
   return keys
-    .map((key) => splitKeyWords(key).map(escapeRegExp).join("[\\s_-]*"))
+    .map((key) => splitKeyWords(key).map(caseFlexWord).join("[\\s_-]*"))
     .join("|");
 }
 
 const PERSON_KEY_RE = new RegExp(
   `\\b(?<key>${keyAlternation(PERSON_KEYS)})\\d*"?[ \\t]*[:=][ \\t]*`,
-  "gi",
+  "g",
 );
 const ADDRESS_KEY_RE = new RegExp(
   `\\b(?<key>${keyAlternation(ADDRESS_KEYS)})\\d*"?[ \\t]*[:=][ \\t]*`,
-  "gi",
+  "g",
 );
 
 /**
