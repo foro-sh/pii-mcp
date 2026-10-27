@@ -124,9 +124,6 @@ function detectorsFor(
   if (langs.includes("en")) {
     pack.push(nhsDetector);
   }
-  // Before the national phone forms: a grouped BE rijksregisternummer is an
-  // 11-digit run with single-char separators, and its ``MM.DD-SSS.CC`` tail
-  // is an NL trunk-``0`` or DE national phone shape.
   if (langs.includes("nl")) {
     pack.push(beNrnDetector);
   }

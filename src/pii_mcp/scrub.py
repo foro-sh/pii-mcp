@@ -219,9 +219,6 @@ def _detectors_for(languages: Sequence[str] | None) -> tuple[Detector, ...]:
         pack.append(phone_international_detector)
     if "en" in langs:
         pack.append(nhs_detector)
-    # Before the national phone forms: a grouped BE rijksregisternummer is an
-    # 11-digit run with single-char separators, and its ``MM.DD-SSS.CC``
-    # tail is an NL trunk-``0`` or DE national phone shape.
     if "nl" in langs:
         pack.append(be_nrn_detector)
     # National phone forms (trunk ``0`` + area code) before bare-digit IDs, so

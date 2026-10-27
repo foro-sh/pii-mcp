@@ -712,6 +712,7 @@ mod tests {
         }
         let en = vec!["en".to_string()];
         let r = scrub_text("rrn 85.07.30-033.28 on file", Some(&en), true).unwrap();
+        assert_eq!(r.text, "rrn 85.07.30-033.28 on file");
         assert_eq!(r.counts["bsn"], 0);
     }
 
