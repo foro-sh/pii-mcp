@@ -227,6 +227,12 @@ class TestBeNrn:
         assert result["text"] == "rrn 85.07.30-033.28 on file"
         assert result["counts"]["bsn"] == 0
 
+    @pytest.mark.parametrize("langs", [["nl"], ["en", "nl"], ["de", "nl"], ["en", "nl", "de"]])
+    def test_preferred_over_phone_before_a_digit(self, langs: list[str]) -> None:
+        result = scrub_text("rrn 85.07.30-033.28 2 kinderen", languages=langs)
+        assert result["text"] == "rrn [BSN] 2 kinderen"
+        assert result["counts"]["phone"] == 0
+
     def test_preferred_over_de_phone_when_both_packs(self) -> None:
         """A leading-zero birth year is also a DE national phone shape."""
         result = scrub_text("rrn 05.07.15-123.95 on file", languages=["de", "nl"])

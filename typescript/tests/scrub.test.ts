@@ -286,6 +286,14 @@ describe("scrubText", () => {
     expect(result.counts.bsn).toBe(0);
   });
 
+  it("prefers BE rijksregisternummer over a phone before a digit", () => {
+    for (const languages of [["nl"], ["en", "nl"], ["de", "nl"], ["en", "nl", "de"]]) {
+      const result = scrubText("rrn 85.07.30-033.28 2 kinderen", { languages });
+      expect(result.text).toBe("rrn [BSN] 2 kinderen");
+      expect(result.counts.phone).toBe(0);
+    }
+  });
+
   it("prefers BE rijksregisternummer over DE phone with both packs", () => {
     // A leading-zero birth year is also a DE national phone shape.
     const result = scrubText("rrn 05.07.15-123.95 on file", { languages: ["de", "nl"] });

@@ -15,11 +15,12 @@ Detector pack order (see ``_detectors_for``): universal → international phone
 SSN) → UK NHS number when ``en`` (its ``3-3-4`` shape is a NANP number, and
 an NL trunk-``0`` phone match can start in its middle group) → locale phone
 forms (before BSN takes the subscriber part of ``040 78703244``) →
-checksum/rule-backed national IDs (BE rijksregisternummer before DE phone,
-whose shape it shares; DE IdNr before BSN, BSN before SSN when both packs
-are on, US ITIN before SSN; DE USt-IdNr and NL BTW before BSN, DE/NL
-passport after) → street + house number per pack (en, de, nl) → postcode
-per pack → kenteken when ``nl``.
+checksum/rule-backed national IDs (DE IdNr before BSN, BSN before SSN when
+both packs are on, US ITIN before SSN; DE USt-IdNr and NL BTW before BSN,
+DE/NL passport after) → street + house number per pack (en, de, nl) →
+postcode per pack → kenteken when ``nl``. The BE rijksregisternummer runs
+before the locale phone forms when ``nl``: its grouped tail is an NL or DE
+national phone shape.
 
 MCP binary content is left unscrubbed (foro-pii ``binaryKey`` parity): on an
 object with ``type`` of ``image`` or ``audio`` and a string ``data``, that
@@ -218,17 +219,17 @@ def _detectors_for(languages: Sequence[str] | None) -> tuple[Detector, ...]:
         pack.append(phone_international_detector)
     if "en" in langs:
         pack.append(nhs_detector)
+    # Before the national phone forms: a grouped BE rijksregisternummer is an
+    # 11-digit run with single-char separators, and its ``MM.DD-SSS.CC``
+    # tail is an NL trunk-``0`` or DE national phone shape.
+    if "nl" in langs:
+        pack.append(be_nrn_detector)
     # National phone forms (trunk ``0`` + area code) before bare-digit IDs, so
     # BSN does not take the subscriber part of ``040 78703244``.
     if "nl" in langs:
         pack.append(phone_nl_detector)
     if "en" in langs:
         pack.append(phone_en_detector)
-    # Before DE phone: a grouped BE rijksregisternummer is an 11-digit run
-    # with single-char separators, the same shape ``PHONE_DE_NATIONAL`` scans
-    # for once a ``0`` digit turns up in it.
-    if "nl" in langs:
-        pack.append(be_nrn_detector)
     if "de" in langs:
         pack.append(phone_de_detector)
         # Before BSN: the last three groups of ``12 345 678 901`` are a

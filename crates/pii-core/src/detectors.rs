@@ -31,9 +31,9 @@
 
 use crate::checksum::{
     be_nrn_valid_grouped, bsn_valid_grouped, de_passport_valid, iban_valid, imei_valid,
-    is_group_sep,
-    itin_valid_grouped, luhn_valid, nhs_valid_grouped, nl_passport_valid, nl_postcode_valid,
-    ssn_valid_grouped, tax_id_valid_grouped, uk_postcode_valid, GROUP_DASHES, GROUP_SPACES,
+    is_group_sep, itin_valid_grouped, luhn_valid, nhs_valid_grouped, nl_passport_valid,
+    nl_postcode_valid, ssn_valid_grouped, tax_id_valid_grouped, uk_postcode_valid, GROUP_DASHES,
+    GROUP_SPACES,
 };
 use regex::Regex;
 use std::sync::OnceLock;
@@ -2214,6 +2214,15 @@ fn build_detectors(mask: u8) -> Vec<Detector> {
             scrub: scrub_nhs,
         });
     }
+    // Before the national phone forms: a grouped BE rijksregisternummer is an
+    // 11-digit run with single-char separators, and its `MM.DD-SSS.CC` tail
+    // is an NL trunk-`0` or DE national phone shape.
+    if has_nl {
+        pack.push(Detector {
+            category: PiiCategory::Bsn,
+            scrub: scrub_be_nrn,
+        });
+    }
     // National phone forms (trunk ``0`` + area code) before bare-digit IDs, so
     // BSN does not take the subscriber part of ``040 78703244``.
     if has_nl {
@@ -2226,15 +2235,6 @@ fn build_detectors(mask: u8) -> Vec<Detector> {
         pack.push(Detector {
             category: PiiCategory::Phone,
             scrub: scrub_phone_en,
-        });
-    }
-    // Before DE phone: a grouped BE rijksregisternummer is an 11-digit run
-    // with single-char separators, the same shape `scrub_phone_de` scans for
-    // once a `0` digit turns up in it.
-    if has_nl {
-        pack.push(Detector {
-            category: PiiCategory::Bsn,
-            scrub: scrub_be_nrn,
         });
     }
     if has_de {

@@ -1148,13 +1148,13 @@ function detectorsFor(languages) {
     pack.push(nhsDetector);
   }
   if (langs.includes("nl")) {
+    pack.push(beNrnDetector);
+  }
+  if (langs.includes("nl")) {
     pack.push(phoneNlDetector);
   }
   if (langs.includes("en")) {
     pack.push(phoneEnDetector);
-  }
-  if (langs.includes("nl")) {
-    pack.push(beNrnDetector);
   }
   if (langs.includes("de")) {
     pack.push(phoneDeDetector, taxIdDetector, deVatDetector, dePassportDetector);

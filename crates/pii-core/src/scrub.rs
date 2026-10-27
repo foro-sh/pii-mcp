@@ -716,6 +716,21 @@ mod tests {
     }
 
     #[test]
+    fn be_nrn_preferred_over_a_phone_before_a_digit() {
+        for packs in [
+            vec!["nl"],
+            vec!["en", "nl"],
+            vec!["de", "nl"],
+            vec!["en", "nl", "de"],
+        ] {
+            let langs: Vec<String> = packs.iter().map(|s| s.to_string()).collect();
+            let r = scrub_text("rrn 85.07.30-033.28 2 kinderen", Some(&langs), true).unwrap();
+            assert_eq!(r.text, "rrn [BSN] 2 kinderen", "{packs:?}");
+            assert_eq!(r.counts["phone"], 0, "{packs:?}");
+        }
+    }
+
+    #[test]
     fn be_nrn_preferred_over_de_phone_when_both_packs() {
         // A leading-zero birth year is also a DE national phone shape.
         let langs = vec!["de".to_string(), "nl".to_string()];
