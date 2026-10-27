@@ -860,6 +860,24 @@ mod tests {
     }
 
     #[test]
+    fn postcode_digits_and_word_boundaries_are_ascii() {
+        for (text, lang, expected) in [
+            ("PLZ \u{ff11}\u{ff10}\u{ff11}\u{ff11}\u{ff15}", "de", "PLZ \u{ff11}\u{ff10}\u{ff11}\u{ff11}\u{ff15}"),
+            ("PLZ \u{661}\u{660}\u{661}\u{661}\u{665}", "de", "PLZ \u{661}\u{660}\u{661}\u{661}\u{665}"),
+            ("Hauptstraße 5, \u{ff18}\u{ff10}\u{ff19}\u{ff12}\u{ff10}", "de", "[ADDRESS], \u{ff18}\u{ff10}\u{ff19}\u{ff12}\u{ff10}"),
+            ("ZIP: \u{ff18}\u{ff10}\u{ff19}\u{ff12}\u{ff10}", "en", "ZIP: \u{ff18}\u{ff10}\u{ff19}\u{ff12}\u{ff10}"),
+            ("éPLZ 10115", "de", "é[ADDRESS]"),
+            ("é10115 Berlin", "de", "é[ADDRESS]"),
+            ("10115 Berlinẞ", "de", "[ADDRESS]ẞ"),
+            ("PO\u{17f}TCODE 10115", "de", "PO\u{17f}TCODE 10115"),
+        ] {
+            let langs = vec![lang.to_string()];
+            let r = scrub_text(text, Some(&langs), true).unwrap();
+            assert_eq!(r.text, expected, "{text}");
+        }
+    }
+
+    #[test]
     fn de_postcode_rejects_an_arbitrary_capitalized_word() {
         // German nouns are always capitalized, so a city allowlist is required.
         let langs = vec!["de".to_string()];

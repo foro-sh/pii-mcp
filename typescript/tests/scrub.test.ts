@@ -1097,6 +1097,19 @@ describe("scrubText", () => {
     expect(result.text).toBe(text);
   });
 
+  it.each([
+    ["PLZ \uff11\uff10\uff11\uff11\uff15", "de", "PLZ \uff11\uff10\uff11\uff11\uff15"],
+    ["PLZ \u0661\u0660\u0661\u0661\u0665", "de", "PLZ \u0661\u0660\u0661\u0661\u0665"],
+    ["Hauptstraße 5, \uff18\uff10\uff19\uff12\uff10", "de", "[ADDRESS], \uff18\uff10\uff19\uff12\uff10"],
+    ["ZIP: \uff18\uff10\uff19\uff12\uff10", "en", "ZIP: \uff18\uff10\uff19\uff12\uff10"],
+    ["éPLZ 10115", "de", "é[ADDRESS]"],
+    ["é10115 Berlin", "de", "é[ADDRESS]"],
+    ["10115 Berlinẞ", "de", "[ADDRESS]ẞ"],
+    ["PO\u017fTCODE 10115", "de", "PO\u017fTCODE 10115"],
+  ])("keeps postcode digits and word boundaries ASCII (%s)", (text, lang, expected) => {
+    expect(scrubText(text, { languages: [lang] }).text).toBe(expected);
+  });
+
   it.each([["ZIP: 80920"], ["zip code 80920"], ["postal code: 80920"]])(
     "masks a US ZIP with a label (%s)",
     (value) => {

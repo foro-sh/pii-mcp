@@ -1454,7 +1454,8 @@ _DE_CITIES = frozenset(
 DE_POSTCODE_RE = re.compile(
     rf"\b{_POSTCODE_LABEL}\d{{5}}\b"
     rf"|\b\d{{5}}{_STREET_SEP}[{_STREET_UP}][{_STREET_LOW}]+\b"
-    rf"|\b\d{{5}}\b"
+    rf"|\b\d{{5}}\b",
+    re.ASCII,
 )
 
 
@@ -1494,7 +1495,8 @@ _US_ZIP_STATE_PREFIX_RE = re.compile(rf"^[A-Z]{{2}}[{_STREET_SEP_CHARS}]")
 US_ZIP_RE = re.compile(
     rf"\b{_POSTCODE_LABEL}{_US_ZIP_DIGITS}\b"
     rf"|\b[A-Z]{{2}}{_STREET_SEP}{_US_ZIP_DIGITS}\b"
-    rf"|\b{_US_ZIP_DIGITS}\b"
+    rf"|\b{_US_ZIP_DIGITS}\b",
+    re.ASCII,
 )
 
 

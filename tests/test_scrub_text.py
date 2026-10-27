@@ -1088,6 +1088,26 @@ class TestDePostcode:
         assert time.perf_counter() - started < 1
         assert result["text"] == text
 
+    @pytest.mark.parametrize(
+        ("text", "lang", "expected"),
+        [
+            ("PLZ \uff11\uff10\uff11\uff11\uff15", "de", "PLZ \uff11\uff10\uff11\uff11\uff15"),
+            ("PLZ \u0661\u0660\u0661\u0661\u0665", "de", "PLZ \u0661\u0660\u0661\u0661\u0665"),
+            ("Hauptstraße 5, \uff18\uff10\uff19\uff12\uff10", "de", "[ADDRESS], \uff18\uff10\uff19\uff12\uff10"),
+            ("ZIP: \uff18\uff10\uff19\uff12\uff10", "en", "ZIP: \uff18\uff10\uff19\uff12\uff10"),
+            ("éPLZ 10115", "de", "é[ADDRESS]"),
+            ("é10115 Berlin", "de", "é[ADDRESS]"),
+            ("10115 Berlinẞ", "de", "[ADDRESS]ẞ"),
+            ("PO\u017fTCODE 10115", "de", "PO\u017fTCODE 10115"),
+        ],
+    )
+    def test_digits_and_word_boundaries_are_ascii(
+        self, text: str, lang: str, expected: str
+    ) -> None:
+        """Fullwidth and Arabic-Indic digits are not postcode digits, and a
+        non-ASCII letter next to the hit does not block the word boundary."""
+        assert scrub_text(text, languages=[lang])["text"] == expected
+
     def test_near_address_window_does_not_reach_a_distant_hit(self) -> None:
         """An accepted state-code collision must not legitimize a distant,
         unrelated bare number a full clause away."""

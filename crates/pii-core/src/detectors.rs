@@ -2011,7 +2011,9 @@ fn scrub_street_en(text: &str) -> (Option<String>, u32) {
 /// branch.
 fn postcode_label() -> String {
     let sp = r"[\x20\t\u{a0}\u{202f}]";
-    format!(r"(?i:plz|postleitzahl|postal{sp}?code|postcode|zip(?:{sp}?code)?){sp}{{0,3}}(?:[:\-]{sp}{{0,3}})?")
+    format!(
+        r"(?:(?i-u:plz|postleitzahl|postcode)|(?i-u:postal){sp}?(?i-u:code)|(?i-u:zip)(?:{sp}?(?i-u:code))?){sp}{{0,3}}(?:[:\-]{sp}{{0,3}})?"
+    )
 }
 
 /// Any `[ADDRESS]` within `WINDOW` chars counts, regardless of source. A
@@ -2043,7 +2045,7 @@ fn de_postcode_re() -> &'static Regex {
         let sep = format!("[{}]{{1,3}}", "\\x20\\t\\u{a0}\\u{202f}");
         let label = postcode_label();
         Regex::new(&format!(
-            r"\b{label}\d{{5}}\b|\b\d{{5}}{sep}[{STREET_UP}][{STREET_LOW}]+\b|\b\d{{5}}\b"
+            r"(?-u:\b){label}[0-9]{{5}}(?-u:\b)|(?-u:\b)[0-9]{{5}}{sep}[{STREET_UP}][{STREET_LOW}]+(?-u:\b)|(?-u:\b)[0-9]{{5}}(?-u:\b)"
         ))
         .unwrap()
     })
@@ -2084,10 +2086,10 @@ fn us_zip_re() -> &'static Regex {
     static RE: OnceLock<Regex> = OnceLock::new();
     RE.get_or_init(|| {
         let sep = format!("[{}]{{1,3}}", "\\x20\\t\\u{a0}\\u{202f}");
-        let digits = r"\d{5}(?:-\d{4})?";
+        let digits = "[0-9]{5}(?:-[0-9]{4})?";
         let label = postcode_label();
         Regex::new(&format!(
-            r"\b{label}{digits}\b|\b[A-Z]{{2}}{sep}{digits}\b|\b{digits}\b"
+            r"(?-u:\b){label}{digits}(?-u:\b)|(?-u:\b)[A-Z]{{2}}{sep}{digits}(?-u:\b)|(?-u:\b){digits}(?-u:\b)"
         ))
         .unwrap()
     })
