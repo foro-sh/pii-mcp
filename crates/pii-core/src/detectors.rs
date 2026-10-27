@@ -23,9 +23,15 @@
 //! post-2000 birth-year variant and a plausible month (0-12) and day (0-31).
 //! The compact 11-digit form is left alone: it collides with German tax ids
 //! and 11-digit phone numbers too often for the checksum alone to gate it.
+//! German ID card / passport document numbers (`passport`, de pack): 9 chars
+//! from the BSI TR-03110 / ICAO Doc 9303 alphabet, first letter gated per
+//! document type, optional MRZ check digit (weights 7-3-1, `A`=10 .. `Z`=35,
+//! mod 10) validated when present. See `checksum::de_passport_valid`. A hit
+//! next to `-` or before `=` is left alone, same guard as NINO.
 
 use crate::checksum::{
-    be_nrn_valid_grouped, bsn_valid_grouped, iban_valid, imei_valid, is_group_sep,
+    be_nrn_valid_grouped, bsn_valid_grouped, de_passport_valid, iban_valid, imei_valid,
+    is_group_sep,
     itin_valid_grouped, luhn_valid, nhs_valid_grouped, nl_passport_valid, nl_postcode_valid,
     ssn_valid_grouped, tax_id_valid_grouped, uk_postcode_valid, GROUP_DASHES, GROUP_SPACES,
 };
@@ -2052,6 +2058,33 @@ fn scrub_nl_vat(text: &str) -> (Option<String>, u32) {
     replace_matches(text, nl_vat_re(), "[VAT_ID]", |_, _, _| true, false)
 }
 
+/// First char: ID-card (`LMNPRTVWXY`) union passport (`CFGHJK`) first
+/// letters; remaining 8 (and the optional 10th MRZ check digit) from the
+/// full document-number alphabet. See `checksum::de_passport_valid`.
+fn de_passport_re() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| {
+        Regex::new(r"(?i)\b[CFGHJKLMNPRTVWXY][CFGHJKLMNPRTVWXYZ0-9]{8}[0-9]?\b").unwrap()
+    })
+}
+
+fn de_passport_context_ok(text: &str, start: usize, end: usize) -> bool {
+    if text[..start].ends_with('-') {
+        return false;
+    }
+    !matches!(text[end..].chars().next(), Some('-' | '='))
+}
+
+fn scrub_de_passport(text: &str) -> (Option<String>, u32) {
+    replace_matches(
+        text,
+        de_passport_re(),
+        "[PASSPORT]",
+        |v, s, e| de_passport_valid(v) && de_passport_context_ok(text, s, e),
+        false,
+    )
+}
+
 fn nl_passport_re() -> &'static Regex {
     static RE: OnceLock<Regex> = OnceLock::new();
     RE.get_or_init(|| Regex::new(r"(?i)\b[A-Z]{2}[0-9A-Z]{6}\d\b").unwrap())
@@ -2218,6 +2251,10 @@ fn build_detectors(mask: u8) -> Vec<Detector> {
         pack.push(Detector {
             category: PiiCategory::VatId,
             scrub: scrub_de_vat,
+        });
+        pack.push(Detector {
+            category: PiiCategory::Passport,
+            scrub: scrub_de_passport,
         });
     }
     if has_nl {

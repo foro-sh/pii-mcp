@@ -18,9 +18,9 @@
  * forms (before BSN takes the subscriber part of ``040 78703244``) →
  * checksum/rule-backed national IDs (BE rijksregisternummer before DE phone,
  * whose shape it shares; DE IdNr before BSN, BSN before SSN when both packs
- * are on, US ITIN before SSN; DE USt-IdNr and NL BTW before BSN, passport
- * after) → street + house number per pack (en, de, nl) → postcode per pack →
- * kenteken when ``nl``.
+ * are on, US ITIN before SSN; DE USt-IdNr and NL BTW before BSN, DE/NL
+ * passport after) → street + house number per pack (en, de, nl) → postcode
+ * per pack → kenteken when ``nl``.
  *
  * MCP binary content is left unscrubbed (foro-pii ``binaryKey`` parity): on an
  * object with ``type`` of ``image`` or ``audio`` and a string ``data``, that
@@ -34,6 +34,7 @@ import {
   UNIVERSAL_DETECTORS,
   beNrnDetector,
   bsnDetector,
+  dePassportDetector,
   deVatDetector,
   itinDetector,
   nhsDetector,
@@ -139,7 +140,7 @@ function detectorsFor(
   if (langs.includes("de")) {
     // Tax id before BSN: the last three groups of ``12 345 678 901`` are a
     // spaced 9-digit BSN candidate.
-    pack.push(phoneDeDetector, taxIdDetector, deVatDetector);
+    pack.push(phoneDeDetector, taxIdDetector, deVatDetector, dePassportDetector);
   }
   if (langs.includes("nl")) {
     // BTW-id first: its 9-digit body can itself pass the BSN elfproef.

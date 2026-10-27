@@ -63,6 +63,17 @@
  *   with structure + mod-11/10 check.
  * - German USt-IdNr (``vat_id``): uppercase ``DE`` + 9 digits, compact or
  *   grouped ``DE 136 695 976``, with ISO 7064 MOD 11,10 check.
+ * - German ID card / passport document number (``passport``): 9 chars from
+ *   the alphabet ``C F G H J K L M N P R T V W X Y Z 0-9`` (vowels and digit
+ *   look-alikes excluded; BSI TR-03110 / ICAO Doc 9303), first letter one of
+ *   ``L M N P R T V W X Y`` (ID card, issued since Nov 2010) or
+ *   ``C F G H J K`` (passport) — not distinguished further, both mask as
+ *   ``passport``, same as the NL counterpart. An optional 10th MRZ check
+ *   digit (ICAO 9303: weights 7-3-1 cyclic, ``A``=10 .. ``Z``=35, sum mod 10)
+ *   is validated when present; without it the match is format-only. At least
+ *   one digit is required in the 9-char number, which rejects all-letter
+ *   license-key-shaped strings. A hit next to ``-`` or before ``=`` (order
+ *   refs, base64 padding) is left alone, same guard as the NINO detector.
  * - NL BTW-id (``vat_id``): ``NL`` + 9 digits + ``B`` + 2 digits with optional
  *   spaces/dots (format only — post-2020 sole-trader ids are not elfproef-gated).
  * - NL passport / ID-card number (``passport``): 9-char RvIG document number
@@ -1163,6 +1174,63 @@ function scrubDeVat(text: string): { text: string; count: number } {
 }
 
 export const deVatDetector: Detector = { type: "vat_id", scrub: scrubDeVat };
+
+/**
+ * BSI TR-03110 / ICAO Doc 9303 document number: first char is the union of
+ * the ID-card (`LMNPRTVWXY`) and passport (`CFGHJK`) first-letter sets, the
+ * remaining 8 chars (and the optional 10th MRZ check digit) from the full
+ * alphabet.
+ */
+const DE_PASSPORT_RE = /\b[CFGHJKLMNPRTVWXY][CFGHJKLMNPRTVWXYZ0-9]{8}[0-9]?\b/gi;
+
+function dePassportCheckDigit(nine: string): number {
+  const weights = [7, 3, 1];
+  let total = 0;
+  for (let i = 0; i < nine.length; i++) {
+    const ch = nine[i] as string;
+    const value = ch >= "0" && ch <= "9" ? Number(ch) : 10 + (ch.charCodeAt(0) - 65);
+    total += (weights[i % 3] as number) * value;
+  }
+  return total % 10;
+}
+
+function dePassportValid(value: string): boolean {
+  const compact = value.toUpperCase();
+  if (compact.length !== 9 && compact.length !== 10) {
+    return false;
+  }
+  if (!/[0-9]/.test(compact.slice(0, 9))) {
+    return false;
+  }
+  if (compact.length === 10) {
+    return dePassportCheckDigit(compact.slice(0, 9)) === Number(compact[9]);
+  }
+  return true;
+}
+
+/**
+ * Reject a hit glued to an order ref or base64 padding (``ORD-...``,
+ * ``...=``), mirroring the NINO guard.
+ */
+function dePassportEnd(text: string, start: number, end: number): number {
+  if (text[start - 1] === "-") {
+    return start;
+  }
+  const after = text[end] ?? "";
+  if (after === "-" || after === "=") {
+    return start;
+  }
+  return dePassportValid(text.slice(start, end)) ? end : start;
+}
+
+function scrubDePassport(text: string): { text: string; count: number } {
+  return replaceMatches(text, DE_PASSPORT_RE, "[PASSPORT]", undefined, false, dePassportEnd);
+}
+
+export const dePassportDetector: Detector = {
+  type: "passport",
+  scrub: scrubDePassport,
+};
 
 const NL_VAT_RE = /\b[Nn][Ll][.\s]*\d{9}[.\s]*[Bb][.\s]*\d{2}\b/g;
 
