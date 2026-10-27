@@ -1533,7 +1533,7 @@ const SECRET_PREFIX_RE = new RegExp(
   ].join("|"),
   "g",
 );
-const BEARER_RE = /bearer[ \t]+([A-Za-z0-9._~+/-]{16,}=*)/gi;
+const BEARER_RE = /[Bb][Ee][Aa][Rr][Ee][Rr][ \t]+([A-Za-z0-9._~+/-]{16,}=*)/g;
 const SECRET_EDGE_RE = /[A-Za-z0-9_-]/;
 
 function secretBoundaryOk(text: string, start: number, end: number): boolean {

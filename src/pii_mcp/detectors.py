@@ -1462,7 +1462,7 @@ SECRET_PREFIX_RE = re.compile(
     r"|foro_(?:pat|oat|ing|ort)_[A-Za-z0-9_-]{20,}"
     r"|eyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}"
 )
-BEARER_RE = re.compile(r"bearer[ \t]+([A-Za-z0-9._~+/-]{16,}=*)", re.IGNORECASE)
+BEARER_RE = re.compile(r"[Bb][Ee][Aa][Rr][Ee][Rr][ \t]+([A-Za-z0-9._~+/-]{16,}=*)")
 
 
 def _is_secret_edge_char(ch: str) -> bool:

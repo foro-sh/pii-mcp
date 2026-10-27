@@ -2148,7 +2148,9 @@ fn secret_prefix_re() -> &'static Regex {
 
 fn bearer_re() -> &'static Regex {
     static RE: OnceLock<Regex> = OnceLock::new();
-    RE.get_or_init(|| Regex::new(r"(?i)bearer[ \t]+([A-Za-z0-9._~+/-]{16,}=*)").unwrap())
+    RE.get_or_init(|| {
+        Regex::new(r"[Bb][Ee][Aa][Rr][Ee][Rr][ \t]+([A-Za-z0-9._~+/-]{16,}=*)").unwrap()
+    })
 }
 
 fn bearer_credential_valid(value: &str) -> bool {

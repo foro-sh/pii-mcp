@@ -1095,6 +1095,7 @@ describe("secret", () => {
     "ghp_" + "a".repeat(35),
     "foro_cl_" + "a".repeat(30),
     "Tbearer abc123def456ghi789jkl012",
+    "Bearer \u212abc123def456ghi789jkl",
   ])("leaves lookalike %#", (text) => {
     const result = scrubText(text);
     expect(result.text).toBe(text);

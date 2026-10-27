@@ -1041,7 +1041,7 @@ var SECRET_PREFIX_RE = new RegExp(
   ].join("|"),
   "g"
 );
-var BEARER_RE = /bearer[ \t]+([A-Za-z0-9._~+/-]{16,}=*)/gi;
+var BEARER_RE = /[Bb][Ee][Aa][Rr][Ee][Rr][ \t]+([A-Za-z0-9._~+/-]{16,}=*)/g;
 var SECRET_EDGE_RE = /[A-Za-z0-9_-]/;
 function secretBoundaryOk(text, start, end) {
   return !(start > 0 && SECRET_EDGE_RE.test(text.charAt(start - 1))) && !(end < text.length && SECRET_EDGE_RE.test(text.charAt(end)));

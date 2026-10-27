@@ -1140,6 +1140,7 @@ class TestSecret:
             "ghp_" + "a" * 35,
             "foro_cl_" + "a" * 30,
             "Tbearer abc123def456ghi789jkl012",
+            "Bearer \u212abc123def456ghi789jkl",
         ],
     )
     def test_leaves_lookalikes(self, text: str) -> None:
