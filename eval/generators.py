@@ -465,6 +465,29 @@ def street_en(r: R) -> str:
     return f"{number}{_number_gap(r)}{name} {kind}"
 
 
+_B64URL = string.ascii_letters + string.digits + "_-"
+
+
+def _chars(r: R, alphabet: str, n: int) -> str:
+    return "".join(r.choice(alphabet) for _ in range(n))
+
+
+def secret(r: R) -> str:
+    alnum = string.ascii_letters + string.digits
+    return r.choice(
+        [
+            lambda: "sk-" + r.choice(["", "ant-api03-", "proj-"]) + _chars(r, _B64URL, r.randint(20, 60)),
+            lambda: "gh" + r.choice("pousr") + "_" + _chars(r, alnum, 36),
+            lambda: "github_pat_" + _chars(r, alnum + "_", r.randint(22, 82)),
+            lambda: r.choice(["AKIA", "ASIA"]) + _chars(r, string.ascii_uppercase + string.digits, 16),
+            lambda: "xox" + r.choice("abposr") + "-" + _chars(r, alnum + "-", r.randint(10, 50)),
+            lambda: r.choice("rs") + "k_" + r.choice(["live", "test"]) + "_" + _chars(r, alnum, r.randint(16, 40)),
+            lambda: "AIza" + _chars(r, _B64URL, 35),
+            lambda: "foro_" + r.choice(["pat", "oat", "ing", "ort"]) + "_" + _chars(r, _B64URL, 43),
+            lambda: "eyJ" + _chars(r, _B64URL, r.randint(10, 40)) + ".eyJ" + _chars(r, _B64URL, r.randint(10, 80)) + "." + _chars(r, _B64URL, 43),
+        ]
+    )()
+
 
 # (category, generator, languages the detector needs).
 PII: list[tuple[str, Callable[[R], str], tuple[str, ...]]] = [
@@ -495,6 +518,7 @@ PII: list[tuple[str, Callable[[R], str], tuple[str, ...]]] = [
     ("address", street_en, ("en",)),
     ("address", street_de, ("de",)),
     ("license_plate", license_plate_nl, ("nl",)),
+    ("secret", secret, ()),
 ]
 
 
@@ -514,6 +538,9 @@ def _ean13(r: R) -> str:
 
 
 CLEAN: list[tuple[str, Callable[[R], str]]] = [
+    ("bearer_prose", lambda r: f"the bearer {r.choice(['responsibilities', 'instrument', 'of bad news'])}"),
+    ("hyphen_slug", lambda r: f"risk-{_chars(r, string.ascii_lowercase, 24)}"),
+    ("foro_client_id", lambda r: f"foro_cl_{_chars(r, _B64URL, 24)}"),
     ("nhs_compact", _nhs_compact),
     ("nino_placeholder", lambda r: f"QQ{_digits(r, 6)}{r.choice('ABCD')}"),
     ("nino_bad_suffix", lambda r: f"AB{_digits(r, 6)}{r.choice('EFGXYZ')}"),
