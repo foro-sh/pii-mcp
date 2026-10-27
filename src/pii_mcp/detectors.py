@@ -1416,7 +1416,11 @@ street_en_detector = Detector(type="address", scrub=_scrub_street(STREET_EN_RE))
 # three hints are told apart from the matched text alone (label text never
 # starts with a digit, the state form's third character is always a
 # separator), so one ``context_ok`` callback can gate every branch.
-_POSTCODE_LABEL = r"(?i:plz|postleitzahl|postal\s*code|postcode|zip(?:\s*code)?)"
+_POSTCODE_SPACE = rf"[{_STREET_SEP_CHARS}]"
+_POSTCODE_LABEL = (
+    rf"(?i:plz|postleitzahl|postal{_POSTCODE_SPACE}?code|postcode|zip(?:{_POSTCODE_SPACE}?code)?)"
+    rf"{_POSTCODE_SPACE}{{0,3}}(?:[:\-]{_POSTCODE_SPACE}{{0,3}})?"
+)
 
 
 def _postcode_near_address(text: str, start: int, end: int, window: int = 12) -> bool:
@@ -1448,7 +1452,7 @@ _DE_CITIES = frozenset(
 )
 
 DE_POSTCODE_RE = re.compile(
-    rf"\b{_POSTCODE_LABEL}\s*[:\-]?\s*\d{{5}}\b"
+    rf"\b{_POSTCODE_LABEL}\d{{5}}\b"
     rf"|\b\d{{5}}{_STREET_SEP}[{_STREET_UP}][{_STREET_LOW}]+\b"
     rf"|\b\d{{5}}\b"
 )
@@ -1488,7 +1492,7 @@ _US_ZIP_DIGITS = r"\d{5}(?:-\d{4})?"
 _US_ZIP_STATE_PREFIX_RE = re.compile(rf"^[A-Z]{{2}}[{_STREET_SEP_CHARS}]")
 
 US_ZIP_RE = re.compile(
-    rf"\b{_POSTCODE_LABEL}\s*[:\-]?\s*{_US_ZIP_DIGITS}\b"
+    rf"\b{_POSTCODE_LABEL}{_US_ZIP_DIGITS}\b"
     rf"|\b[A-Z]{{2}}{_STREET_SEP}{_US_ZIP_DIGITS}\b"
     rf"|\b{_US_ZIP_DIGITS}\b"
 )

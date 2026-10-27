@@ -2009,7 +2009,10 @@ fn scrub_street_en(text: &str) -> (Option<String>, u32) {
 /// alone (label text never starts with a digit, the state form's third
 /// character is always a separator), so one `accept` callback gates every
 /// branch.
-const POSTCODE_LABEL: &str = r"(?i:plz|postleitzahl|postal\s*code|postcode|zip(?:\s*code)?)";
+fn postcode_label() -> String {
+    let sp = r"[\x20\t\u{a0}\u{202f}]";
+    format!(r"(?i:plz|postleitzahl|postal{sp}?code|postcode|zip(?:{sp}?code)?){sp}{{0,3}}(?:[:\-]{sp}{{0,3}})?")
+}
 
 /// Any `[ADDRESS]` within `WINDOW` chars counts, regardless of source. A
 /// coincidental state/label/city hit can legitimize an unrelated bare number
@@ -2038,8 +2041,9 @@ fn de_postcode_re() -> &'static Regex {
     static RE: OnceLock<Regex> = OnceLock::new();
     RE.get_or_init(|| {
         let sep = format!("[{}]{{1,3}}", "\\x20\\t\\u{a0}\\u{202f}");
+        let label = postcode_label();
         Regex::new(&format!(
-            r"\b{POSTCODE_LABEL}\s*[:\-]?\s*\d{{5}}\b|\b\d{{5}}{sep}[{STREET_UP}][{STREET_LOW}]+\b|\b\d{{5}}\b"
+            r"\b{label}\d{{5}}\b|\b\d{{5}}{sep}[{STREET_UP}][{STREET_LOW}]+\b|\b\d{{5}}\b"
         ))
         .unwrap()
     })
@@ -2081,8 +2085,9 @@ fn us_zip_re() -> &'static Regex {
     RE.get_or_init(|| {
         let sep = format!("[{}]{{1,3}}", "\\x20\\t\\u{a0}\\u{202f}");
         let digits = r"\d{5}(?:-\d{4})?";
+        let label = postcode_label();
         Regex::new(&format!(
-            r"\b{POSTCODE_LABEL}\s*[:\-]?\s*{digits}\b|\b[A-Z]{{2}}{sep}{digits}\b|\b{digits}\b"
+            r"\b{label}{digits}\b|\b[A-Z]{{2}}{sep}{digits}\b|\b{digits}\b"
         ))
         .unwrap()
     })

@@ -1079,6 +1079,24 @@ describe("scrubText", () => {
     expect(result.counts.address).toBe(0);
   });
 
+  it.each([["PLZ:33613"], ["PLZ  -  33613"], ["plz :\t33613"]])(
+    "masks a DE postcode after a label separator (%s)",
+    (value) => {
+      expect(scrubText(value, { languages: ["de"] }).text).toBe("[ADDRESS]");
+    },
+  );
+
+  it.each([
+    ["PLZ" + " ".repeat(40_000) + "x"],
+    ["zip" + "\n".repeat(20_000)],
+    ["postal" + " ".repeat(40_000)],
+  ])("scans a long run after a postcode label in linear time", (text) => {
+    const start = performance.now();
+    const result = scrubText(text, { languages: ["en", "de"] });
+    expect(performance.now() - start).toBeLessThan(1000);
+    expect(result.text).toBe(text);
+  });
+
   it.each([["ZIP: 80920"], ["zip code 80920"], ["postal code: 80920"]])(
     "masks a US ZIP with a label (%s)",
     (value) => {

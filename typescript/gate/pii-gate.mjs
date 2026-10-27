@@ -1013,7 +1013,8 @@ var streetEnDetector = streetDetector(STREET_EN_RE);
 function caseInsensitiveLiteral(word) {
   return word.replace(/[a-zA-Z]/g, (c) => `[${c.toLowerCase()}${c.toUpperCase()}]`);
 }
-var POSTCODE_LABEL = `(?:${caseInsensitiveLiteral("plz")}|${caseInsensitiveLiteral("postleitzahl")}|${caseInsensitiveLiteral("postal")}\\s*${caseInsensitiveLiteral("code")}|${caseInsensitiveLiteral("postcode")}|${caseInsensitiveLiteral("zip")}(?:\\s*${caseInsensitiveLiteral("code")})?)`;
+var POSTCODE_SPACE = `[${STREET_SEP_CHARS}]`;
+var POSTCODE_LABEL = `(?:${caseInsensitiveLiteral("plz")}|${caseInsensitiveLiteral("postleitzahl")}|${caseInsensitiveLiteral("postal")}${POSTCODE_SPACE}?${caseInsensitiveLiteral("code")}|${caseInsensitiveLiteral("postcode")}|${caseInsensitiveLiteral("zip")}(?:${POSTCODE_SPACE}?${caseInsensitiveLiteral("code")})?)${POSTCODE_SPACE}{0,3}(?:[:\\-]${POSTCODE_SPACE}{0,3})?`;
 function postcodeNearAddress(text, start, end) {
   const window = 12;
   const before = text.slice(Math.max(0, start - window), start);
@@ -1024,7 +1025,7 @@ var DE_CITIES = new Set(
   "Berlin Hamburg M\xFCnchen Munich K\xF6ln Cologne Frankfurt Stuttgart D\xFCsseldorf Dortmund Essen Leipzig Bremen Dresden Hannover N\xFCrnberg Duisburg Bochum Wuppertal Bielefeld Bonn M\xFCnster Mannheim Karlsruhe Augsburg Wiesbaden M\xF6nchengladbach Gelsenkirchen Aachen Braunschweig Kiel Chemnitz Halle Magdeburg Freiburg Krefeld Mainz L\xFCbeck Erfurt Oberhausen Rostock Kassel Potsdam Saarbr\xFCcken Heidelberg".split(" ")
 );
 var DE_POSTCODE_RE = new RegExp(
-  String.raw`\b${POSTCODE_LABEL}\s*[:\-]?\s*\d{5}\b` + `|\\b\\d{5}${STREET_SEP}[${STREET_UP}][${STREET_LOW}]+\\b` + String.raw`|\b\d{5}\b`,
+  String.raw`\b${POSTCODE_LABEL}\d{5}\b` + `|\\b\\d{5}${STREET_SEP}[${STREET_UP}][${STREET_LOW}]+\\b` + String.raw`|\b\d{5}\b`,
   "g"
 );
 function dePostcodeRangeOk(digits) {
@@ -1052,7 +1053,7 @@ var US_STATE_ABBR = new Set(
 );
 var US_ZIP_DIGITS = String.raw`\d{5}(?:-\d{4})?`;
 var US_ZIP_RE = new RegExp(
-  String.raw`\b${POSTCODE_LABEL}\s*[:\-]?\s*${US_ZIP_DIGITS}\b` + `|\\b[A-Z]{2}${STREET_SEP}${US_ZIP_DIGITS}\\b` + String.raw`|\b${US_ZIP_DIGITS}\b`,
+  String.raw`\b${POSTCODE_LABEL}${US_ZIP_DIGITS}\b` + `|\\b[A-Z]{2}${STREET_SEP}${US_ZIP_DIGITS}\\b` + String.raw`|\b${US_ZIP_DIGITS}\b`,
   "g"
 );
 var US_ZIP_STATE_PREFIX_RE = new RegExp(`^[A-Z]{2}[${STREET_SEP_CHARS}]`);

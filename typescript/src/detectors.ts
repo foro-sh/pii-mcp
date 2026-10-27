@@ -1502,7 +1502,13 @@ function caseInsensitiveLiteral(word: string): string {
   return word.replace(/[a-zA-Z]/g, (c) => `[${c.toLowerCase()}${c.toUpperCase()}]`);
 }
 
-const POSTCODE_LABEL = `(?:${caseInsensitiveLiteral("plz")}|${caseInsensitiveLiteral("postleitzahl")}|${caseInsensitiveLiteral("postal")}\\s*${caseInsensitiveLiteral("code")}|${caseInsensitiveLiteral("postcode")}|${caseInsensitiveLiteral("zip")}(?:\\s*${caseInsensitiveLiteral("code")})?)`;
+const POSTCODE_SPACE = `[${STREET_SEP_CHARS}]`;
+const POSTCODE_LABEL =
+  `(?:${caseInsensitiveLiteral("plz")}|${caseInsensitiveLiteral("postleitzahl")}` +
+  `|${caseInsensitiveLiteral("postal")}${POSTCODE_SPACE}?${caseInsensitiveLiteral("code")}` +
+  `|${caseInsensitiveLiteral("postcode")}` +
+  `|${caseInsensitiveLiteral("zip")}(?:${POSTCODE_SPACE}?${caseInsensitiveLiteral("code")})?)` +
+  `${POSTCODE_SPACE}{0,3}(?:[:\\-]${POSTCODE_SPACE}{0,3})?`;
 
 /**
  * Any ``[ADDRESS]`` within ``window`` chars counts, regardless of source. A
@@ -1533,7 +1539,7 @@ const DE_CITIES = new Set(
 );
 
 const DE_POSTCODE_RE = new RegExp(
-  String.raw`\b${POSTCODE_LABEL}\s*[:\-]?\s*\d{5}\b` +
+  String.raw`\b${POSTCODE_LABEL}\d{5}\b` +
     `|\\b\\d{5}${STREET_SEP}[${STREET_UP}][${STREET_LOW}]+\\b` +
     String.raw`|\b\d{5}\b`,
   "g",
@@ -1576,7 +1582,7 @@ const US_STATE_ABBR = new Set(
 const US_ZIP_DIGITS = String.raw`\d{5}(?:-\d{4})?`;
 
 const US_ZIP_RE = new RegExp(
-  String.raw`\b${POSTCODE_LABEL}\s*[:\-]?\s*${US_ZIP_DIGITS}\b` +
+  String.raw`\b${POSTCODE_LABEL}${US_ZIP_DIGITS}\b` +
     `|\\b[A-Z]{2}${STREET_SEP}${US_ZIP_DIGITS}\\b` +
     String.raw`|\b${US_ZIP_DIGITS}\b`,
   "g",

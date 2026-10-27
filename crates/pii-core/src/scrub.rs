@@ -839,6 +839,27 @@ mod tests {
     }
 
     #[test]
+    fn masks_de_postcode_after_a_label_separator() {
+        let langs = vec!["de".to_string()];
+        for value in ["PLZ:33613", "PLZ  -  33613", "plz :\t33613"] {
+            let r = scrub_text(value, Some(&langs), true).unwrap();
+            assert_eq!(r.text, "[ADDRESS]", "{value}");
+        }
+    }
+
+    #[test]
+    fn de_postcode_label_does_not_span_a_long_run() {
+        let langs = vec!["en".to_string(), "de".to_string()];
+        for text in [
+            "PLZ".to_string() + &" ".repeat(40_000) + "x",
+            "zip".to_string() + &"\n".repeat(20_000),
+        ] {
+            let r = scrub_text(&text, Some(&langs), true).unwrap();
+            assert_eq!(r.text, text);
+        }
+    }
+
+    #[test]
     fn de_postcode_rejects_an_arbitrary_capitalized_word() {
         // German nouns are always capitalized, so a city allowlist is required.
         let langs = vec!["de".to_string()];

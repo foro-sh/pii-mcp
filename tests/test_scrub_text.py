@@ -1075,6 +1075,19 @@ class TestDePostcode:
         assert result["text"] == "10115 Berlin"
         assert result["counts"]["address"] == 0
 
+    @pytest.mark.parametrize("value", ["PLZ:33613", "PLZ  -  33613", "plz :\t33613"])
+    def test_label_separator_forms(self, value: str) -> None:
+        assert scrub_text(value, languages=["de"])["text"] == "[ADDRESS]"
+
+    @pytest.mark.parametrize(
+        "text", ["PLZ" + " " * 40_000 + "x", "zip" + "\n" * 20_000, "postal" + " " * 40_000]
+    )
+    def test_label_separator_is_linear(self, text: str) -> None:
+        started = time.perf_counter()
+        result = scrub_text(text, languages=["en", "de"])
+        assert time.perf_counter() - started < 1
+        assert result["text"] == text
+
     def test_near_address_window_does_not_reach_a_distant_hit(self) -> None:
         """An accepted state-code collision must not legitimize a distant,
         unrelated bare number a full clause away."""
