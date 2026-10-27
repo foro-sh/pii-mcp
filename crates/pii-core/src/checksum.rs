@@ -155,6 +155,41 @@ pub fn nl_passport_valid(value: &str) -> bool {
     true
 }
 
+/// German ID card / passport document number (BSI TR-03110 / ICAO Doc
+/// 9303): 9 chars from the alphabet (vowels and digit look-alikes excluded;
+/// first letter gated per document type at the regex), at least one digit
+/// required (rejects all-letter license-key-shaped strings). An optional
+/// 10th MRZ check digit (ICAO 9303: weights 7-3-1 cyclic, `A`=10 .. `Z`=35,
+/// sum mod 10) is validated when present; without it the match is
+/// format-only. Case-insensitive: candidates are uppercased first.
+pub fn de_passport_valid(value: &str) -> bool {
+    let upper: Vec<u8> = value.bytes().map(|b| b.to_ascii_uppercase()).collect();
+    if upper.len() != 9 && upper.len() != 10 {
+        return false;
+    }
+    if !upper[..9].iter().any(u8::is_ascii_digit) {
+        return false;
+    }
+    if upper.len() == 10 {
+        return de_passport_check_digit(&upper[..9]) == u32::from(upper[9] - b'0');
+    }
+    true
+}
+
+fn de_passport_check_digit(nine: &[u8]) -> u32 {
+    const WEIGHTS: [u32; 3] = [7, 3, 1];
+    let mut total = 0u32;
+    for (i, &b) in nine.iter().enumerate() {
+        let value = if b.is_ascii_digit() {
+            u32::from(b - b'0')
+        } else {
+            10 + u32::from(b - b'A')
+        };
+        total += WEIGHTS[i % 3] * value;
+    }
+    total % 10
+}
+
 /// Group separators the national-id patterns accept: space, dot, hyphen,
 /// slash, nbsp, thin / narrow nbsp, and unicode dashes / minus sign.
 fn is_id_sep(c: char) -> bool {
@@ -494,6 +529,21 @@ mod tests {
         assert!(nl_passport_valid("xr1001r58"));
         assert!(!nl_passport_valid("XR1O01R58"));
         assert!(!nl_passport_valid("581001RXR"));
+    }
+
+    #[test]
+    fn de_passport_format_only() {
+        assert!(de_passport_valid("L01X00T47"));
+        assert!(de_passport_valid("c01x00t47"));
+        assert!(!de_passport_valid("LMNPRTVWX"));
+    }
+
+    #[test]
+    fn de_passport_check_digit() {
+        // BSI/ICAO 9303 specimen numbers.
+        assert!(de_passport_valid("L01X00T471"));
+        assert!(de_passport_valid("C01X00T478"));
+        assert!(!de_passport_valid("L01X00T470"));
     }
 
     #[test]

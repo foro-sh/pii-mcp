@@ -785,6 +785,42 @@ mod tests {
     }
 
     #[test]
+    fn masks_de_id_card_and_passport_numbers() {
+        let langs = vec!["de".to_string()];
+        for value in ["L01X00T47", "C01X00T47", "L01X00T471", "C01X00T478"] {
+            let r = scrub_text(&format!("Ausweisnummer {value}"), Some(&langs), true).unwrap();
+            assert_eq!(r.text, "Ausweisnummer [PASSPORT]", "{value}");
+            assert_eq!(r.counts["passport"], 1, "{value}");
+        }
+    }
+
+    #[test]
+    fn rejects_de_passport_with_a_wrong_check_digit() {
+        let langs = vec!["de".to_string()];
+        let r = scrub_text("MRZ L01X00T470 end", Some(&langs), true).unwrap();
+        assert_eq!(r.text, "MRZ L01X00T470 end");
+        assert_eq!(r.counts["passport"], 0);
+    }
+
+    #[test]
+    fn rejects_de_passport_glued_to_order_refs_and_base64_padding() {
+        let langs = vec!["de".to_string()];
+        for value in ["ORD-L01X00T47", "L01X00T47-2", "L01X00T47="] {
+            let text = format!("ref {value}");
+            let r = scrub_text(&text, Some(&langs), true).unwrap();
+            assert_eq!(r.text, text, "{value}");
+        }
+    }
+
+    #[test]
+    fn de_passport_needs_the_de_pack() {
+        let langs = vec!["en".to_string()];
+        let r = scrub_text("Ausweisnummer L01X00T47", Some(&langs), true).unwrap();
+        assert_eq!(r.text, "Ausweisnummer L01X00T47");
+        assert_eq!(r.counts["passport"], 0);
+    }
+
+    #[test]
     fn masks_de_postcode_with_a_label() {
         let langs = vec!["de".to_string()];
         for value in ["Postleitzahl: 33613", "Postleitzahl 33613", "PLZ: 33613", "PLZ 33613"] {

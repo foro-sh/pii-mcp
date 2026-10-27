@@ -67,6 +67,17 @@ Patterns:
   with structure + mod-11/10 check.
 - German USt-IdNr (``vat_id``): uppercase ``DE`` + 9 digits, compact or
   grouped ``DE 136 695 976``, with ISO 7064 MOD 11,10 check.
+- German ID card / passport document number (``passport``): 9 chars from the
+  alphabet ``C F G H J K L M N P R T V W X Y Z 0-9`` (vowels and digit
+  look-alikes excluded; BSI TR-03110 / ICAO Doc 9303), first letter one of
+  ``L M N P R T V W X Y`` (ID card, issued since Nov 2010) or ``C F G H J K``
+  (passport) — not distinguished further, both mask as ``passport``, same as
+  the NL counterpart. An optional 10th MRZ check digit (ICAO 9303: weights
+  7-3-1 cyclic, ``A``=10 .. ``Z``=35, sum mod 10) is validated when present;
+  without it the match is format-only. At least one digit is required in the
+  9-char number, which rejects all-letter license-key-shaped strings. A hit
+  next to ``-`` or before ``=`` (order refs, base64 padding) is left alone,
+  same guard as the NINO detector.
 - NL BTW-id (``vat_id``): ``NL`` + 9 digits + ``B`` + 2 digits with optional
   spaces/dots (format only — post-2020 sole-trader ids are not elfproef-gated).
 - NL passport / ID-card number (``passport``): 9-char RvIG document number
@@ -1067,6 +1078,55 @@ def _scrub_de_vat(text: str) -> tuple[str, int]:
 
 
 de_vat_detector = Detector(type="vat_id", scrub=_scrub_de_vat)
+
+# BSI TR-03110 / ICAO Doc 9303 document number: first char is the union of
+# the ID-card (LMNPRTVWXY) and passport (CFGHJK) first-letter sets, the
+# remaining 8 chars (and the optional 10th MRZ check digit) from the full
+# alphabet; see the module docstring.
+_DE_PASSPORT_FIRST = "CFGHJKLMNPRTVWXYcfghjklmnprtvwxy"
+_DE_PASSPORT_REST = "CFGHJKLMNPRTVWXYZcfghjklmnprtvwxyz0-9"
+DE_PASSPORT_RE = re.compile(
+    rf"\b[{_DE_PASSPORT_FIRST}][{_DE_PASSPORT_REST}]{{8}}[0-9]?\b"
+)
+
+
+def _de_passport_check_digit(nine: str) -> int:
+    """ICAO 9303 MRZ check digit: weights 7-3-1 cyclic, ``A``=10 .. ``Z``=35."""
+    weights = (7, 3, 1)
+    total = 0
+    for i, ch in enumerate(nine):
+        value = int(ch) if ch.isdigit() else 10 + (ord(ch) - ord("A"))
+        total += weights[i % 3] * value
+    return total % 10
+
+
+def _de_passport_valid(value: str) -> bool:
+    compact = value.upper()
+    if len(compact) not in (9, 10):
+        return False
+    if not any(ch.isdigit() for ch in compact[:9]):
+        return False
+    if len(compact) == 10:
+        return _de_passport_check_digit(compact[:9]) == int(compact[9])
+    return True
+
+
+def _de_passport_context_ok(text: str, start: int, end: int) -> bool:
+    """Reject a hit glued to an order ref or base64 padding (``ORD-...``,
+    ``...=``), mirroring the NINO guard: ``JG038956C==`` collides with the
+    narrow document alphabet by chance far more often than real prose does."""
+    if start > 0 and text[start - 1] == "-":
+        return False
+    return not (end < len(text) and text[end] in "-=")
+
+
+def _scrub_de_passport(text: str) -> tuple[str, int]:
+    return _replace_matches(
+        text, DE_PASSPORT_RE, "[PASSPORT]", _de_passport_valid, _de_passport_context_ok
+    )
+
+
+de_passport_detector = Detector(type="passport", scrub=_scrub_de_passport)
 
 NL_VAT_RE = re.compile(r"\b[Nn][Ll][.\s]*\d{9}[.\s]*[Bb][.\s]*\d{2}\b")
 
