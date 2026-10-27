@@ -865,7 +865,7 @@ def _be_nrn_valid(value: str) -> bool:
     date): https://nl.wikipedia.org/wiki/Rijksregisternummer
     """
     digits = _strip_id_seps(value)
-    if len(digits) != 11 or not digits.isdigit():
+    if len(digits) != 11 or not (digits.isascii() and digits.isdigit()):
         return False
     month, day = int(digits[2:4]), int(digits[4:6])
     if month > 12 or day > 31:

@@ -211,6 +211,10 @@ class TestBeNrn:
             result = scrub_text(f"ref {bad}", languages=["nl"])
             assert result["counts"]["bsn"] == 0, bad
 
+    def test_rejects_non_ascii_digits(self) -> None:
+        text = "rrn \u0668\u0665.\u0660\u0667.\u0663\u0660-\u0660\u0663\u0663.\u0662\u0668"
+        assert scrub_text(text, languages=["nl"])["text"] == text
+
     def test_masks_incomplete_birth_date(self) -> None:
         """MM/DD 00 marks an incomplete birth date and is still accepted."""
         for value in ("85.00.30-033.76", "85.07.00-028.60"):
