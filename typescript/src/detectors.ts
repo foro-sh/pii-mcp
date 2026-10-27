@@ -867,8 +867,6 @@ function scrubBsn(text: string): { text: string; count: number } {
 
 export const bsnDetector: Detector = { type: "bsn", scrub: scrubBsn };
 
-// Grouped ``YY.MM.DD-SSS.CC`` only (compact 11 digits collides with German
-// tax ids and 11-digit phone numbers too often to gate on checksum alone).
 const BE_NRN_RE = new RegExp(
   String.raw`\b\d{2}(?:${ID_SPACE}|${ID_DASH}|\.)\d{2}(?:${ID_SPACE}|${ID_DASH}|\.)\d{2}(?:${ID_SPACE}|${ID_DASH}|\.)\d{3}(?:${ID_SPACE}|${ID_DASH}|\.)\d{2}\b`,
   "g",

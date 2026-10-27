@@ -847,8 +847,6 @@ def _scrub_bsn(text: str) -> tuple[str, int]:
 
 bsn_detector = Detector(type="bsn", scrub=_scrub_bsn)
 
-# Grouped ``YY.MM.DD-SSS.CC`` only (compact 11 digits collides with German
-# tax ids and 11-digit phone numbers too often to gate on checksum alone).
 BE_NRN_RE = re.compile(
     rf"\b\d{{2}}(?:{_ID_SPACE}|{_ID_DASH}|\.)\d{{2}}(?:{_ID_SPACE}|{_ID_DASH}|\.)"
     rf"\d{{2}}(?:{_ID_SPACE}|{_ID_DASH}|\.)\d{{3}}(?:{_ID_SPACE}|{_ID_DASH}|\.)\d{{2}}\b"
