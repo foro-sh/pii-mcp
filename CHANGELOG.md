@@ -6,6 +6,25 @@
 * **rust:** mirror the US ITIN detector in pii-core ([f0323f8](https://github.com/foro-sh/pii-mcp/commit/f0323f8f2c8f03d70e98a923e36d6e71bede04b3)), closes [#62](https://github.com/foro-sh/pii-mcp/issues/62)
 * **typescript:** mirror the US ITIN detector in the js backend ([aad506e](https://github.com/foro-sh/pii-mcp/commit/aad506ed114c8cd3f00b04388e7ea786fa6f44f9)), closes [#62](https://github.com/foro-sh/pii-mcp/issues/62)
 
+## [1.11.0](https://github.com/foro-sh/pii-mcp/compare/v1.10.0...v1.11.0) (2026-10-27)
+
+
+### Features
+
+* detect German ID card and passport numbers ([#109](https://github.com/foro-sh/pii-mcp/issues/109)) ([2f8306b](https://github.com/foro-sh/pii-mcp/commit/2f8306bc3d032c7b3ffdefa6cad97fed863dfbd2)), closes [#63](https://github.com/foro-sh/pii-mcp/issues/63)
+* detect secrets and credentials ([1a82ef0](https://github.com/foro-sh/pii-mcp/commit/1a82ef0cee27b091242386c46414fd5d0e302d4f))
+* **python:** detect German ID card and passport numbers ([1ba6325](https://github.com/foro-sh/pii-mcp/commit/1ba63257f571da1f7dd0ad3e8d139ab1e11e85b3)), closes [#63](https://github.com/foro-sh/pii-mcp/issues/63)
+* **python:** detect secrets and credentials ([546d0e5](https://github.com/foro-sh/pii-mcp/commit/546d0e5007216d3dc8a1d89b597a00ba4277019e))
+* **rust:** detect German ID card and passport numbers ([6fba826](https://github.com/foro-sh/pii-mcp/commit/6fba8260e1cb7251775d55e23180b90a1de7206e))
+* **rust:** detect secrets and credentials ([c60cc80](https://github.com/foro-sh/pii-mcp/commit/c60cc80615b157a1dc10c084547eb4fab4bda2a3))
+* **typescript:** detect German ID card and passport numbers ([410542b](https://github.com/foro-sh/pii-mcp/commit/410542b36e56aff66189926a5b0249f8f41dded8))
+* **typescript:** detect secrets and credentials ([aa123e3](https://github.com/foro-sh/pii-mcp/commit/aa123e366189b352b94970bc9b4d5949af738d45))
+
+
+### Bug Fixes
+
+* keep bearer credential class free of unicode case folding ([2da5263](https://github.com/foro-sh/pii-mcp/commit/2da5263440763b13f216ee79952b71e12ac9e871))
+
 ## [1.10.0](https://github.com/foro-sh/pii-mcp/compare/v1.9.1...v1.10.0) (2026-10-15)
 
 
