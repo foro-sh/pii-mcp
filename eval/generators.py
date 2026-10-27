@@ -188,21 +188,36 @@ def be_nrn(r: R) -> str:
 
     Half the values use a post-2000 birth year, which prefixes the 9-digit
     body with ``2`` before the check (nl.wikipedia.org/wiki/Rijksregisternummer).
-    Only the dotted/hyphenated grouping is emitted: the detector leaves the
-    compact form alone.
+    One in ten has a ``00`` month or day (incomplete birth date). Only grouped
+    forms are emitted, since the detector leaves the compact form alone: the
+    date groups share one separator, the other two gaps each pick their own.
+    Four dot-separated leading groups with a different last separator
+    (``85.07.30.033 28``) are skipped; the universal IP detector takes those
+    first.
     """
     year = r.randint(0, 99)
     month = r.randint(1, 12)
     day = r.randint(1, 28)
+    if r.random() < 0.1:
+        if r.random() < 0.5:
+            month = 0
+        else:
+            day = 0
     seq = r.randint(1, 999)
     body = f"{year:02d}{month:02d}{day:02d}{seq:03d}"
     n = int(body)
     post_2000 = r.random() < 0.5
     checked = 2_000_000_000 + n if post_2000 else n
     check = 97 - (checked % 97)
-    sep = r.choice([".", " ", "-"])
+    seps = [".", " ", "-", "\xa0"]
+    date_sep = r.choice(seps)
+    mid_sep = r.choice(["-", "-", *seps])
+    end_sep = r.choice([".", ".", *seps])
+    if date_sep == mid_sep == "." != end_sep:
+        end_sep = "."
     return (
-        f"{body[0:2]}{sep}{body[2:4]}{sep}{body[4:6]}{sep}{body[6:9]}{sep}{check:02d}"
+        f"{body[0:2]}{date_sep}{body[2:4]}{date_sep}{body[4:6]}{mid_sep}"
+        f"{body[6:9]}{end_sep}{check:02d}"
     )
 
 
