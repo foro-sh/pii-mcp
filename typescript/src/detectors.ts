@@ -118,8 +118,11 @@
  *   hex-glue guard). All phone forms also accept nbsp, thin / narrow nbsp, and
  *   unicode dashes between groups.
  * - BSN spaced/dotted/hyphenated ``111-222-333`` groups.
+ * - Secrets (``secret``, runs first): vendor-prefixed keys and JWTs bounded by
+ *   non-``[A-Za-z0-9_-]``, plus the credential after ``Bearer`` (any case)
+ *   when it is 16+ chars with a digit or a non-initial uppercase letter.
  *
- * ``UNIVERSAL_DETECTORS`` (email, IBAN, credit card, BIC, MAC, IMEI, IP, location)
+ * ``UNIVERSAL_DETECTORS`` (secret, email, IBAN, credit card, BIC, MAC, IMEI, IP, location)
  * always run; locale detectors are selected by ``languages=`` in the scrub layer.
  */
 
@@ -141,7 +144,8 @@ export type PiiCategory =
   | "passport"
   | "phone"
   | "address"
-  | "license_plate";
+  | "license_plate"
+  | "secret";
 
 export interface Detector {
   readonly type: PiiCategory;
@@ -1515,7 +1519,65 @@ export const nlLicensePlateDetector: Detector = {
   scrub: scrubNlLicensePlate,
 };
 
+const SECRET_PREFIX_RE = new RegExp(
+  [
+    "sk-[A-Za-z0-9_-]{20,}",
+    "gh[pousr]_[A-Za-z0-9]{36,}",
+    "github_pat_[A-Za-z0-9_]{22,}",
+    "(?:AKIA|ASIA)[0-9A-Z]{16}",
+    "xox[abposr]-[A-Za-z0-9-]{10,}",
+    "[rs]k_(?:live|test)_[A-Za-z0-9]{16,}",
+    "AIza[0-9A-Za-z_-]{35}",
+    "foro_(?:pat|oat|ing|ort)_[A-Za-z0-9_-]{20,}",
+    "eyJ[A-Za-z0-9_-]{10,}\\.eyJ[A-Za-z0-9_-]{10,}\\.[A-Za-z0-9_-]{10,}",
+  ].join("|"),
+  "g",
+);
+const BEARER_RE = /bearer[ \t]+([A-Za-z0-9._~+/-]{16,}=*)/gi;
+const SECRET_EDGE_RE = /[A-Za-z0-9_-]/;
+
+function secretBoundaryOk(text: string, start: number, end: number): boolean {
+  return (
+    !(start > 0 && SECRET_EDGE_RE.test(text.charAt(start - 1))) &&
+    !(end < text.length && SECRET_EDGE_RE.test(text.charAt(end)))
+  );
+}
+
+function bearerCredentialValid(value: string): boolean {
+  return /\d/.test(value) || /[A-Z]/.test(value.slice(1));
+}
+
+function scrubSecret(text: string): { text: string; count: number } {
+  const prefixed = replaceMatches(
+    text,
+    SECRET_PREFIX_RE,
+    "[SECRET]",
+    undefined,
+    false,
+    (t, s, e) => (secretBoundaryOk(t, s, e) ? e : s),
+  );
+  const src = prefixed.text;
+  let count = prefixed.count;
+  let out = "";
+  let last = 0;
+  const re = cloneRegExp(BEARER_RE);
+  for (let m = re.exec(src); m !== null; m = re.exec(src)) {
+    if (m.index > 0 && SECRET_EDGE_RE.test(src.charAt(m.index - 1))) continue;
+    const cred = m[1] ?? "";
+    if (!bearerCredentialValid(cred)) continue;
+    const credStart = m.index + m[0].length - cred.length;
+    out += src.slice(last, credStart) + "[SECRET]";
+    last = m.index + m[0].length;
+    count += 1;
+  }
+  if (last === 0) return { text: src, count };
+  return { text: out + src.slice(last), count };
+}
+
+export const secretDetector: Detector = { type: "secret", scrub: scrubSecret };
+
 export const UNIVERSAL_DETECTORS: readonly Detector[] = [
+  secretDetector,
   emailDetector,
   ibanDetector,
   creditCardDetector,
