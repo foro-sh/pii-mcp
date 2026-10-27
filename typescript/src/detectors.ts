@@ -123,7 +123,9 @@
  *   digit against either the pre- or post-2000 birth-year variant, with a
  *   plausible month (0-12) and day (0-31). The compact 11-digit form is left
  *   alone: it collides with German tax ids and 11-digit phone numbers too
- *   often for the checksum alone to gate it.
+ *   often for the checksum alone to gate it. Four dot-separated leading
+ *   groups with another last separator (``85.07.30.033 28``) are an IPv4
+ *   shape, which the universal IP detector masks first.
  *
  * ``UNIVERSAL_DETECTORS`` (email, IBAN, credit card, BIC, MAC, IMEI, IP, location)
  * always run; locale detectors are selected by ``languages=`` in the scrub layer.

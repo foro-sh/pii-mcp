@@ -23,6 +23,9 @@
 //! post-2000 birth-year variant and a plausible month (0-12) and day (0-31).
 //! The compact 11-digit form is left alone: it collides with German tax ids
 //! and 11-digit phone numbers too often for the checksum alone to gate it.
+//! Four dot-separated leading groups with another last separator
+//! (`85.07.30.033 28`) are an IPv4 shape, which the universal IP detector
+//! masks first.
 //! German ID card / passport document numbers (`passport`, de pack): 9 chars
 //! from the BSI TR-03110 / ICAO Doc 9303 alphabet, first letter gated per
 //! document type, optional MRZ check digit (weights 7-3-1, `A`=10 .. `Z`=35,
