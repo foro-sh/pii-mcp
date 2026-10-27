@@ -598,7 +598,6 @@ mod tests {
         assert!(!be_nrn_valid_grouped("85.13.30-033.28"));
         assert!(!be_nrn_valid_grouped("85.07.32-033.28"));
         assert!(!be_nrn_valid_grouped("8507300332"));
-        // MM/DD 00 marks an incomplete birth date and is still accepted.
         assert!(be_nrn_valid_grouped("85.00.30-033.76"));
         assert!(be_nrn_valid_grouped("85.07.00-028.60"));
     }

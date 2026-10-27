@@ -270,8 +270,15 @@ describe("scrubText", () => {
     }
   });
 
+  it("masks BE rijksregisternummer with unicode separators", () => {
+    for (const value of ["85\u00a007\u00a030\u00a0033\u00a028", "85.07.30\u2013033.28"]) {
+      expect(scrubText(`rrn ${value} on file`, { languages: ["nl"] }).text).toBe(
+        "rrn [BSN] on file",
+      );
+    }
+  });
+
   it("masks an incomplete BE rijksregisternummer birth date", () => {
-    // MM/DD 00 marks an incomplete birth date and is still accepted.
     for (const value of ["85.00.30-033.76", "85.07.00-028.60"]) {
       const result = scrubText(`rrn ${value} on file`, { languages: ["nl"] });
       expect(result.text).toBe("rrn [BSN] on file");
@@ -295,7 +302,6 @@ describe("scrubText", () => {
   });
 
   it("prefers BE rijksregisternummer over DE phone with both packs", () => {
-    // A leading-zero birth year is also a DE national phone shape.
     const result = scrubText("rrn 05.07.15-123.95 on file", { languages: ["de", "nl"] });
     expect(result.text).toBe("rrn [BSN] on file");
     expect(result.counts.bsn).toBe(1);
