@@ -56,6 +56,7 @@ There is no `ner` option on the gate surface. Person-name NER stays Tier 2
 | BSN | `[BSN]` |
 | phone | `[PHONE]` |
 | (other packs) | `[BIC]`, `[MAC]`, `[IMEI]`, `[IP]`, `[LOCATION]`, `[SSN]`, `[TAX_ID]`, `[VAT_ID]`, `[PASSPORT]`, `[ADDRESS]`, `[LICENSE_PLATE]`, … |
+| secret (universal) | `[SECRET]` (after `Bearer`, only the credential) |
 
 Coverage is a **superset** of current foro-pii Tier 1 (email, IBAN, card, BSN,
 phone). Adoption fixtures: `eval/fixtures/foro_tier1.json`.

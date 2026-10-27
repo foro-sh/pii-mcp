@@ -4,7 +4,8 @@ Pattern-based PII redaction for MCP servers (regex + checksums). Masks emails,
 IBANs, cards, BICs, MACs, IMEIs, IPs, coordinates, BSNs, US SSNs and ITINs, UK
 National Insurance and NHS numbers, German tax IDs, Dutch BTW-ids, Dutch and
 German passport/ID numbers, phones, street + house number addresses, Dutch
-and UK postcodes, and Dutch license plates in tool results.
+and UK postcodes, and Dutch license plates in tool results. Also masks
+credentials (API keys, JWTs, `Bearer` tokens) as `[SECRET]`.
 Language packs: `en`, `nl`, and opt-in `de`.
 
 [![PyPI](https://img.shields.io/pypi/v/pii-mcp.svg)](https://pypi.org/project/pii-mcp/)
@@ -100,6 +101,7 @@ not stack a second in-process NER beside it.
 | Adres                                         | `address`                              | Street + number; NL/UK postcode |
 | Kenteken                                      | `license_plate`                        | nl pack                         |
 | Naam                                          | `person`                               | Pattern/key-aware when available (#52); prose NER out of band |
+| Credentials (not PII)                         | `secret`                               | Vendor-prefixed keys, JWTs, `Bearer` credential; all packs |
 | Pasfoto, allergieën, koopgedrag, camera       |                                        | Media / free text               |
 
 ## Packages
