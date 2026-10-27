@@ -1,7 +1,7 @@
 //! Language packs and scrub walk for pattern-based detectors.
 //!
-//! Universal detectors always run. Locale packs add national IDs / phones /
-//! street addresses / NL and UK postcodes. Counts always include every
+//! Universal detectors (secrets first) always run. Locale packs add national
+//! IDs / phones / street addresses / NL and UK postcodes. Counts always include every
 //! [`PiiType`] key (0 when unused). `person` stays 0 until key-aware masking
 //! lands (issue #52); in-process NER is out of scope for this crate.
 //!
@@ -38,6 +38,7 @@ pub const PII_TYPES: &[&str] = &[
     "person",
     "address",
     "license_plate",
+    "secret",
 ];
 
 pub type PiiType = &'static str;
