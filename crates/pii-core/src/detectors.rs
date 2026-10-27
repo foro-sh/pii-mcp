@@ -22,6 +22,9 @@
 //! document type, optional MRZ check digit (weights 7-3-1, `A`=10 .. `Z`=35,
 //! mod 10) validated when present. See `checksum::de_passport_valid`. A hit
 //! next to `-` or before `=` is left alone, same guard as NINO.
+//! Secrets (`secret`, universal, runs first): vendor-prefixed keys and JWTs
+//! bounded by non-`[A-Za-z0-9_-]`, plus the credential after `Bearer` when it
+//! is 16+ chars with a digit or a non-initial uppercase letter.
 
 use crate::checksum::{
     bsn_valid_grouped, de_passport_valid, iban_valid, imei_valid, is_group_sep,
@@ -50,6 +53,7 @@ pub enum PiiCategory {
     Person,
     Address,
     LicensePlate,
+    Secret,
 }
 
 impl PiiCategory {
@@ -72,6 +76,7 @@ impl PiiCategory {
             Self::Person => "person",
             Self::Address => "address",
             Self::LicensePlate => "license_plate",
+            Self::Secret => "secret",
         }
     }
 }
@@ -2123,7 +2128,79 @@ fn scrub_nl_license_plate(text: &str) -> (Option<String>, u32) {
     )
 }
 
+fn secret_prefix_re() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| {
+        Regex::new(concat!(
+            r"sk-[A-Za-z0-9_-]{20,}",
+            r"|gh[pousr]_[A-Za-z0-9]{36,}",
+            r"|github_pat_[A-Za-z0-9_]{22,}",
+            r"|(?:AKIA|ASIA)[0-9A-Z]{16}",
+            r"|xox[abposr]-[A-Za-z0-9-]{10,}",
+            r"|[rs]k_(?:live|test)_[A-Za-z0-9]{16,}",
+            r"|AIza[0-9A-Za-z_-]{35}",
+            r"|foro_(?:pat|oat|ing|ort)_[A-Za-z0-9_-]{20,}",
+            r"|eyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}",
+        ))
+        .unwrap()
+    })
+}
+
+fn bearer_re() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| {
+        Regex::new(r"[Bb][Ee][Aa][Rr][Ee][Rr][ \t]+([A-Za-z0-9._~+/-]{16,}=*)").unwrap()
+    })
+}
+
+fn bearer_credential_valid(value: &str) -> bool {
+    value.chars().any(|c| c.is_ascii_digit())
+        || value.chars().skip(1).any(|c| c.is_ascii_uppercase())
+}
+
+fn scrub_secret(text: &str) -> (Option<String>, u32) {
+    let (prefixed, mut count) = replace_matches(
+        text,
+        secret_prefix_re(),
+        "[SECRET]",
+        |_, s, e| nl_plate_boundary_ok(text, s, e),
+        false,
+    );
+    let src = prefixed.as_deref().unwrap_or(text);
+    let mut out: Option<String> = None;
+    let mut last = 0usize;
+    for caps in bearer_re().captures_iter(src) {
+        let whole = caps.get(0).unwrap();
+        let cred = caps.get(1).unwrap();
+        if whole.start() > 0 {
+            let prev = src[..whole.start()].chars().next_back().unwrap();
+            if is_word_char(prev) || prev == '-' {
+                continue;
+            }
+        }
+        if !bearer_credential_valid(cred.as_str()) {
+            continue;
+        }
+        let buf = out.get_or_insert_with(|| String::with_capacity(src.len()));
+        buf.push_str(&src[last..cred.start()]);
+        buf.push_str("[SECRET]");
+        last = cred.end();
+        count += 1;
+    }
+    match out {
+        Some(mut buf) => {
+            buf.push_str(&src[last..]);
+            (Some(buf), count)
+        }
+        None => (prefixed, count),
+    }
+}
+
 const UNIVERSAL: &[Detector] = &[
+    Detector {
+        category: PiiCategory::Secret,
+        scrub: scrub_secret,
+    },
     Detector {
         category: PiiCategory::Email,
         scrub: scrub_email,

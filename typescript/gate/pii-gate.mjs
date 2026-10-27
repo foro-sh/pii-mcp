@@ -1027,7 +1027,57 @@ var nlLicensePlateDetector = {
   type: "license_plate",
   scrub: scrubNlLicensePlate
 };
+var SECRET_PREFIX_RE = new RegExp(
+  [
+    "sk-[A-Za-z0-9_-]{20,}",
+    "gh[pousr]_[A-Za-z0-9]{36,}",
+    "github_pat_[A-Za-z0-9_]{22,}",
+    "(?:AKIA|ASIA)[0-9A-Z]{16}",
+    "xox[abposr]-[A-Za-z0-9-]{10,}",
+    "[rs]k_(?:live|test)_[A-Za-z0-9]{16,}",
+    "AIza[0-9A-Za-z_-]{35}",
+    "foro_(?:pat|oat|ing|ort)_[A-Za-z0-9_-]{20,}",
+    "eyJ[A-Za-z0-9_-]{10,}\\.eyJ[A-Za-z0-9_-]{10,}\\.[A-Za-z0-9_-]{10,}"
+  ].join("|"),
+  "g"
+);
+var BEARER_RE = /[Bb][Ee][Aa][Rr][Ee][Rr][ \t]+([A-Za-z0-9._~+/-]{16,}=*)/g;
+var SECRET_EDGE_RE = /[A-Za-z0-9_-]/;
+function secretBoundaryOk(text, start, end) {
+  return !(start > 0 && SECRET_EDGE_RE.test(text.charAt(start - 1))) && !(end < text.length && SECRET_EDGE_RE.test(text.charAt(end)));
+}
+function bearerCredentialValid(value) {
+  return /\d/.test(value) || /[A-Z]/.test(value.slice(1));
+}
+function scrubSecret(text) {
+  const prefixed = replaceMatches(
+    text,
+    SECRET_PREFIX_RE,
+    "[SECRET]",
+    void 0,
+    false,
+    (t, s, e) => secretBoundaryOk(t, s, e) ? e : s
+  );
+  const src = prefixed.text;
+  let count = prefixed.count;
+  let out = "";
+  let last = 0;
+  const re = cloneRegExp(BEARER_RE);
+  for (let m = re.exec(src); m !== null; m = re.exec(src)) {
+    if (m.index > 0 && SECRET_EDGE_RE.test(src.charAt(m.index - 1))) continue;
+    const cred = m[1] ?? "";
+    if (!bearerCredentialValid(cred)) continue;
+    const credStart = m.index + m[0].length - cred.length;
+    out += src.slice(last, credStart) + "[SECRET]";
+    last = m.index + m[0].length;
+    count += 1;
+  }
+  if (last === 0) return { text: src, count };
+  return { text: out + src.slice(last), count };
+}
+var secretDetector = { type: "secret", scrub: scrubSecret };
 var UNIVERSAL_DETECTORS = [
+  secretDetector,
   emailDetector,
   ibanDetector,
   creditCardDetector,
@@ -1056,7 +1106,8 @@ var PII_TYPES = [
   "phone",
   "person",
   "address",
-  "license_plate"
+  "license_plate",
+  "secret"
 ];
 var DEFAULT_LANGUAGES = ["en", "nl"];
 var MAX_SCRUB_BYTES = 32 * 1024 * 1024;

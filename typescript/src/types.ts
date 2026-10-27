@@ -24,6 +24,7 @@ export const PII_TYPES = [
   "person",
   "address",
   "license_plate",
+  "secret",
 ] as const;
 
 export type PiiType = (typeof PII_TYPES)[number];

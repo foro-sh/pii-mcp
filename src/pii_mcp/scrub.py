@@ -1,6 +1,6 @@
 """Language packs and scrub walk for pattern-based detectors.
 
-Universal detectors (email, IBAN, credit card, BIC, MAC, IMEI, IP, location)
+Universal detectors (secret, email, IBAN, credit card, BIC, MAC, IMEI, IP, location)
 always run. Locale packs add national IDs / phone shapes / NL and UK postcodes /
 kentekens / VAT IDs / passport numbers. Counts always include every
 ``PiiType`` key (0 when unused). ``person`` stays 0 until key-aware masking
@@ -84,6 +84,7 @@ PiiType = Literal[
     "person",
     "address",
     "license_plate",
+    "secret",
 ]
 
 PII_TYPES: tuple[PiiType, ...] = (
@@ -104,6 +105,7 @@ PII_TYPES: tuple[PiiType, ...] = (
     "person",
     "address",
     "license_plate",
+    "secret",
 )
 
 PiiCounts = dict[PiiType, int]
