@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "pii-mcp"
-version = "1.10.0"
+version = "1.11.0"
 description = "Pattern-based PII redaction for MCP servers — FastMCP middleware (Tier 1)"
 readme = "README.md"
 license = "MIT"
