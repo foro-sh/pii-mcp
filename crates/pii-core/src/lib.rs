@@ -1,8 +1,9 @@
 //! Shared PII core: regex detectors, checksum validators, and scrub walk.
 //!
 //! Detector order matches the Python `pii_mcp` pack: universal → phones →
-//! national IDs → street + house number → NL and UK postcodes. Earlier matches
-//! become digit-free placeholders before looser numeric detectors run.
+//! national IDs → street + house number → NL and UK postcodes, hinted US ZIP
+//! and DE postcode. Earlier matches become digit-free placeholders before
+//! looser numeric detectors run.
 
 mod checksum;
 mod detectors;

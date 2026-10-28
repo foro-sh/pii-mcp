@@ -90,19 +90,23 @@ Patterns:
   (compact ``NW16XE`` collides with ordinary tokens). The outward letters must
   be a Royal Mail area, which rejects ``A4 2PK`` / ``PS5 1TB``.
 - DE postcode (``address``): a bare 5-digit number is too common to mask on
-  its own, so it needs one of three hints: a ``PLZ``/``Postleitzahl``/
-  ``postcode``/``ZIP`` label (``Postleitzahl: 33613``), a known city directly
-  after it (``10115 Berlin`` — a bare capitalized word is not enough, since
-  German nouns are always capitalized), or an ``[ADDRESS]`` placeholder just
-  before it, across commas, spaces or line breaks (``Hauptstraße 5,
+  its own, so it needs one of three hints: a label (``PLZ 33613``,
+  ``Postleitzahl: 33613``, ``PLZ/Ort: 33602``; a bare ``plz``, ``zip`` or
+  ``postcode`` also reads as chat or a verb, so those need a ``:`` or ``-``),
+  a known city directly after it (``10115 Berlin`` — a bare capitalized word
+  is not enough, since German nouns are always capitalized), or an
+  ``[ADDRESS]`` placeholder just before it, across spaces, line breaks and
+  list separators (``Hauptstraße 5, 33602``, ``Firma · Hauptstraße 5 ·
   33602``; same hint used for US ZIPs). Digits and word boundaries are ASCII.
   The label separator is bounded (up to three spaces, an optional colon or
-  dash, up to three more) so the backtracking scan stays linear.
-  01000-99998 (nothing starting ``00``, not ``99999``): looser than the
-  lowest assigned code, 01067, since a leak costs more than a masked number.
+  dash, up to three more) so the backtracking scan stays linear. 01000-99998
+  (nothing starting ``00``, not ``99999``): looser than the lowest assigned
+  code, 01067, since a leak costs more than a masked number.
 - US ZIP (``address``): 5-digit or ZIP+4 (``80920-1406``), hinted the same way
-  as DE postcodes: a label, a real two-letter state/territory code in the
-  ``City, ST 80920`` shape, or an ``[ADDRESS]`` placeholder just before it.
+  as DE postcodes: a label (also ``ZIP-Code``, ``ZIP+4``), a real two-letter
+  state/territory code after a capitalized city and a comma (``Springfield, IL
+  62704``) or on a USPS last line under an address (``123 Main St\\nSpringfield
+  IL 62704``), or an ``[ADDRESS]`` placeholder just before it.
 - Street address (``address``): street name + house number per pack. ``nl``: a
   capitalized word ending in ``straat``/``str.``/``laan``/``weg``/``gracht``/…
   then the number (``Kerkstraat 12``), ``Grote``/``Oude``/``Nieuwe``/… before
