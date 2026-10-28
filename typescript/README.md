@@ -4,8 +4,8 @@ Pattern-based PII redaction for MCP servers (regex + checksums). Same detectors
 as the Python package: emails, IBANs, cards, BICs, MACs, IMEIs, IPs, coordinates,
 BSNs, US SSNs and ITINs, UK National Insurance and NHS numbers, German tax
 IDs, Dutch BTW-ids, Dutch passport/ID numbers, phones, street + house number
-addresses, Dutch and UK postcodes, and Dutch license plates. Language packs:
-`en`, `nl`, and opt-in `de`.
+addresses, Dutch and UK postcodes, hinted German and US postcodes, and Dutch
+license plates. Language packs: `en`, `nl`, and opt-in `de`.
 
 FastMCP middleware stays Python-only (`pii_mcp.fastmcp`); this package is the
 core scrub API for Node/TypeScript callers.
