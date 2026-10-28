@@ -464,7 +464,9 @@ pub fn uk_postcode_valid(value: &str) -> bool {
         .any(|a| a == area)
 }
 
-/// German postcodes run 01067-99998; nothing starts `00` or is `99999`.
+/// German postcodes, 01000-99998: nothing starts `00` or is `99999`.
+/// Looser than the lowest assigned code, 01067, since a leak costs more
+/// than a masked number.
 pub fn de_postcode_range_ok(digits: &str) -> bool {
     !digits.starts_with("00") && digits != "99999"
 }

@@ -1565,6 +1565,10 @@ const DE_POSTCODE_RE = new RegExp(
   "g",
 );
 
+/**
+ * 01000-99998: nothing starts ``00`` or is ``99999``. Looser than the lowest
+ * assigned code, 01067, since a leak costs more than a masked number.
+ */
 function dePostcodeRangeOk(digits: string): boolean {
   return digits.slice(0, 2) !== "00" && digits !== "99999";
 }

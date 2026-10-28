@@ -93,12 +93,14 @@ Patterns:
   its own, so it needs one of three hints: a ``PLZ``/``Postleitzahl``/
   ``postcode``/``ZIP`` label (``Postleitzahl: 33613``), a known city directly
   after it (``10115 Berlin`` — a bare capitalized word is not enough, since
-  German nouns are always capitalized), or a nearby ``[ADDRESS]`` placeholder
-  the street detector already left (same hint used for US ZIPs). 01067-99998
-  only; ``00000``-``00999`` and ``99999`` are rejected.
+  German nouns are always capitalized), or an ``[ADDRESS]`` placeholder just
+  before it, across commas, spaces or line breaks (``Hauptstraße 5,
+  33602``; same hint used for US ZIPs). Digits and word boundaries are ASCII.
+  01000-99998 (nothing starting ``00``, not ``99999``): looser than the
+  lowest assigned code, 01067, since a leak costs more than a masked number.
 - US ZIP (``address``): 5-digit or ZIP+4 (``80920-1406``), hinted the same way
-  as DE postcodes: a label, a real two-letter state/territory code right
-  before it (``CO 80920``), or a nearby ``[ADDRESS]`` placeholder.
+  as DE postcodes: a label, a real two-letter state/territory code in the
+  ``City, ST 80920`` shape, or an ``[ADDRESS]`` placeholder just before it.
 - Street address (``address``): street name + house number per pack. ``nl``: a
   capitalized word ending in ``straat``/``str.``/``laan``/``weg``/``gracht``/…
   then the number (``Kerkstraat 12``), ``Grote``/``Oude``/``Nieuwe``/… before
@@ -1478,7 +1480,11 @@ DE_POSTCODE_RE = re.compile(
 
 
 def _de_postcode_range_ok(digits: str) -> bool:
-    """German postcodes run 01067-99998; nothing starts ``00`` or is ``99999``."""
+    """01000-99998: nothing starts ``00`` or is ``99999``.
+
+    Looser than the lowest assigned code, 01067, since a leak costs more than
+    a masked number.
+    """
     return digits[:2] != "00" and digits != "99999"
 
 
