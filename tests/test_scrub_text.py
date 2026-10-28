@@ -1208,6 +1208,21 @@ class TestDePostcode:
         """``zip`` and ``plz`` are also a verb and chat shorthand; only ``PLZ`` and two-word labels go without a colon."""
         assert scrub_text(text, languages=languages)["text"] == expected
 
+    @pytest.mark.parametrize(
+        ("text", "languages", "expected"),
+        [
+            ("ZIP-Code 80920", ["en"], "[ADDRESS]"),
+            ("ZIP+4 80920-1406", ["en"], "[ADDRESS]"),
+            ("ZIP+4: 80920-1406", ["en"], "[ADDRESS]"),
+            ("Post code: 10115", ["de"], "[ADDRESS]"),
+            ("Post code 10115", ["de"], "Post code 10115"),
+        ],
+    )
+    def test_label_spellings(
+        self, text: str, languages: list[str], expected: str
+    ) -> None:
+        assert scrub_text(text, languages=languages)["text"] == expected
+
     def test_near_address_window_does_not_reach_a_distant_hit(self) -> None:
         """A state-code hit must not legitimize a distant,
         unrelated bare number a full clause away."""

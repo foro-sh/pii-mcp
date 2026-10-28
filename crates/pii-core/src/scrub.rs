@@ -977,6 +977,22 @@ mod tests {
     }
 
     #[test]
+    fn postcode_label_spellings() {
+        let cases: [(&str, &[&str], &str); 5] = [
+            ("ZIP-Code 80920", &["en"][..], "[ADDRESS]"),
+            ("ZIP+4 80920-1406", &["en"][..], "[ADDRESS]"),
+            ("ZIP+4: 80920-1406", &["en"][..], "[ADDRESS]"),
+            ("Post code: 10115", &["de"][..], "[ADDRESS]"),
+            ("Post code 10115", &["de"][..], "Post code 10115"),
+        ];
+        for (text, languages, expected) in cases {
+            let langs: Vec<String> = languages.iter().map(|l| l.to_string()).collect();
+            let r = scrub_text(text, Some(&langs), true).unwrap();
+            assert_eq!(r.text, expected, "{text}");
+        }
+    }
+
+    #[test]
     fn de_postcode_rejects_an_arbitrary_capitalized_word() {
         // German nouns are always capitalized, so a city allowlist is required.
         let langs = vec!["de".to_string()];

@@ -1418,9 +1418,9 @@ _POSTCODE_ORT = (
 )
 _POSTCODE_LABEL = (
     rf"(?:(?:PLZ{_POSTCODE_ORT}"
-    rf"|(?i:postleitzahl|postal{_POSTCODE_SPACE}?code|zip{_POSTCODE_SPACE}?code))"
+    rf"|(?i:postleitzahl|postal{_POSTCODE_SPACE}?code|zip(?:{_POSTCODE_SPACE}?|-)code|zip\+4))"
     rf"{_POSTCODE_SPACE}{{0,3}}(?:[:\-]{_POSTCODE_SPACE}{{0,3}})?"
-    rf"|(?:(?i:plz){_POSTCODE_ORT}|(?i:postcode|zip))"
+    rf"|(?:(?i:plz){_POSTCODE_ORT}|(?i:post{_POSTCODE_SPACE}?code|zip))"
     rf"{_POSTCODE_SPACE}{{0,3}}[:\-]{_POSTCODE_SPACE}{{0,3}})"
 )
 

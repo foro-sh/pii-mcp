@@ -1502,10 +1502,12 @@ const POSTCODE_ORT =
 const POSTCODE_LABEL =
   `(?:(?:PLZ${POSTCODE_ORT}|${caseInsensitiveLiteral("postleitzahl")}` +
   `|${caseInsensitiveLiteral("postal")}${POSTCODE_SPACE}?${caseInsensitiveLiteral("code")}` +
-  `|${caseInsensitiveLiteral("zip")}${POSTCODE_SPACE}?${caseInsensitiveLiteral("code")})` +
+  `|${caseInsensitiveLiteral("zip")}(?:${POSTCODE_SPACE}?|-)${caseInsensitiveLiteral("code")}` +
+  `|${caseInsensitiveLiteral("zip")}\\+4)` +
   `${POSTCODE_SPACE}{0,3}(?:[:\\-]${POSTCODE_SPACE}{0,3})?` +
   `|(?:${caseInsensitiveLiteral("plz")}${POSTCODE_ORT}` +
-  `|${caseInsensitiveLiteral("postcode")}|${caseInsensitiveLiteral("zip")})` +
+  `|${caseInsensitiveLiteral("post")}${POSTCODE_SPACE}?${caseInsensitiveLiteral("code")}` +
+  `|${caseInsensitiveLiteral("zip")})` +
   `${POSTCODE_SPACE}{0,3}[:\\-]${POSTCODE_SPACE}{0,3})`;
 
 const POSTCODE_GAP = new Set([

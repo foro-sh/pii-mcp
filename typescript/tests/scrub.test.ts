@@ -1176,6 +1176,16 @@ describe("scrubText", () => {
     expect(scrubText(text, { languages }).text).toBe(expected);
   });
 
+  it.each<[string, string[], string]>([
+    ["ZIP-Code 80920", ["en"], "[ADDRESS]"],
+    ["ZIP+4 80920-1406", ["en"], "[ADDRESS]"],
+    ["ZIP+4: 80920-1406", ["en"], "[ADDRESS]"],
+    ["Post code: 10115", ["de"], "[ADDRESS]"],
+    ["Post code 10115", ["de"], "Post code 10115"],
+  ])("masks a postcode after a ZIP-Code, ZIP+4 or Post code label (%s)", (text, languages, expected) => {
+    expect(scrubText(text, { languages }).text).toBe(expected);
+  });
+
   it.each([["ZIP: 80920"], ["zip code 80920"], ["postal code: 80920"]])(
     "masks a US ZIP with a label (%s)",
     (value) => {
