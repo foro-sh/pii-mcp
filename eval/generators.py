@@ -539,10 +539,15 @@ ADDRESS_KEY_VALUE_TEMPLATES: list[str] = [
     "Stadt: {}",
     "straat: {}",
     "stad: {}",
-    "Postleitzahl: {}",
-    "postcode: {}",
     '{"plaats": "{}"}',
     "huisnummer={}",
+]
+
+POSTCODE_KEY_VALUE_TEMPLATES: list[str] = [
+    "Postleitzahl: {}",
+    "postcode: {}",
+    '{"zip": "{}"}',
+    "PLZ: {}",
 ]
 
 _ADDRESS_VALUE_CITIES = (
@@ -552,20 +557,28 @@ _ADDRESS_VALUE_CITIES = (
 
 
 def address_value(r: R) -> str:
-    """A street + number, a postcode, or a city — the shapes a recognized
-    address field in tool output actually holds."""
-    choice = r.random()
-    if choice < 0.4:
+    """A street + number or a city — the shapes a recognized street/place
+    field in tool output actually holds."""
+    if r.random() < 0.5:
         return r.choice([street_nl, street_en, street_de])(r)
-    if choice < 0.6:
-        return r.choice([postcode_nl, postcode_uk])(r)
     return r.choice(_ADDRESS_VALUE_CITIES)
+
+
+def postcode_value(r: R) -> str:
+    """An NL, UK or German postcode — what a postcode field holds."""
+    choice = r.random()
+    if choice < 0.35:
+        return postcode_nl(r)
+    if choice < 0.7:
+        return postcode_uk(r)
+    return _digits(r, 5)
 
 
 # (category, generator, languages the detector needs, its own template pool).
 PII_KEYED: list[tuple[str, Callable[[R], str], tuple[str, ...], list[str]]] = [
     ("person", person_name, (), KEY_VALUE_TEMPLATES),
     ("address", address_value, (), ADDRESS_KEY_VALUE_TEMPLATES),
+    ("address", postcode_value, (), POSTCODE_KEY_VALUE_TEMPLATES),
 ]
 
 

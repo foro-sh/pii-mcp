@@ -89,17 +89,28 @@ def load_private_templates(path: str) -> list[str]:
 
 
 def build(seed: int, templates: list[str] = TEMPLATES) -> tuple[list[tuple], list[tuple], list[tuple]]:
+    """PII, clean and ambiguous samples for ``seed``.
+
+    Keyed generators (``PII_KEYED``, e.g. ``person``) have no format of their
+    own, so they are filled only into their own key-value templates, never
+    the generic pool. They draw from a separate random stream, so adding or
+    changing one leaves every other sample in the corpus as it was."""
     r = random.Random(seed)
+    keyed_r = random.Random(f"keyed-{seed}")
     n = PER_GENERATOR
     pii = [
         (cat, gen.__name__, r.choice(templates), gen(r), sorted(set(DEFAULT_LANGS) | set(langs)))
         for cat, gen, langs in PII
         for _ in range(n)
     ]
-    # Keyed generators (e.g. ``person``) have no format of their own: scored
-    # only against their own key-value template pool, never the generic one.
     pii += [
-        (cat, gen.__name__, r.choice(key_templates), gen(r), sorted(set(DEFAULT_LANGS) | set(langs)))
+        (
+            cat,
+            gen.__name__,
+            keyed_r.choice(key_templates),
+            gen(keyed_r),
+            sorted(set(DEFAULT_LANGS) | set(langs)),
+        )
         for cat, gen, langs, key_templates in PII_KEYED
         for _ in range(n)
     ]
