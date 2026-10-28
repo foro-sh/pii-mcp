@@ -2,7 +2,7 @@
 
 No network and no ``datasets`` package needed: rows are built by hand in the
 same shape ``datasets`` would hand back (``source_text`` + ``privacy_mask``),
-so these exercise the character-level diff/grouping logic against the real
+so these exercise the alignment and grouping logic against the real
 Python detectors without touching the Hugging Face Hub.
 """
 
@@ -11,6 +11,7 @@ from __future__ import annotations
 import os
 import subprocess
 import sys
+import time
 import types
 from pathlib import Path
 
@@ -20,7 +21,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "eval"))
 
 import external  # noqa: E402
-from external import _diff_runs, _overlaps, score_sample  # noqa: E402
+from external import _align_runs, _overlaps, score_sample  # noqa: E402
 
 
 def _row(text: str, labels: list[tuple[str, str]]) -> tuple[str, dict]:
@@ -53,10 +54,11 @@ def test_overlaps() -> None:
     assert not _overlaps((0, 5), (6, 8))
 
 
-def test_diff_runs_marks_only_the_masked_span() -> None:
+def test_align_runs_marks_only_the_masked_span() -> None:
     source = "Call 0611222333 now"
     output = "Call [PHONE] now"
-    kept, runs = _diff_runs(source, output)
+    kept, runs, ambiguous = _align_runs(source, output)
+    assert not ambiguous
     masked_start, masked_end = source.index("0611222333"), source.index("0611222333") + len("0611222333")
     assert not any(kept[masked_start:masked_end])
     assert all(kept[:masked_start])
@@ -64,28 +66,52 @@ def test_diff_runs_marks_only_the_masked_span() -> None:
     assert runs == [(masked_start, masked_end, "PHONE")]
 
 
-def test_diff_runs_keeps_both_labels_for_adjacent_placeholders() -> None:
+def test_align_runs_keeps_both_labels_for_adjacent_placeholders() -> None:
     """Two PII values back to back share a span; neither label is dropped."""
     source = "Janedoe0612345678bye"
     output = "[PERSON][PHONE]bye"
-    kept, runs = _diff_runs(source, output)
+    kept, runs, ambiguous = _align_runs(source, output)
+    assert not ambiguous
     masked_end = len("Janedoe0612345678")
     assert not any(kept[:masked_end])
     assert all(kept[masked_end:])
     assert runs == [(0, masked_end, "PERSON"), (0, masked_end, "PHONE")]
 
 
-def test_diff_runs_does_not_anchor_inside_the_masked_value() -> None:
+def test_align_runs_does_not_anchor_inside_the_masked_value() -> None:
     source = "Call me at 089.2898-5006."
-    kept, runs = _diff_runs(source, "Call me at [PHONE].")
+    kept, runs, _ = _align_runs(source, "Call me at [PHONE].")
     start = source.index("089")
     assert runs == [(start, len(source) - 1, "PHONE")]
     assert not any(kept[start:-1])
     assert kept[-1]
 
 
-def test_diff_runs_returns_none_when_literals_do_not_fit() -> None:
-    assert _diff_runs("a 0612345678 b SECRET", "a [PHONE] b X") is None
+def test_align_runs_returns_none_when_literals_do_not_fit() -> None:
+    assert _align_runs("a 0612345678 b SECRET", "a [PHONE] b X") is None
+
+
+def test_align_runs_is_linear_when_literals_do_not_fit() -> None:
+    numbers = [f"+31 6 1234 56{i:02d}" for i in range(40)]
+    source = "Tel " + " ".join(numbers) + " thanks and regards from the support desk"
+    output = "Tel " + " ".join(["[PHONE]"] * 40) + " thanks and Regards from the support desk"
+    started = time.perf_counter()
+    assert _align_runs(source, output) is None
+    assert time.perf_counter() - started < 0.5
+
+
+def test_align_runs_flags_a_literal_that_also_occurs_inside_a_masked_value() -> None:
+    source = "Kontakt Hauptstraße 12 030 12345678 max@example.de"
+    _, _, ambiguous = _align_runs(source, "[ADDRESS] [PHONE] [EMAIL]")
+    assert ambiguous
+
+
+def test_ambiguous_texts_are_counted(monkeypatch: pytest.MonkeyPatch) -> None:
+    sample = [_row("Hauptstraße 12 030 12345678 max@example.de", [("EMAIL", "max@example.de")])]
+    monkeypatch.setattr(
+        external, "scrub_text", lambda text, **_: {"text": "[ADDRESS] [PHONE] [EMAIL]"}
+    )
+    assert score_sample(sample)["ambiguous_texts"] == 1
 
 
 def test_unaligned_text_scores_its_gold_spans_as_leaked(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -194,3 +220,4 @@ def test_load_sample_exits_when_a_language_has_too_few_rows(
     _fake_datasets(monkeypatch, [{"language": "en", "id": "en0"}])
     with pytest.raises(SystemExit):
         external._load_sample(1, seed=0)
+
