@@ -1389,4 +1389,12 @@ mod tests {
             })
         );
     }
+
+    #[test]
+    fn nl_passport_needs_an_ascii_check_digit() {
+        let text = "Nachname\u{663}: Eckerlin";
+        let r = scrub_text_langs(text, &KV_LANGS, true).unwrap();
+        assert_eq!(r.text, text);
+        assert_eq!(r.counts["passport"], 0);
+    }
 }

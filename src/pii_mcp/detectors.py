@@ -1177,14 +1177,14 @@ nl_vat_detector = Detector(type="vat_id", scrub=_scrub_nl_vat)
 # RvIG document number (passport / NIK): positions 1–2 letters, 3–8 alnum,
 # 9 digit; letter O never used (RvIG kenmerkenbrochure). Case-insensitive —
 # candidates are uppercased before validate (same idea as NL VAT).
-NL_PASSPORT_RE = re.compile(r"\b[A-Za-z]{2}[0-9A-Za-z]{6}\d\b")
+NL_PASSPORT_RE = re.compile(r"\b[A-Za-z]{2}[0-9A-Za-z]{6}[0-9]\b")
 
 
 def _nl_passport_valid(value: str) -> bool:
     compact = value.upper()
     if len(compact) != 9:
         return False
-    if not re.fullmatch(r"[A-Z]{2}[0-9A-Z]{6}\d", compact):
+    if not re.fullmatch(r"[A-Z]{2}[0-9A-Z]{6}[0-9]", compact):
         return False
     return "O" not in compact
 

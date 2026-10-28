@@ -1300,3 +1300,9 @@ class TestKeyAwareParsing:
         assert result["counts"]["email"] == 1
         assert result["counts"]["iban"] == 1
         assert result["counts"]["address"] == 0
+
+    def test_nl_passport_needs_an_ascii_check_digit(self) -> None:
+        text = "Nachname٣: Eckerlin"
+        result = scrub_text(text, languages=self.LANGS)
+        assert result["text"] == text
+        assert result["counts"]["passport"] == 0

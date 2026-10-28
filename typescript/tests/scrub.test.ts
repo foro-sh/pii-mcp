@@ -1385,6 +1385,13 @@ describe("key-aware parsing", () => {
     expect(result.counts.address).toBe(0);
   });
 
+  it("needs an ASCII check digit for an NL passport number", () => {
+    const text = "Nachname\u0663: Eckerlin";
+    const result = scrubText(text, { languages: ["en", "nl", "de"] });
+    expect(result.text).toBe(text);
+    expect(result.counts.passport).toBe(0);
+  });
+
   it("reads payload keys like text keys", () => {
     const result = scrubPayload(
       {
