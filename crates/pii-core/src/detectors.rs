@@ -2104,13 +2104,34 @@ fn us_zip_re() -> &'static Regex {
     })
 }
 
+/// True when `start` follows a word, a comma and one to three spaces.
+///
+/// That is the `City, ST 12345` shape. A state code that merely collides
+/// with a token before a number (`merged PR 48213`, `Total DE 12345`,
+/// `route via AS 13335`) has no comma after a word in front of it.
+fn us_state_after_city(text: &str, start: usize) -> bool {
+    let mut back = text[..start].chars().rev();
+    let mut seps = 0;
+    let mut next = back.next();
+    while seps < 3 && matches!(next, Some(' ' | '\t' | '\u{a0}' | '\u{202f}')) {
+        seps += 1;
+        next = back.next();
+    }
+    seps > 0
+        && next == Some(',')
+        && back.next().is_some_and(|c| {
+            matches!(c, 'A'..='Z' | 'a'..='z' | '\u{c0}'..='\u{d6}' | '\u{d8}'..='\u{f6}' | '\u{f8}'..='\u{17f}')
+        })
+}
+
 fn us_zip_accept(text: &str, value: &str, start: usize) -> bool {
     let first = value.chars().next().unwrap();
     if first.is_ascii_digit() {
         return postcode_after_address(text, start);
     }
     if us_zip_state_prefix_ok(value) {
-        return us_state_abbr_known(&value[..2]);
+        return us_state_abbr_known(&value[..2])
+            && (us_state_after_city(text, start) || postcode_after_address(text, start));
     }
     true
 }

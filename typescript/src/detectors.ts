@@ -1609,6 +1609,24 @@ function usZipStatePrefixOk(value: string): boolean {
   return US_ZIP_STATE_PREFIX_RE.test(value);
 }
 
+const STREET_SEP_SET = new Set([" ", "\t", "\u00a0", "\u202f"]);
+const STREET_LETTER_RE = new RegExp(`^[${STREET_UP}${STREET_LOW}]$`);
+
+/**
+ * True when ``start`` follows a word, a comma and one to three spaces.
+ *
+ * That is the ``City, ST 12345`` shape. A state code that merely collides
+ * with a token before a number (``merged PR 48213``, ``Total DE 12345``,
+ * ``route via AS 13335``) has no comma after a word in front of it.
+ */
+function usStateAfterCity(text: string, start: number): boolean {
+  let i = start;
+  while (i > 0 && start - i < 3 && STREET_SEP_SET.has(text[i - 1] ?? "")) {
+    i -= 1;
+  }
+  return i < start && i >= 2 && text[i - 1] === "," && STREET_LETTER_RE.test(text[i - 2] ?? "");
+}
+
 function usZipAccept(text: string, start: number, end: number): number {
   const value = text.slice(start, end);
   const accept = (() => {
@@ -1616,7 +1634,10 @@ function usZipAccept(text: string, start: number, end: number): number {
       return postcodeAfterAddress(text, start);
     }
     if (usZipStatePrefixOk(value)) {
-      return US_STATE_ABBR.has(value.slice(0, 2));
+      return (
+        US_STATE_ABBR.has(value.slice(0, 2)) &&
+        (usStateAfterCity(text, start) || postcodeAfterAddress(text, start))
+      );
     }
     return true;
   })();

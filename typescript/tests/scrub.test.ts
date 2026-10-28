@@ -1155,6 +1155,25 @@ describe("scrubText", () => {
     expect(result.counts.address).toBe(1);
   });
 
+  it.each([
+    ["Ticket ID 12345 closed"],
+    ["merged PR 48213 yesterday"],
+    ["route via AS 13335"],
+    ["HTTP OK 20000 bytes"],
+    ["Total DE 12345 rows"],
+    ["choose red OR 12345"],
+    ["paid IN 90210 full"],
+  ])("needs a city and comma before a US state code (%s)", (text) => {
+    expect(scrubText(text, { languages: ["en", "de"] }).text).toBe(text);
+  });
+
+  it.each([
+    ["Springfield, IL 62704", "Springfield, [ADDRESS]"],
+    ["474 Lexington Drive, IL 62704", "[ADDRESS], [ADDRESS]"],
+  ])("masks a US state code after a city or street (%s)", (text, expected) => {
+    expect(scrubText(text, { languages: ["en"] }).text).toBe(expected);
+  });
+
   it("rejects an unknown two-letter prefix before a US ZIP", () => {
     const result = scrubText("batch XX 80920", { languages: ["en"] });
     expect(result.counts.address).toBe(0);
@@ -1178,11 +1197,11 @@ describe("scrubText", () => {
     expect(result.counts.address).toBe(0);
   });
 
-  it("does not let a distant state-code collision legitimize a bare number", () => {
-    const result = scrubText("order 10115, batch OR 90210, count: 80920", {
+  it("does not let a distant state-code hit legitimize a bare number", () => {
+    const result = scrubText("order 10115, Salem, OR 90210, count: 80920", {
       languages: ["en", "de"],
     });
-    expect(result.text).toBe("order 10115, batch [ADDRESS], count: 80920");
+    expect(result.text).toBe("order 10115, Salem, [ADDRESS], count: 80920");
     expect(result.counts.address).toBe(1);
   });
 

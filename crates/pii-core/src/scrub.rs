@@ -942,16 +942,16 @@ mod tests {
 
     #[test]
     fn near_address_window_does_not_reach_a_distant_hit() {
-        // An accepted state-code collision must not legitimize a distant,
+        // A state-code hit must not legitimize a distant,
         // unrelated bare number a full clause away.
         let langs = vec!["en".to_string(), "de".to_string()];
         let r = scrub_text(
-            "order 10115, batch OR 90210, count: 80920",
+            "order 10115, Salem, OR 90210, count: 80920",
             Some(&langs),
             true,
         )
         .unwrap();
-        assert_eq!(r.text, "order 10115, batch [ADDRESS], count: 80920");
+        assert_eq!(r.text, "order 10115, Salem, [ADDRESS], count: 80920");
         assert_eq!(r.counts["address"], 1);
     }
 
@@ -979,6 +979,35 @@ mod tests {
         let r = scrub_text("Colorado Springs, CO 80920-1406", Some(&langs), true).unwrap();
         assert_eq!(r.text, "Colorado Springs, [ADDRESS]");
         assert_eq!(r.counts["address"], 1);
+    }
+
+    #[test]
+    fn us_state_code_needs_a_city_and_comma() {
+        let langs = vec!["en".to_string(), "de".to_string()];
+        for text in [
+            "Ticket ID 12345 closed",
+            "merged PR 48213 yesterday",
+            "route via AS 13335",
+            "HTTP OK 20000 bytes",
+            "Total DE 12345 rows",
+            "choose red OR 12345",
+            "paid IN 90210 full",
+        ] {
+            let r = scrub_text(text, Some(&langs), true).unwrap();
+            assert_eq!(r.text, text);
+        }
+    }
+
+    #[test]
+    fn masks_us_state_code_after_a_city_or_street() {
+        let langs = vec!["en".to_string()];
+        for (text, expected) in [
+            ("Springfield, IL 62704", "Springfield, [ADDRESS]"),
+            ("474 Lexington Drive, IL 62704", "[ADDRESS], [ADDRESS]"),
+        ] {
+            let r = scrub_text(text, Some(&langs), true).unwrap();
+            assert_eq!(r.text, expected, "{text}");
+        }
     }
 
     #[test]

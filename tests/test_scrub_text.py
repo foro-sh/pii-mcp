@@ -1139,10 +1139,10 @@ class TestDePostcode:
         assert scrub_text(text, languages=["de"])["text"] == expected
 
     def test_near_address_window_does_not_reach_a_distant_hit(self) -> None:
-        """An accepted state-code collision must not legitimize a distant,
+        """A state-code hit must not legitimize a distant,
         unrelated bare number a full clause away."""
-        result = scrub_text("order 10115, batch OR 90210, count: 80920", languages=["en", "de"])
-        assert result["text"] == "order 10115, batch [ADDRESS], count: 80920"
+        result = scrub_text("order 10115, Salem, OR 90210, count: 80920", languages=["en", "de"])
+        assert result["text"] == "order 10115, Salem, [ADDRESS], count: 80920"
         assert result["counts"]["address"] == 1
 
 
@@ -1168,6 +1168,33 @@ class TestUsZip:
         result = scrub_text("Colorado Springs, CO 80920-1406", languages=["en"])
         assert result["text"] == "Colorado Springs, [ADDRESS]"
         assert result["counts"]["address"] == 1
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "Ticket ID 12345 closed",
+            "merged PR 48213 yesterday",
+            "route via AS 13335",
+            "HTTP OK 20000 bytes",
+            "Total DE 12345 rows",
+            "choose red OR 12345",
+            "paid IN 90210 full",
+        ],
+    )
+    def test_state_code_needs_a_city_and_comma(self, text: str) -> None:
+        """A state code that is just a token before a number is not a hint."""
+        result = scrub_text(text, languages=["en", "de"])
+        assert result["text"] == text
+
+    @pytest.mark.parametrize(
+        ("text", "expected"),
+        [
+            ("Springfield, IL 62704", "Springfield, [ADDRESS]"),
+            ("474 Lexington Drive, IL 62704", "[ADDRESS], [ADDRESS]"),
+        ],
+    )
+    def test_masks_a_state_code_after_a_city_or_street(self, text: str, expected: str) -> None:
+        assert scrub_text(text, languages=["en"])["text"] == expected
 
     def test_rejects_an_unknown_two_letter_prefix(self) -> None:
         result = scrub_text("batch XX 80920", languages=["en"])

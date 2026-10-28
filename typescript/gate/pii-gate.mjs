@@ -1063,6 +1063,15 @@ var US_ZIP_STATE_PREFIX_RE = new RegExp(`^[A-Z]{2}[${STREET_SEP_CHARS}]`);
 function usZipStatePrefixOk(value) {
   return US_ZIP_STATE_PREFIX_RE.test(value);
 }
+var STREET_SEP_SET = /* @__PURE__ */ new Set([" ", "	", "\xA0", "\u202F"]);
+var STREET_LETTER_RE = new RegExp(`^[${STREET_UP}${STREET_LOW}]$`);
+function usStateAfterCity(text, start) {
+  let i = start;
+  while (i > 0 && start - i < 3 && STREET_SEP_SET.has(text[i - 1] ?? "")) {
+    i -= 1;
+  }
+  return i < start && i >= 2 && text[i - 1] === "," && STREET_LETTER_RE.test(text[i - 2] ?? "");
+}
 function usZipAccept(text, start, end) {
   const value = text.slice(start, end);
   const accept = (() => {
@@ -1070,7 +1079,7 @@ function usZipAccept(text, start, end) {
       return postcodeAfterAddress(text, start);
     }
     if (usZipStatePrefixOk(value)) {
-      return US_STATE_ABBR.has(value.slice(0, 2));
+      return US_STATE_ABBR.has(value.slice(0, 2)) && (usStateAfterCity(text, start) || postcodeAfterAddress(text, start));
     }
     return true;
   })();

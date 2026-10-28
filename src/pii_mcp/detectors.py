@@ -1423,7 +1423,8 @@ _POSTCODE_LABEL = (
 )
 
 
-_POSTCODE_GAP = frozenset(",\r\n \t\u00a0\u202f")
+_STREET_SEP_CHARS_SET = frozenset(" \t\u00a0\u202f")
+_POSTCODE_GAP = _STREET_SEP_CHARS_SET | frozenset(",\r\n")
 
 
 def _postcode_after_address(text: str, start: int, window: int = 12) -> bool:
@@ -1514,12 +1515,35 @@ US_ZIP_RE = re.compile(
 )
 
 
+_STREET_LETTER_RE = re.compile(f"[{_STREET_UP}{_STREET_LOW}]")
+
+
+def _us_state_after_city(text: str, start: int) -> bool:
+    """True when ``start`` follows a word, a comma and one to three spaces.
+
+    That is the ``City, ST 12345`` shape. A state code that merely collides
+    with a token before a number (``merged PR 48213``, ``Total DE 12345``,
+    ``route via AS 13335``) has no comma after a word in front of it.
+    """
+    i = start
+    while i > 0 and start - i < 3 and text[i - 1] in _STREET_SEP_CHARS_SET:
+        i -= 1
+    return (
+        i < start
+        and i >= 2
+        and text[i - 1] == ","
+        and _STREET_LETTER_RE.fullmatch(text[i - 2]) is not None
+    )
+
+
 def _us_zip_accept(text: str, start: int, end: int) -> bool:
     value = text[start:end]
     if value[0].isdigit():
         return _postcode_after_address(text, start)
     if _US_ZIP_STATE_PREFIX_RE.match(value):
-        return value[:2] in _US_STATE_ABBR
+        return value[:2] in _US_STATE_ABBR and (
+            _us_state_after_city(text, start) or _postcode_after_address(text, start)
+        )
     return True
 
 

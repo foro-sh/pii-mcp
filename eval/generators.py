@@ -513,7 +513,7 @@ def postcode_us(r: R) -> str:
         label = r.choice(_POSTCODE_LABELS)
         return f"{label}: {digits}" if r.random() < 0.5 else f"{label} {digits}"
     if kind < 2 / 3:
-        return f"{r.choice(_US_STATE_ABBR)} {digits}"
+        return f"{street_en(r)}, {r.choice(_US_STATE_ABBR)} {digits}"
     return f"{street_en(r)}, {digits}"
 
 
@@ -619,6 +619,8 @@ CLEAN: list[tuple[str, Callable[[R], str]]] = [
     # German nouns are always capitalized, so a bare digit + capitalized word
     # is not enough to mean "postcode city" (unlike the DE_CITIES allowlist).
     ("postcode_de_noun", lambda r: f"{_digits(r, 5)} {r.choice(['Dinge', 'Objekte', 'Einheiten', 'Stück'])}"),
+    # A state code that is just a token before a number, not ``City, ST``.
+    ("us_state_code_word", lambda r: f"{r.choice(['Ticket ID', 'merged PR', 'route via AS', 'HTTP OK', 'Total DE', 'choose red OR', 'paid IN'])} {_digits(r, 5)}"),
 ]
 
 # Clean text that looks like PII to any pattern matcher (bare 9-digit ids vs
@@ -635,9 +637,6 @@ AMBIGUOUS: list[tuple[str, Callable[[R], str]]] = [
     # A comma before the house number masks like the comma-less form already
     # does: a chapter, a section, a year, or a version next to a street word.
     ("street_word_comma", lambda r: r.choice(["Chapter 12, Main Street", "Sections 3, Park Lane and 4", "Kerkstraat, 2024", "v1.2, Park Lane"])),
-    # A real two-letter state code glued to 5 digits also reads as "OR"/"IN";
-    # masked like the UK SSD-size postcode collision above.
-    ("us_state_code_word", lambda r: r.choice(["choose red OR 12345", "paid IN 90210 full"])),
 ]
 
 
