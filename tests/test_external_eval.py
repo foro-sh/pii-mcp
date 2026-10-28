@@ -13,9 +13,12 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "eval"))
 
+import external  # noqa: E402
 from external import _diff_runs, _overlaps, score_sample  # noqa: E402
 
 
@@ -69,6 +72,42 @@ def test_diff_runs_keeps_both_labels_for_adjacent_placeholders() -> None:
     assert not any(kept[:masked_end])
     assert all(kept[masked_end:])
     assert runs == [(0, masked_end, "PERSON"), (0, masked_end, "PHONE")]
+
+
+def test_diff_runs_does_not_anchor_inside_the_masked_value() -> None:
+    source = "Call me at 089.2898-5006."
+    kept, runs = _diff_runs(source, "Call me at [PHONE].")
+    start = source.index("089")
+    assert runs == [(start, len(source) - 1, "PHONE")]
+    assert not any(kept[start:-1])
+    assert kept[-1]
+
+
+def test_diff_runs_returns_none_when_literals_do_not_fit() -> None:
+    assert _diff_runs("a 0612345678 b SECRET", "a [PHONE] b X") is None
+
+
+def test_unaligned_text_scores_its_gold_spans_as_leaked(monkeypatch: pytest.MonkeyPatch) -> None:
+    sample = [_row("ticket 111222333 open", [("SOCIALNUM", "111222333")])]
+    monkeypatch.setattr(external, "scrub_text", lambda text, **_: {"text": "ticket [BSN] changed"})
+    result = score_sample(sample)
+    assert result["unaligned_texts"] == 1
+    assert result["per_group"]["structured_id"]["recall"] == 0.0
+
+
+def test_phone_recall_counts_a_value_followed_by_a_period() -> None:
+    sample = [_row("Bel me op +31 6 12345678.", [("TELEPHONENUM", "+31 6 12345678")])]
+    result = score_sample(sample)
+    assert result["per_group"]["phone"] == {"n": 1, "recall": 1.0, "precision": 1.0}
+
+
+def test_precision_counts_a_mapped_run_outside_its_group() -> None:
+    sample = [_row(
+        "BSN 111222333, ref 222333444",
+        [("TELEPHONENUM", "111222333")],
+    )]
+    result = score_sample(sample)
+    assert result["per_group"]["structured_id"]["precision"] == 0.0
 
 
 def test_empty_gold_span_is_excluded_not_auto_caught() -> None:

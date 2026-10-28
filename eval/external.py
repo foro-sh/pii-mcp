@@ -156,52 +156,42 @@ def _overlaps(a: tuple[int, int], b: tuple[int, int]) -> bool:
     return a[0] < b[1] and b[0] < a[1]
 
 
-def _diff_runs(source: str, output: str) -> tuple[list[bool], list[tuple[int, int, str | None]]]:
-    """(kept, runs): per-char survival on ``source``, and masked source runs.
+def _diff_runs(source: str, output: str) -> tuple[list[bool], list[tuple[int, int, str]]] | None:
+    """(kept, runs) for one scrubbed text, or ``None`` when it cannot be aligned.
 
     ``kept[i]`` is True when ``source[i]`` survives unchanged in ``output``.
-    Each run is a ``(start, end, mcp_label)`` source-side range pii-mcp
-    changed; ``mcp_label`` is the placeholder (``[PHONE]`` etc.) that
-    replaced it, without the brackets, or ``None`` for a trailing gap that
-    could not be anchored (see module docstring).
+    Each run is a ``(start, end, mcp_label)`` source range that a ``[LABEL]``
+    placeholder replaced, ``mcp_label`` without the brackets.
 
-    ``output`` is split on ``[LABEL]`` placeholders; each literal chunk
-    between them is anchored onto ``source`` in order with ``str.find``, and
-    the gap before an anchor is the span its preceding placeholder(s)
-    replaced. A literal chunk that cannot be found downstream (the detector
-    damaged surrounding text) ends anchoring early: the remainder of
-    ``source`` is reported as one masked run under the last seen label(s).
-
-    Two placeholders with no literal text between them (the source had two
-    PII values back to back, with nothing to anchor on in between) cannot be
-    told apart positionally: both get a run over the same shared span rather
-    than one silently losing its label.
+    The output's literal chunks, joined by one lazy group per placeholder,
+    must match the whole source, so a short literal after a placeholder
+    (``.`` after ``[PHONE]``) cannot anchor inside the masked value. Adjacent
+    placeholders share one group, and each of their labels gets a run over
+    it. An output whose literal text does not fit the source returns
+    ``None``; the caller counts it and scores none of its gold spans as
+    caught.
     """
-    kept = [True] * len(source)
-    runs: list[tuple[int, int, str | None]] = []
     parts = _SPLIT_RE.split(output)
-    last_idx = len(parts) - 1
-    pos = 0
-    pending_labels: list[str] = []
+    pattern: list[str] = []
+    groups: list[list[str]] = []
     for idx, part in enumerate(parts):
-        if idx % 2 == 1:
-            pending_labels.append(part[1:-1])
-            continue
-        if idx == last_idx and part == "" and pending_labels:
-            found = len(source)
-        elif part:
-            found = source.find(part, pos)
-            if found == -1:
-                found = len(source)
+        if idx % 2 == 0:
+            pattern.append(re.escape(part))
+        elif idx > 1 and parts[idx - 1] == "" and groups:
+            groups[-1].append(part[1:-1])
         else:
-            found = pos
-        if found > pos:
-            for i in range(pos, found):
-                kept[i] = False
-            for label in pending_labels or [None]:
-                runs.append((pos, found, label))
-            pending_labels = []
-        pos = found + len(part)
+            groups.append([part[1:-1]])
+            pattern.append("(.+?)")
+    match = re.fullmatch("".join(pattern), source, re.DOTALL)
+    if match is None:
+        return None
+    kept = [True] * len(source)
+    runs: list[tuple[int, int, str]] = []
+    for group_idx, labels in enumerate(groups, start=1):
+        start, end = match.span(group_idx)
+        for i in range(start, end):
+            kept[i] = False
+        runs.extend((start, end, label) for label in labels)
     return kept, runs
 
 
@@ -219,6 +209,7 @@ def score_sample(sample: list[tuple[str, dict]]) -> dict:
     group_fps: dict[str, int] = dict.fromkeys(GROUPS, 0)
     total_runs = 0
     no_overlap_runs = 0
+    unaligned = 0
     latencies_ms: list[float] = []
 
     for _lang, row in sample:
@@ -228,7 +219,12 @@ def score_sample(sample: list[tuple[str, dict]]) -> dict:
         output = scrub_text(source, languages=list(LANGUAGES))["text"]
         latencies_ms.append((time.perf_counter() - t0) * 1000)
 
-        kept, runs = _diff_runs(source, output)
+        aligned = _diff_runs(source, output)
+        if aligned is None:
+            unaligned += 1
+            kept, runs = [True] * len(source), []
+        else:
+            kept, runs = aligned
         gold_alnum = {
             (g["start"], g["end"]): [i for i in range(g["start"], g["end"]) if source[i].isalnum()]
             for g in gold
@@ -253,7 +249,7 @@ def score_sample(sample: list[tuple[str, dict]]) -> dict:
             run = (start, end)
             if not any(_overlaps(run, gs) for gs in gold_spans):
                 no_overlap_runs += 1
-            group = MCP_LABEL_TO_GROUP.get(mcp_label or "")
+            group = MCP_LABEL_TO_GROUP.get(mcp_label)
             if group is None:
                 continue
             if any(_overlaps(run, gs) for gs in gold_spans_by_group[group]):
@@ -276,6 +272,7 @@ def score_sample(sample: list[tuple[str, dict]]) -> dict:
         "n_texts": len(sample),
         "per_group": per_group,
         "no_gold_overlap_rate": round(no_overlap_runs / total_runs, 4) if total_runs else 0.0,
+        "unaligned_texts": unaligned,
         "median_latency_ms": round(statistics.median(latencies_ms), 3) if latencies_ms else 0.0,
     }
 
@@ -298,6 +295,7 @@ def main() -> None:
         suffix = " (context only, not a pii-mcp target)" if group in CONTEXT_ONLY_GROUPS else ""
         print(f"{group}: recall={stats['recall']} precision={stats['precision']} n={stats['n']}{suffix}")
     print(f"masked runs with no gold overlap: {result['no_gold_overlap_rate']}")
+    print(f"texts that could not be aligned (scored as leaks): {result['unaligned_texts']}")
     print(f"median latency per text: {result['median_latency_ms']} ms")
     print(json.dumps(result))
 
