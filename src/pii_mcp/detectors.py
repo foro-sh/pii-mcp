@@ -1470,17 +1470,25 @@ def _de_postcode_range_ok(digits: str) -> bool:
     return digits[:2] != "00" and digits != "99999"
 
 
-def _de_postcode_accept(text: str, start: int, end: int) -> bool:
+def _de_postcode_end(text: str, start: int, end: int) -> int:
+    """Where an accepted DE postcode hit ends; ``start`` rejects it.
+
+    A label hit and a known-city hit are masked whole. A city not on the
+    list still leaves the five digits to the address hint, so
+    ``Hauptstraße 5, 33602 Gütersloh`` masks ``33602`` but keeps the city.
+    """
     value = text[start:end]
     if not value[0].isdigit():
-        return _de_postcode_range_ok(value[-5:])
-    if len(value) == 5:
-        return _de_postcode_range_ok(value) and _postcode_after_address(text, start)
-    return _de_postcode_range_ok(value[:5]) and value[5:].strip() in _DE_CITIES
+        return end if _de_postcode_range_ok(value[-5:]) else start
+    if not _de_postcode_range_ok(value[:5]):
+        return start
+    if len(value) > 5 and value[5:].strip() in _DE_CITIES:
+        return end
+    return start + 5 if _postcode_after_address(text, start) else start
 
 
 def _scrub_de_postcode(text: str) -> tuple[str, int]:
-    return _replace_matches(text, DE_POSTCODE_RE, "[ADDRESS]", context_ok=_de_postcode_accept)
+    return _replace_matches(text, DE_POSTCODE_RE, "[ADDRESS]", accept_end=_de_postcode_end)
 
 
 de_postcode_detector = Detector(type="address", scrub=_scrub_de_postcode)

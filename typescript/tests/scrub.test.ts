@@ -1120,6 +1120,14 @@ describe("scrubText", () => {
     expect(scrubText(text, { languages: [lang] }).text).toBe(expected);
   });
 
+  it.each([
+    ["Hauptstraße 5, 33602 Gütersloh", "[ADDRESS], [ADDRESS] Gütersloh"],
+    ["Hauptstraße 5\r\n33602 Gütersloh", "[ADDRESS]\r\n[ADDRESS] Gütersloh"],
+    ["Hauptstraße 5, 10115 Berlin", "[ADDRESS], [ADDRESS]"],
+  ])("masks the DE postcode before an unlisted city via the address hint (%s)", (text, expected) => {
+    expect(scrubText(text, { languages: ["de"] }).text).toBe(expected);
+  });
+
   it.each([["ZIP: 80920"], ["zip code 80920"], ["postal code: 80920"]])(
     "masks a US ZIP with a label (%s)",
     (value) => {

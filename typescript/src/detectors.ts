@@ -1557,22 +1557,29 @@ function dePostcodeRangeOk(digits: string): boolean {
   return digits.slice(0, 2) !== "00" && digits !== "99999";
 }
 
-function dePostcodeAccept(text: string, start: number, end: number): number {
+/**
+ * Where an accepted DE postcode hit ends; ``start`` rejects it.
+ *
+ * A label hit and a known-city hit are masked whole. A city not on the list
+ * still leaves the five digits to the address hint, so
+ * ``Hauptstraße 5, 33602 Gütersloh`` masks ``33602`` but keeps the city.
+ */
+function dePostcodeEnd(text: string, start: number, end: number): number {
   const value = text.slice(start, end);
-  const accept = (() => {
-    if (!/^\d/.test(value)) {
-      return dePostcodeRangeOk(value.slice(-5));
-    }
-    if (value.length === 5) {
-      return dePostcodeRangeOk(value) && postcodeAfterAddress(text, start);
-    }
-    return dePostcodeRangeOk(value.slice(0, 5)) && DE_CITIES.has(value.slice(5).trim());
-  })();
-  return accept ? end : start;
+  if (!/^\d/.test(value)) {
+    return dePostcodeRangeOk(value.slice(-5)) ? end : start;
+  }
+  if (!dePostcodeRangeOk(value.slice(0, 5))) {
+    return start;
+  }
+  if (value.length > 5 && DE_CITIES.has(value.slice(5).trim())) {
+    return end;
+  }
+  return postcodeAfterAddress(text, start) ? start + 5 : start;
 }
 
 function scrubDePostcode(text: string): { text: string; count: number } {
-  return replaceMatches(text, DE_POSTCODE_RE, "[ADDRESS]", undefined, false, dePostcodeAccept);
+  return replaceMatches(text, DE_POSTCODE_RE, "[ADDRESS]", undefined, false, dePostcodeEnd);
 }
 
 export const dePostcodeDetector: Detector = { type: "address", scrub: scrubDePostcode };

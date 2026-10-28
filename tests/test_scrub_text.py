@@ -1125,6 +1125,19 @@ class TestDePostcode:
         line breaks, counts; the gap is measured in code points everywhere."""
         assert scrub_text(text, languages=[lang])["text"] == expected
 
+    @pytest.mark.parametrize(
+        ("text", "expected"),
+        [
+            ("Hauptstraße 5, 33602 Gütersloh", "[ADDRESS], [ADDRESS] Gütersloh"),
+            ("Hauptstraße 5\r\n33602 Gütersloh", "[ADDRESS]\r\n[ADDRESS] Gütersloh"),
+            ("Hauptstraße 5, 10115 Berlin", "[ADDRESS], [ADDRESS]"),
+        ],
+    )
+    def test_unlisted_city_leaves_the_digits_to_the_address_hint(
+        self, text: str, expected: str
+    ) -> None:
+        assert scrub_text(text, languages=["de"])["text"] == expected
+
     def test_near_address_window_does_not_reach_a_distant_hit(self) -> None:
         """An accepted state-code collision must not legitimize a distant,
         unrelated bare number a full clause away."""

@@ -2048,23 +2048,35 @@ fn de_postcode_re() -> &'static Regex {
     })
 }
 
-fn de_postcode_accept(text: &str, value: &str, start: usize) -> bool {
-    let first = value.chars().next().unwrap();
-    if !first.is_ascii_digit() {
-        return de_postcode_range_ok(&value[value.len() - 5..]);
+/// Where an accepted DE postcode hit ends; `start` rejects it.
+///
+/// A label hit and a known-city hit are masked whole. A city not on the
+/// list still leaves the five digits to the address hint, so
+/// `Hauptstraße 5, 33602 Gütersloh` masks `33602` but keeps the city.
+fn de_postcode_end(text: &str, start: usize, end: usize) -> usize {
+    let value = &text[start..end];
+    if !value.starts_with(|c: char| c.is_ascii_digit()) {
+        return if de_postcode_range_ok(&value[value.len() - 5..]) { end } else { start };
     }
-    if value.len() == 5 {
-        return de_postcode_range_ok(value) && postcode_after_address(text, start);
+    if !de_postcode_range_ok(&value[..5]) {
+        return start;
     }
-    de_postcode_range_ok(&value[..5]) && de_city_known(value[5..].trim())
+    if value.len() > 5 && de_city_known(value[5..].trim()) {
+        return end;
+    }
+    if postcode_after_address(text, start) {
+        start + 5
+    } else {
+        start
+    }
 }
 
 fn scrub_de_postcode(text: &str) -> (Option<String>, u32) {
-    replace_matches(
+    replace_matches_end(
         text,
         de_postcode_re(),
         "[ADDRESS]",
-        |v, s, _| de_postcode_accept(text, v, s),
+        |s, e| de_postcode_end(text, s, e),
         false,
     )
 }

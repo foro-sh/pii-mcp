@@ -893,6 +893,19 @@ mod tests {
     }
 
     #[test]
+    fn de_postcode_before_an_unlisted_city_uses_the_address_hint() {
+        let langs = vec!["de".to_string()];
+        for (text, expected) in [
+            ("Hauptstraße 5, 33602 Gütersloh", "[ADDRESS], [ADDRESS] Gütersloh"),
+            ("Hauptstraße 5\r\n33602 Gütersloh", "[ADDRESS]\r\n[ADDRESS] Gütersloh"),
+            ("Hauptstraße 5, 10115 Berlin", "[ADDRESS], [ADDRESS]"),
+        ] {
+            let r = scrub_text(text, Some(&langs), true).unwrap();
+            assert_eq!(r.text, expected, "{text}");
+        }
+    }
+
+    #[test]
     fn de_postcode_rejects_an_arbitrary_capitalized_word() {
         // German nouns are always capitalized, so a city allowlist is required.
         let langs = vec!["de".to_string()];

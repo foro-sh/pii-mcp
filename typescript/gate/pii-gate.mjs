@@ -1034,21 +1034,21 @@ var DE_POSTCODE_RE = new RegExp(
 function dePostcodeRangeOk(digits) {
   return digits.slice(0, 2) !== "00" && digits !== "99999";
 }
-function dePostcodeAccept(text, start, end) {
+function dePostcodeEnd(text, start, end) {
   const value = text.slice(start, end);
-  const accept = (() => {
-    if (!/^\d/.test(value)) {
-      return dePostcodeRangeOk(value.slice(-5));
-    }
-    if (value.length === 5) {
-      return dePostcodeRangeOk(value) && postcodeAfterAddress(text, start);
-    }
-    return dePostcodeRangeOk(value.slice(0, 5)) && DE_CITIES.has(value.slice(5).trim());
-  })();
-  return accept ? end : start;
+  if (!/^\d/.test(value)) {
+    return dePostcodeRangeOk(value.slice(-5)) ? end : start;
+  }
+  if (!dePostcodeRangeOk(value.slice(0, 5))) {
+    return start;
+  }
+  if (value.length > 5 && DE_CITIES.has(value.slice(5).trim())) {
+    return end;
+  }
+  return postcodeAfterAddress(text, start) ? start + 5 : start;
 }
 function scrubDePostcode(text) {
-  return replaceMatches(text, DE_POSTCODE_RE, "[ADDRESS]", void 0, false, dePostcodeAccept);
+  return replaceMatches(text, DE_POSTCODE_RE, "[ADDRESS]", void 0, false, dePostcodeEnd);
 }
 var dePostcodeDetector = { type: "address", scrub: scrubDePostcode };
 var US_STATE_ABBR = new Set(
