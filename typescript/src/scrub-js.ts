@@ -11,7 +11,7 @@
  *
  * ``scrubWalk`` applies the same field-name dictionary structurally: an
  * object value is masked whole, by its key, before recursing (see
- * ``keyFieldCategory`` in ``./detectors.js``), so ``{"last_name": "Grabbe"}``
+ * ``keyField`` in ``./detectors.js``), so ``{"last_name": "Grabbe"}``
  * is caught even though the string leaf ``"Grabbe"`` alone carries no
  * ``key:`` context for ``scrubTextJs``'s pattern pass to see.
  *
@@ -42,8 +42,8 @@ import {
   dePassportDetector,
   deVatDetector,
   itinDetector,
-  keyFieldCategory,
-  looksLikeName,
+  fieldValueMasked,
+  keyField,
   nhsDetector,
   ninoDetector,
   nlLicensePlateDetector,
@@ -283,15 +283,12 @@ function scrubWalk(
         out[key] = item;
         continue;
       }
-      if (typeof item === "string" && item.length > 0) {
-        const field = keyFieldCategory(key);
-        if (field !== null) {
-          const [category, ambiguous] = field;
-          if (!ambiguous || looksLikeName(item)) {
-            counts[category] += 1;
-            out[key] = `[${category.toUpperCase()}]`;
-            continue;
-          }
+      if (typeof item === "string") {
+        const field = keyField(key);
+        if (field !== null && fieldValueMasked(field, item)) {
+          counts[field.category] += 1;
+          out[key] = `[${field.category.toUpperCase()}]`;
+          continue;
         }
       }
       out[key] = scrubWalk(item, counts, depth + 1, languages);

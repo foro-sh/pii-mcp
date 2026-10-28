@@ -1208,3 +1208,95 @@ class TestKeyAwareMasking:
         result = scrub_text(text, languages=["en", "nl", "de"])
         assert result["text"] == text
         assert result["counts"]["person"] == 0
+
+
+class TestKeyAwareParsing:
+    """How the key-aware pass reads a key and where its value ends."""
+
+    LANGS = ["en", "nl", "de"]
+
+    @pytest.mark.parametrize("unit", ["name: x ", "name: 'x ", '"name": x ', "name: x, "])
+    def test_rejected_name_values_scan_in_linear_time(self, unit: str) -> None:
+        started = time.perf_counter()
+        scrub_text(unit * 16000, languages=self.LANGS)
+        assert time.perf_counter() - started < 5
+
+    @pytest.mark.parametrize(
+        ("text", "expected"),
+        [
+            ("PLZ: 33613", "PLZ: [ADDRESS]"),
+            ("LAST_NAME: Grabbe", "LAST_NAME: [PERSON]"),
+            ("last_name_1: Grabbe", "last_name_1: [PERSON]"),
+            ("last-name-2: Grabbe", "last-name-2: [PERSON]"),
+            ("Surname: Grabbe", "Surname: [PERSON]"),
+            ("Full Name: Jan Jansen", "Full Name: [PERSON]"),
+            ("fullName: Jan Jansen", "fullName: [PERSON]"),
+            ("family_name: Grabbe", "family_name: [PERSON]"),
+            ("Hausnummer: 12", "Hausnummer: [ADDRESS]"),
+            ("House number: 12", "House number: [ADDRESS]"),
+            ("Wohnort: Bielefeld", "Wohnort: [ADDRESS]"),
+            ("Zip Code: 90210", "Zip Code: [ADDRESS]"),
+            ("Customer Name: Jan Jansen", "Customer Name: [PERSON]"),
+        ],
+    )
+    def test_key_spellings(self, text: str, expected: str) -> None:
+        assert scrub_text(text, languages=self.LANGS)["text"] == expected
+
+    @pytest.mark.parametrize(
+        "text",
+        ["first name: Jan", "customerName: Jan Jansen", "gzip: 1234", "name_suffix: Jan"],
+    )
+    def test_key_spellings_that_are_not_keys(self, text: str) -> None:
+        assert scrub_text(text, languages=self.LANGS)["text"] == text
+
+    @pytest.mark.parametrize(
+        ("text", "expected"),
+        [
+            (
+                "{'first_name': 'Jan', 'last_name': 'Jansen', 'city': 'Utrecht'}",
+                "{'first_name': '[PERSON]', 'last_name': '[PERSON]', 'city': '[ADDRESS]'}",
+            ),
+            ('"last_name": "O\\"Brien Smith"', '"last_name": "[PERSON]"'),
+            ('{\\"last_name\\": \\"Grabbe\\"}', '{\\"last_name\\": \\"[PERSON]\\"}'),
+            (
+                '{\\"last_name\\": \\"O\\\\\\"Brien Smith\\"}',
+                '{\\"last_name\\": \\"[PERSON]\\"}',
+            ),
+        ],
+    )
+    def test_quoted_keys_and_values(self, text: str, expected: str) -> None:
+        assert scrub_text(text, languages=self.LANGS)["text"] == expected
+
+    @pytest.mark.parametrize(
+        ("text", "expected"),
+        [
+            (
+                '{"zip": 1012, "status": "ok", "id": 42}',
+                '{"zip": [ADDRESS], "status": "ok", "id": 42}',
+            ),
+            ('{"huisnummer": 12}', '{"huisnummer": [ADDRESS]}'),
+            ('{"address": null, "city": true}', '{"address": null, "city": true}'),
+            ("name: build-cache, owner: Ops", "name: build-cache, owner: Ops"),
+            ("name: build-cache, city: Utrecht", "name: build-cache, city: [ADDRESS]"),
+            (
+                "Adresse: Kerkstraat 12, 3511 AB Utrecht",
+                "Adresse: [ADDRESS]",
+            ),
+            (
+                "Nachname: Eckerlin\r\nOrt: Bielefeld\r\n",
+                "Nachname: [PERSON]\r\nOrt: [ADDRESS]\r\n",
+            ),
+        ],
+    )
+    def test_where_a_value_ends(self, text: str, expected: str) -> None:
+        assert scrub_text(text, languages=self.LANGS)["text"] == expected
+
+    def test_null_value_keeps_the_rest_of_the_object(self) -> None:
+        result = scrub_text(
+            '{"address": null, "email": "ada@example.com", "iban": "NL91ABNA0417164300"}',
+            languages=self.LANGS,
+        )
+        assert result["text"] == '{"address": null, "email": "[EMAIL]", "iban": "[IBAN]"}'
+        assert result["counts"]["email"] == 1
+        assert result["counts"]["iban"] == 1
+        assert result["counts"]["address"] == 0

@@ -9,7 +9,7 @@
 //!
 //! `scrub_walk` applies the same field-name dictionary structurally: a dict
 //! value is masked whole, by its key, before recursing (see
-//! [`crate::detectors::key_field_category`]), so `{"last_name": "Grabbe"}` is
+//! [`crate::detectors::key_field`]), so `{"last_name": "Grabbe"}` is
 //! caught even though the string leaf `"Grabbe"` alone carries no `key:`
 //! context for `scrub_text_langs`'s pattern pass to see.
 //!
@@ -20,7 +20,7 @@
 //! by shape, not key alone. Binary leaves are excluded from the
 //! `MAX_SCRUB_BYTES` string-leaf sum.
 
-use crate::detectors::{detectors_for, key_field_category, looks_like_name, PiiCategory};
+use crate::detectors::{detectors_for, PiiCategory};
 use std::borrow::Cow;
 use std::collections::BTreeMap;
 use thiserror::Error;
@@ -184,6 +184,7 @@ pub fn scrub_text(
 #[cfg(feature = "payload")]
 mod payload {
     use super::*;
+    use crate::detectors::{field_value_masked, key_field, KeyField};
     use serde_json::Value;
 
     /// Return the MCP binary field to leave unscrubbed, or `None`.
@@ -236,6 +237,10 @@ mod payload {
         }
     }
 
+    fn field_placeholder(field: KeyField) -> Value {
+        Value::String(format!("[{}]", field.category.as_str().to_uppercase()))
+    }
+
     fn scrub_walk(
         value: Value,
         counts: &mut PiiCounts,
@@ -273,19 +278,11 @@ mod payload {
                         continue;
                     }
                     if let Value::String(s) = &item {
-                        if !s.is_empty() {
-                            if let Some((category, ambiguous)) = key_field_category(&key) {
-                                if !ambiguous || looks_like_name(s) {
-                                    bump_count(counts, category, 1);
-                                    out.insert(
-                                        key,
-                                        Value::String(format!(
-                                            "[{}]",
-                                            category.as_str().to_uppercase()
-                                        )),
-                                    );
-                                    continue;
-                                }
+                        if let Some(field) = key_field(&key) {
+                            if field_value_masked(field, s) {
+                                bump_count(counts, field.category, 1);
+                                out.insert(key, field_placeholder(field));
+                                continue;
                             }
                         }
                     }
@@ -1235,5 +1232,161 @@ mod tests {
             serde_json::json!({"a": {"name": "李明"}, "b": {"name": "Ⓙan"}, "c": {"name": "[PERSON]"}})
         );
         assert_eq!(r.counts["person"], 1);
+    }
+
+    const KV_LANGS: [LanguageCode; 3] = [LanguageCode::En, LanguageCode::Nl, LanguageCode::De];
+
+    fn kv_scrub(text: &str) -> String {
+        scrub_text_langs(text, &KV_LANGS, true).unwrap().text
+    }
+
+    #[test]
+    fn rejected_name_values_scan_in_linear_time() {
+        for unit in ["name: x ", "name: 'x ", r#""name": x "#, "name: x, "] {
+            let text = unit.repeat(16000);
+            let started = std::time::Instant::now();
+            scrub_text_langs(&text, &KV_LANGS, true).unwrap();
+            assert!(started.elapsed().as_secs_f64() < 5.0, "{unit:?}");
+        }
+    }
+
+    #[test]
+    fn key_spellings() {
+        for (text, expected) in [
+            ("PLZ: 33613", "PLZ: [ADDRESS]"),
+            ("LAST_NAME: Grabbe", "LAST_NAME: [PERSON]"),
+            ("last_name_1: Grabbe", "last_name_1: [PERSON]"),
+            ("last-name-2: Grabbe", "last-name-2: [PERSON]"),
+            ("Surname: Grabbe", "Surname: [PERSON]"),
+            ("Full Name: Jan Jansen", "Full Name: [PERSON]"),
+            ("fullName: Jan Jansen", "fullName: [PERSON]"),
+            ("family_name: Grabbe", "family_name: [PERSON]"),
+            ("Hausnummer: 12", "Hausnummer: [ADDRESS]"),
+            ("House number: 12", "House number: [ADDRESS]"),
+            ("Wohnort: Bielefeld", "Wohnort: [ADDRESS]"),
+            ("Zip Code: 90210", "Zip Code: [ADDRESS]"),
+            ("Customer Name: Jan Jansen", "Customer Name: [PERSON]"),
+        ] {
+            assert_eq!(kv_scrub(text), expected, "{text:?}");
+        }
+    }
+
+    #[test]
+    fn key_spellings_that_are_not_keys() {
+        for text in [
+            "first\u{a0}name: Jan",
+            "customerName: Jan Jansen",
+            "gzip: 1234",
+            "name_suffix: Jan",
+        ] {
+            assert_eq!(kv_scrub(text), text, "{text:?}");
+        }
+    }
+
+    #[test]
+    fn quoted_keys_and_values() {
+        for (text, expected) in [
+            (
+                "{'first_name': 'Jan', 'last_name': 'Jansen', 'city': 'Utrecht'}",
+                "{'first_name': '[PERSON]', 'last_name': '[PERSON]', 'city': '[ADDRESS]'}",
+            ),
+            (
+                r#""last_name": "O\"Brien Smith""#,
+                r#""last_name": "[PERSON]""#,
+            ),
+            (
+                r#"{\"last_name\": \"Grabbe\"}"#,
+                r#"{\"last_name\": \"[PERSON]\"}"#,
+            ),
+            (
+                r#"{\"last_name\": \"O\\\"Brien Smith\"}"#,
+                r#"{\"last_name\": \"[PERSON]\"}"#,
+            ),
+        ] {
+            assert_eq!(kv_scrub(text), expected, "{text:?}");
+        }
+    }
+
+    #[test]
+    fn where_a_value_ends() {
+        for (text, expected) in [
+            (
+                r#"{"zip": 1012, "status": "ok", "id": 42}"#,
+                r#"{"zip": [ADDRESS], "status": "ok", "id": 42}"#,
+            ),
+            (r#"{"huisnummer": 12}"#, r#"{"huisnummer": [ADDRESS]}"#),
+            (
+                r#"{"address": null, "city": true}"#,
+                r#"{"address": null, "city": true}"#,
+            ),
+            (
+                "name: build-cache, owner: Ops",
+                "name: build-cache, owner: Ops",
+            ),
+            (
+                "name: build-cache, city: Utrecht",
+                "name: build-cache, city: [ADDRESS]",
+            ),
+            (
+                "Adresse: Kerkstraat 12, 3511 AB Utrecht",
+                "Adresse: [ADDRESS]",
+            ),
+            (
+                "Nachname: Eckerlin\r\nOrt: Bielefeld\r\n",
+                "Nachname: [PERSON]\r\nOrt: [ADDRESS]\r\n",
+            ),
+        ] {
+            assert_eq!(kv_scrub(text), expected, "{text:?}");
+        }
+    }
+
+    #[test]
+    fn null_value_keeps_the_rest_of_the_object() {
+        let r = scrub_text_langs(
+            r#"{"address": null, "email": "ada@example.com", "iban": "NL91ABNA0417164300"}"#,
+            &KV_LANGS,
+            true,
+        )
+        .unwrap();
+        assert_eq!(
+            r.text,
+            r#"{"address": null, "email": "[EMAIL]", "iban": "[IBAN]"}"#
+        );
+        assert_eq!(r.counts["email"], 1);
+        assert_eq!(r.counts["iban"], 1);
+        assert_eq!(r.counts["address"], 0);
+    }
+
+    #[cfg(feature = "payload")]
+    #[test]
+    fn payload_keys_match_like_text_keys() {
+        let langs = vec!["en".to_string()];
+        let r = scrub_payload(
+            serde_json::json!({
+                "Customer Name": "Jan Jansen",
+                "customer_name": "Jan Jansen",
+                "customerName": "Jan Jansen",
+                "LAST_NAME": "Grabbe",
+                "last_name_1": "Grabbe",
+                "zip\u{663}": "33613",
+                "zip\u{1c}": "33613",
+                "zip\u{feff}": "33613",
+            }),
+            Some(&langs),
+        )
+        .unwrap();
+        assert_eq!(
+            r.payload,
+            serde_json::json!({
+                "Customer Name": "[PERSON]",
+                "customer_name": "[PERSON]",
+                "customerName": "Jan Jansen",
+                "LAST_NAME": "[PERSON]",
+                "last_name_1": "[PERSON]",
+                "zip\u{663}": "33613",
+                "zip\u{1c}": "33613",
+                "zip\u{feff}": "33613",
+            })
+        );
     }
 }

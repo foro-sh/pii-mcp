@@ -11,7 +11,7 @@ hits.
 
 ``_scrub_walk`` applies the same field-name dictionary structurally: a dict
 value is masked whole, by its key, before recursing (see
-``detectors.key_field_category``), so ``{"last_name": "Grabbe"}`` is caught
+``detectors.key_field``), so ``{"last_name": "Grabbe"}`` is caught
 even though the string leaf ``"Grabbe"`` alone carries no ``key:`` context
 for ``scrub_text``'s pattern pass to see.
 
@@ -55,9 +55,9 @@ from pii_mcp.detectors import (
     bsn_detector,
     de_passport_detector,
     de_vat_detector,
+    field_value_masked,
     itin_detector,
-    key_field_category,
-    looks_like_name,
+    key_field,
     nhs_detector,
     nino_detector,
     nl_license_plate_detector,
@@ -356,14 +356,12 @@ def _scrub_walk(
             if key == skip:
                 out[key] = item
                 continue
-            if isinstance(item, str) and item:
-                field = key_field_category(key)
-                if field is not None:
-                    category, ambiguous = field
-                    if not ambiguous or looks_like_name(item):
-                        counts[category] += 1
-                        out[key] = f"[{category.upper()}]"
-                        continue
+            if isinstance(item, str):
+                field = key_field(key)
+                if field is not None and field_value_masked(field, item):
+                    counts[field.category] += 1
+                    out[key] = f"[{field.category.upper()}]"
+                    continue
             out[key] = _scrub_walk(item, counts, depth + 1, languages)
         return out
     if value is None or isinstance(value, (bool, int, float)):

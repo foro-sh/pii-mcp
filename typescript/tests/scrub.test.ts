@@ -1313,6 +1313,105 @@ describe("key-aware name gate", () => {
   });
 });
 
+describe("key-aware parsing", () => {
+  const scrub = (text: string): string => scrubText(text, { languages: ["en", "nl", "de"] }).text;
+
+  it.each(["name: x ", "name: 'x ", '"name": x ', "name: x, "])(
+    "scans rejected name values in linear time: %s",
+    (unit) => {
+      const started = performance.now();
+      scrubText(unit.repeat(16000), { languages: ["en", "nl", "de"] });
+      expect(performance.now() - started).toBeLessThan(5000);
+    },
+  );
+
+  it.each([
+    ["PLZ: 33613", "PLZ: [ADDRESS]"],
+    ["LAST_NAME: Grabbe", "LAST_NAME: [PERSON]"],
+    ["last_name_1: Grabbe", "last_name_1: [PERSON]"],
+    ["last-name-2: Grabbe", "last-name-2: [PERSON]"],
+    ["Surname: Grabbe", "Surname: [PERSON]"],
+    ["Full Name: Jan Jansen", "Full Name: [PERSON]"],
+    ["fullName: Jan Jansen", "fullName: [PERSON]"],
+    ["family_name: Grabbe", "family_name: [PERSON]"],
+    ["Hausnummer: 12", "Hausnummer: [ADDRESS]"],
+    ["House number: 12", "House number: [ADDRESS]"],
+    ["Wohnort: Bielefeld", "Wohnort: [ADDRESS]"],
+    ["Zip Code: 90210", "Zip Code: [ADDRESS]"],
+    ["Customer Name: Jan Jansen", "Customer Name: [PERSON]"],
+  ])("reads the key spelling %s", (text, expected) => {
+    expect(scrub(text)).toBe(expected);
+  });
+
+  it.each(["first name: Jan", "customerName: Jan Jansen", "gzip: 1234", "name_suffix: Jan"])(
+    "does not read %s as a key",
+    (text) => {
+      expect(scrub(text)).toBe(text);
+    },
+  );
+
+  it.each([
+    [
+      "{'first_name': 'Jan', 'last_name': 'Jansen', 'city': 'Utrecht'}",
+      "{'first_name': '[PERSON]', 'last_name': '[PERSON]', 'city': '[ADDRESS]'}",
+    ],
+    ['"last_name": "O\\"Brien Smith"', '"last_name": "[PERSON]"'],
+    ['{\\"last_name\\": \\"Grabbe\\"}', '{\\"last_name\\": \\"[PERSON]\\"}'],
+    ['{\\"last_name\\": \\"O\\\\\\"Brien Smith\\"}', '{\\"last_name\\": \\"[PERSON]\\"}'],
+  ])("reads quoted keys and values: %s", (text, expected) => {
+    expect(scrub(text)).toBe(expected);
+  });
+
+  it.each([
+    ['{"zip": 1012, "status": "ok", "id": 42}', '{"zip": [ADDRESS], "status": "ok", "id": 42}'],
+    ['{"huisnummer": 12}', '{"huisnummer": [ADDRESS]}'],
+    ['{"address": null, "city": true}', '{"address": null, "city": true}'],
+    ["name: build-cache, owner: Ops", "name: build-cache, owner: Ops"],
+    ["name: build-cache, city: Utrecht", "name: build-cache, city: [ADDRESS]"],
+    ["Adresse: Kerkstraat 12, 3511 AB Utrecht", "Adresse: [ADDRESS]"],
+    ["Nachname: Eckerlin\r\nOrt: Bielefeld\r\n", "Nachname: [PERSON]\r\nOrt: [ADDRESS]\r\n"],
+  ])("ends the value of %s", (text, expected) => {
+    expect(scrub(text)).toBe(expected);
+  });
+
+  it("keeps the rest of an object after a null value", () => {
+    const result = scrubText(
+      '{"address": null, "email": "ada@example.com", "iban": "NL91ABNA0417164300"}',
+      { languages: ["en", "nl", "de"] },
+    );
+    expect(result.text).toBe('{"address": null, "email": "[EMAIL]", "iban": "[IBAN]"}');
+    expect(result.counts.email).toBe(1);
+    expect(result.counts.iban).toBe(1);
+    expect(result.counts.address).toBe(0);
+  });
+
+  it("reads payload keys like text keys", () => {
+    const result = scrubPayload(
+      {
+        "Customer Name": "Jan Jansen",
+        customer_name: "Jan Jansen",
+        customerName: "Jan Jansen",
+        LAST_NAME: "Grabbe",
+        last_name_1: "Grabbe",
+        "zip٣": "33613",
+        "zip\u001c": "33613",
+        "zip﻿": "33613",
+      },
+      { languages: ["en"] },
+    );
+    expect(result.payload).toEqual({
+      "Customer Name": "[PERSON]",
+      customer_name: "[PERSON]",
+      customerName: "Jan Jansen",
+      LAST_NAME: "[PERSON]",
+      last_name_1: "[PERSON]",
+      "zip٣": "33613",
+      "zip\u001c": "33613",
+      "zip﻿": "33613",
+    });
+  });
+});
+
 describe("native backend", () => {
   it("reports whether the napi addon is in use under auto", () => {
     delete process.env.PII_MCP_BACKEND;

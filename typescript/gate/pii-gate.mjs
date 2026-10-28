@@ -1029,9 +1029,13 @@ var nlLicensePlateDetector = {
 };
 var PERSON_KEYS = [
   "name",
-  "first_name",
+  "first name",
   "given name",
-  "last_name",
+  "last name",
+  "surname",
+  "full name",
+  "family name",
+  "familienname",
   "vorname",
   "nachname",
   "voornaam",
@@ -1048,11 +1052,14 @@ var ADDRESS_KEYS = [
   "adresse",
   "adres",
   "building number",
+  "house number",
   "huisnummer",
+  "hausnummer",
   "geb\xE4ude",
   "gebaeude",
   "postcode",
   "postal code",
+  "zip code",
   "postleitzahl",
   "plz",
   "zip",
@@ -1060,32 +1067,67 @@ var ADDRESS_KEYS = [
   "stadt",
   "stad",
   "plaats",
+  "woonplaats",
   "ort",
+  "wohnort",
   "bundesland",
   "provincie"
 ];
 var AMBIGUOUS_KEYS = /* @__PURE__ */ new Set(["name"]);
-function splitKeyWords(key) {
-  return key.split(/[\s_-]+/).filter((word) => word.length > 0);
+var KEY_MAX_WORDS = 4;
+var KEY_LOWER = { \u00C4: "\xE4", \u00D6: "\xF6", \u00DC: "\xFC", "\u1E9E": "\xDF" };
+function keyId(words) {
+  return words.join("").replace(/[A-ZÄÖÜẞ]/g, (c) => KEY_LOWER[c] ?? c.toLowerCase());
 }
-function escapeRegExp(value) {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+var KEY_FIELDS = new Map([
+  ...ADDRESS_KEYS.map(
+    (key) => [keyId(key.split(" ")), { category: "address", gated: false }]
+  ),
+  ...PERSON_KEYS.map((key) => {
+    const id = keyId(key.split(" "));
+    return [id, { category: "person", gated: AMBIGUOUS_KEYS.has(id) }];
+  })
+]);
+function isKeyWordCode(code) {
+  return code >= 128 || code >= 48 && code <= 57 || code >= 65 && code <= 90 || code >= 97 && code <= 122;
 }
-function normalizeKey(key) {
-  const compact = key.replace(/[\s_-]+/g, "").toLowerCase();
-  return compact.replace(/\d+$/, "");
+function isKeySepCode(code) {
+  return code === 32 || code === 9 || code === 95 || code === 45;
 }
-var PERSON_KEY_IDS = new Set(PERSON_KEYS.map(normalizeKey));
-var ADDRESS_KEY_IDS = new Set(ADDRESS_KEYS.map(normalizeKey));
-function keyFieldCategory(key) {
-  const keyId = normalizeKey(key);
-  if (PERSON_KEY_IDS.has(keyId)) {
-    return ["person", AMBIGUOUS_KEYS.has(keyId)];
-  }
-  if (ADDRESS_KEY_IDS.has(keyId)) {
-    return ["address", AMBIGUOUS_KEYS.has(keyId)];
+function isAsciiDigitCode(code) {
+  return code >= 48 && code <= 57;
+}
+function matchKeyWords(words) {
+  for (const size of [3, 2, 1]) {
+    if (size <= words.length) {
+      const field = KEY_FIELDS.get(keyId(words.slice(words.length - size)));
+      if (field !== void 0) {
+        return field;
+      }
+    }
   }
   return null;
+}
+function payloadKeyWords(key) {
+  let start = key.length;
+  while (start > 0 && (isKeyWordCode(key.charCodeAt(start - 1)) || isKeySepCode(key.charCodeAt(start - 1)))) {
+    start -= 1;
+  }
+  let end = key.length;
+  while (end > start && isAsciiDigitCode(key.charCodeAt(end - 1))) {
+    end -= 1;
+  }
+  if (end < key.length && end > start && (key[end - 1] === "_" || key[end - 1] === "-")) {
+    end -= 1;
+  }
+  if (end === start || !isKeyWordCode(key.charCodeAt(end - 1))) {
+    return [];
+  }
+  const words = key.slice(start, end).split(/[ \t_-]+/).filter((word) => word.length > 0);
+  return words.slice(Math.max(0, words.length - KEY_MAX_WORDS));
+}
+function keyField(key) {
+  return matchKeyWords(payloadKeyWords(key));
 }
 var NAME_PARTICLES = /* @__PURE__ */ new Set([
   "van",
@@ -1123,77 +1165,204 @@ function looksLikeName(value) {
   }
   return false;
 }
-function caseFlexWord(word) {
-  const escaped = escapeRegExp(word);
-  const first = escaped.charAt(0);
-  return `[${first.toUpperCase()}${first.toLowerCase()}]${escaped.slice(1)}`;
+var NAME_WS_ONLY_RE = /^[ \t\n\r\v\f\u0085\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000]*$/u;
+function gateSpan(value) {
+  const stop = value.search(/[,;]/);
+  return stop === -1 ? value : value.slice(0, stop);
 }
-function keyAlternation(keys) {
-  return keys.map((key) => splitKeyWords(key).map(caseFlexWord).join("[\\s_-]*")).join("|");
+function fieldValueMasked(field, value) {
+  if (NAME_WS_ONLY_RE.test(value)) {
+    return false;
+  }
+  return !field.gated || looksLikeName(gateSpan(value));
 }
-var PERSON_KEY_RE = new RegExp(
-  `\\b(?<key>${keyAlternation(PERSON_KEYS)})\\d*"?[ \\t]*[:=][ \\t]*`,
-  "g"
-);
-var ADDRESS_KEY_RE = new RegExp(
-  `\\b(?<key>${keyAlternation(ADDRESS_KEYS)})\\d*"?[ \\t]*[:=][ \\t]*`,
-  "g"
-);
-function kvValueSpan(text, start) {
-  const n = text.length;
-  const startChar = text.charAt(start);
-  if (start < n && (startChar === '"' || startChar === "'")) {
-    const after = start + 1;
-    const close = text.indexOf(startChar, after);
-    const newline2 = text.indexOf("\n", after);
-    if (close === -1 || newline2 !== -1 && newline2 < close) {
-      return [after, newline2 === -1 ? n : newline2];
+function textKeyWords(text, end) {
+  let i = end;
+  while (i > 0 && (text[i - 1] === " " || text[i - 1] === "	")) {
+    i -= 1;
+  }
+  let quoted = false;
+  if (i > 0 && (text[i - 1] === '"' || text[i - 1] === "'")) {
+    quoted = true;
+    i -= 1;
+    if (i > 0 && text[i - 1] === "\\") {
+      i -= 1;
     }
-    return [after, close];
   }
-  const newline = text.indexOf("\n", start);
-  let end = newline === -1 ? n : newline;
-  while (end > start && (text.charAt(end - 1) === " " || text.charAt(end - 1) === "	")) {
-    end -= 1;
+  const digitsEnd = i;
+  while (i > 0 && isAsciiDigitCode(text.charCodeAt(i - 1))) {
+    i -= 1;
   }
-  while (end > start && ".,;:!?".includes(text.charAt(end - 1))) {
-    end -= 1;
+  if (i < digitsEnd && i > 0 && (text[i - 1] === "_" || text[i - 1] === "-")) {
+    i -= 1;
   }
-  while (end > start && (text.charAt(end - 1) === " " || text.charAt(end - 1) === "	")) {
-    end -= 1;
+  const words = [];
+  while (words.length < KEY_MAX_WORDS) {
+    const wordEnd = i;
+    while (i > 0 && isKeyWordCode(text.charCodeAt(i - 1))) {
+      i -= 1;
+    }
+    if (i === wordEnd) {
+      break;
+    }
+    words.push(text.slice(i, wordEnd));
+    let j = i;
+    while (j > 0 && isKeySepCode(text.charCodeAt(j - 1))) {
+      j -= 1;
+    }
+    if (j === i || j === 0 || !isKeyWordCode(text.charCodeAt(j - 1))) {
+      break;
+    }
+    i = j;
   }
-  return [start, end];
+  words.reverse();
+  return [words, quoted];
 }
-function scrubKeyValue(text, keyRe, placeholder, checkAmbiguous) {
-  const re = cloneRegExp(keyRe);
-  let count = 0;
-  let out = "";
-  let last = 0;
-  for (let m = re.exec(text); m !== null; m = re.exec(text)) {
-    const matchEnd = m.index + m[0].length;
-    const [innerStart, innerEnd] = kvValueSpan(text, matchEnd);
-    const value = text.slice(innerStart, innerEnd);
-    const keyText = m.groups?.key ?? "";
-    const ambiguous = checkAmbiguous && AMBIGUOUS_KEYS.has(normalizeKey(keyText));
-    if (value.length === 0 || ambiguous && !looksLikeName(value)) {
-      re.lastIndex = matchEnd;
+var UNQUOTED_LITERALS = /* @__PURE__ */ new Set(["null", "true", "false", "None", "True", "False"]);
+function findAny(text, pos, set) {
+  for (let i = pos; i < text.length; i += 1) {
+    if (set.includes(text[i])) {
+      return i;
+    }
+  }
+  return text.length;
+}
+function quotedValueEnd(text, start, quote) {
+  const n = text.length;
+  let p = start;
+  while (p < n) {
+    const c = text[p];
+    if (c === "\r" || c === "\n") {
+      return [p, false];
+    }
+    if (c === quote) {
+      return [p, true];
+    }
+    if (c === "\\" && p + 1 < n && text[p + 1] !== "\r" && text[p + 1] !== "\n") {
+      p += 2;
+    } else {
+      p += 1;
+    }
+  }
+  return [n, false];
+}
+function escapedQuotedValueEnd(text, start) {
+  const n = text.length;
+  let p = start;
+  while (p < n) {
+    const c = text[p];
+    if (c === "\r" || c === "\n") {
+      return [p, false];
+    }
+    if (c === "\\") {
+      let run = p;
+      while (run < n && text[run] === "\\") {
+        run += 1;
+      }
+      if (run < n && text[run] === '"' && (run - p) % 4 === 1) {
+        return [p, true];
+      }
+      p = run;
       continue;
     }
-    out += text.slice(last, innerStart) + placeholder;
-    last = innerEnd;
-    re.lastIndex = innerEnd;
-    count += 1;
+    p += 1;
+  }
+  return [n, false];
+}
+function trimBareValueEnd(text, start, end) {
+  let e = end;
+  while (e > start && (text[e - 1] === " " || text[e - 1] === "	")) {
+    e -= 1;
+  }
+  while (e > start && ".,;:!?".includes(text[e - 1])) {
+    e -= 1;
+  }
+  while (e > start && (text[e - 1] === " " || text[e - 1] === "	")) {
+    e -= 1;
+  }
+  return e;
+}
+function keyValueSpan(text, from, field, keyQuoted) {
+  const n = text.length;
+  let pos = from;
+  while (pos < n && (text[pos] === " " || text[pos] === "	")) {
+    pos += 1;
+  }
+  if (pos >= n) {
+    return [pos, pos, pos, false];
+  }
+  const c = text[pos];
+  if (c === "\\" && text[pos + 1] === '"') {
+    const start = pos + 2;
+    const [end2, closed] = escapedQuotedValueEnd(text, start);
+    return [start, end2, closed ? end2 + 2 : end2, fieldValueMasked(field, text.slice(start, end2))];
+  }
+  if (c === '"' || c === "'") {
+    const start = pos + 1;
+    const [end2, closed] = quotedValueEnd(text, start, c);
+    return [start, end2, closed ? end2 + 1 : end2, fieldValueMasked(field, text.slice(start, end2))];
+  }
+  if (c === "{" || c === "[" || c === "\r" || c === "\n") {
+    return [pos, pos, pos, false];
+  }
+  if (field.gated) {
+    const gateEnd = findAny(text, pos, keyQuoted ? ",;}]\r\n" : ",;\r\n");
+    if (!looksLikeName(text.slice(pos, gateEnd))) {
+      return [pos, gateEnd, gateEnd, false];
+    }
+  }
+  let end;
+  if (keyQuoted) {
+    end = findAny(text, pos, ",}]\r\n");
+    while (end > pos && (text[end - 1] === " " || text[end - 1] === "	")) {
+      end -= 1;
+    }
+  } else {
+    end = trimBareValueEnd(text, pos, findAny(text, pos, "\r\n"));
+  }
+  const masked = end > pos && !UNQUOTED_LITERALS.has(text.slice(pos, end));
+  return [pos, end, end, masked];
+}
+function scrubKeyValues(text, category, placeholder) {
+  const n = text.length;
+  const parts = [];
+  let count = 0;
+  let last = 0;
+  let pos = 0;
+  while (pos < n) {
+    const delim = findAny(text, pos, ":=");
+    if (delim === n) {
+      break;
+    }
+    pos = delim + 1;
+    const next = text[pos];
+    if (next === ":" || next === "=" || next === ">") {
+      continue;
+    }
+    const [words, keyQuoted] = textKeyWords(text, delim);
+    const field = words.length > 0 ? matchKeyWords(words) : null;
+    if (field === null) {
+      continue;
+    }
+    const [start, end, resume, masked] = keyValueSpan(text, pos, field, keyQuoted);
+    pos = Math.max(pos, resume);
+    if (masked && field.category === category) {
+      parts.push(text.slice(last, start), placeholder);
+      last = end;
+      count += 1;
+    }
   }
   if (count === 0) {
     return { text, count: 0 };
   }
-  return { text: out + text.slice(last), count };
+  parts.push(text.slice(last));
+  return { text: parts.join(""), count };
 }
 function scrubKeyValuePerson(text) {
-  return scrubKeyValue(text, PERSON_KEY_RE, "[PERSON]", true);
+  return scrubKeyValues(text, "person", "[PERSON]");
 }
 function scrubKeyValueAddress(text) {
-  return scrubKeyValue(text, ADDRESS_KEY_RE, "[ADDRESS]", true);
+  return scrubKeyValues(text, "address", "[ADDRESS]");
 }
 var keyValuePersonDetector = {
   type: "person",
@@ -1416,15 +1585,12 @@ function scrubWalk(value, counts, depth, languages) {
         out[key] = item;
         continue;
       }
-      if (typeof item === "string" && item.length > 0) {
-        const field = keyFieldCategory(key);
-        if (field !== null) {
-          const [category, ambiguous] = field;
-          if (!ambiguous || looksLikeName(item)) {
-            counts[category] += 1;
-            out[key] = `[${category.toUpperCase()}]`;
-            continue;
-          }
+      if (typeof item === "string") {
+        const field = keyField(key);
+        if (field !== null && fieldValueMasked(field, item)) {
+          counts[field.category] += 1;
+          out[key] = `[${field.category.toUpperCase()}]`;
+          continue;
         }
       }
       out[key] = scrubWalk(item, counts, depth + 1, languages);

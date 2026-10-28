@@ -242,3 +242,30 @@ def test_name_gate_needs_an_uppercase_letter() -> None:
         "c": {"name": "[PERSON]"},
     }
     assert result["counts"]["person"] == 1
+
+
+def test_payload_keys_match_like_text_keys() -> None:
+    """A dict key is read the same way as a key in text: case, separators,
+    a ``_1``-style suffix and a prefix word (``Customer Name``) all match;
+    a camelCase compound and non-ASCII digits or format characters do not."""
+    payload = {
+        "Customer Name": "Jan Jansen",
+        "customer_name": "Jan Jansen",
+        "customerName": "Jan Jansen",
+        "LAST_NAME": "Grabbe",
+        "last_name_1": "Grabbe",
+        "zip٣": "33613",
+        "zip\x1c": "33613",
+        "zip﻿": "33613",
+    }
+    result = scrub_payload(payload, languages=["en"])
+    assert result["payload"] == {
+        "Customer Name": "[PERSON]",
+        "customer_name": "[PERSON]",
+        "customerName": "Jan Jansen",
+        "LAST_NAME": "[PERSON]",
+        "last_name_1": "[PERSON]",
+        "zip٣": "33613",
+        "zip\x1c": "33613",
+        "zip﻿": "33613",
+    }

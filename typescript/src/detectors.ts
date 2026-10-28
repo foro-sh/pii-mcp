@@ -119,29 +119,48 @@
  *   unicode dashes between groups.
  * - BSN spaced/dotted/hyphenated ``111-222-333`` groups.
  * - Key-aware masking (``person``, ``address``; issue #52): a value that sits
- *   right after a recognized field name is masked whole, with no format
- *   check — most names and address parts in tool output
- *   (``"last_name": "Grabbe"``, ``Nachname: Eckerlin``, ``PLZ: 33613``) give
- *   pattern detectors nothing else to key off. Runs on ``key: value``,
- *   ``key=value`` and ``"key": "value"`` on one line; a key normalizes case,
- *   ``_``/``-``/space separators, and a trailing numeric suffix
- *   (``LastName1``, ``lastName2``) before an exact match against the EN/NL/DE
- *   field-name list (``name``/``vorname``/``naam``,
- *   ``street``/``straße``/``straat``, ``postcode``/``plz``/``zip``,
- *   ``city``/``stadt``/``plaats``, …) — a compound key such as
- *   ``city_count`` or ``street_view`` normalizes to something else entirely
- *   and is left alone. The value runs to the matching closing quote or,
- *   unquoted, to the end of the line (trailing sentence punctuation stays
- *   outside the mask; a comma does not end it, so
- *   ``Straat: Kerkstraat, 12`` stays one value — see ``kvValueSpan``).
- *   There is no bare ``state`` key: in tool output it is a job/resource
- *   status (``State: Running``, ``"state": "ACTIVE"``) far more often than a
- *   US state, and those statuses pass any capitalization gate;
- *   ``bundesland`` / ``provincie`` stay. ``name`` is ambiguous
- *   (``name: "build-cache"``) and is gated: the value must look like one or more
- *   capitalized words (Dutch/German particles — ``van``, ``der``, ``von``,
- *   … — stay lowercase). ``scrubPayloadJs`` applies the same dictionary
- *   structurally, by object key, in ``scrubWalk``.
+ *   right after a recognized field name is masked whole, with no format check —
+ *   most names and address parts in tool output (``"last_name": "Grabbe"``,
+ *   ``Nachname: Eckerlin``, ``PLZ: 33613``) give pattern detectors nothing else
+ *   to key off. The field names are an EN/NL/DE list (``name``/``vorname``/
+ *   ``naam``, ``street``/``straße``/``straat``, ``postcode``/``plz``/``zip``,
+ *   ``city``/``stadt``/``plaats``, …).
+ *
+ *   Keys. The text pass looks at each ``:`` or ``=`` (not ``::``, ``==``,
+ *   ``=>``, ``:=``) and reads up to four words before it, skipping spaces and
+ *   tabs, one closing quote (``"``, ``'`` or ``\"``) and a numeric suffix
+ *   (``LastName1``, ``last_name_1``). A word is a run of ASCII letters and
+ *   digits or non-ASCII characters; words are separated by space, tab, ``_``
+ *   or ``-``, and any other ASCII character starts the key. The longest suffix
+ *   of up to three words, joined and lowercased (ASCII plus ``Ä``/``Ö``/``Ü``/
+ *   ``ẞ``), must equal a field name, so ``first_name``, ``First Name``,
+ *   ``FIRST-NAME`` and ``firstName`` all match, and a word in front of the
+ *   field name (``Customer Name``, ``billing_address``) does not stop it. A
+ *   compound without a separator (``username``, ``customerName``,
+ *   ``city_count``, ``street_view``) is a different key and is left alone.
+ *   ``scrubPayloadJs`` reads object keys the same way.
+ *
+ *   Values. A quoted value (``"…"``, ``'…'``, ``\"…\"`` in JSON encoded
+ *   twice) runs to the first matching quote that is not escaped, or to the
+ *   end of the line. An unquoted value after a quoted key (JSON or a Python
+ *   dict repr) ends at ``,``, ``}`` or ``]``; ``null``/``true``/``false``
+ *   (``None``/``True``/``False``) are never masked, and a value starting with
+ *   ``{`` or ``[`` is nested structure the text pass does not mask whole. An
+ *   unquoted value after a bare key (``Adresse: Kerkstraat 12, 3511 AB
+ *   Utrecht``) runs to the end of the line (``\r`` or ``\n``), with trailing
+ *   sentence punctuation left outside; so a line holding several bare pairs
+ *   (``first_name=Jan last_name=Jansen``) is masked as one value.
+ *
+ *   ``name`` (resource/build names, ``name: "build-cache"``) is ambiguous and
+ *   gated: the part of the value before the first ``,`` or ``;`` must look like
+ *   one or more capitalized words (Dutch/German particles — ``van``, ``der``,
+ *   ``von``, … — stay lowercase), so ``name: build-cache, owner: Ops`` stays
+ *   clean. There is no bare ``state`` key: in tool output it is a job/resource
+ *   status far more often than a US state (``State: Running``,
+ *   ``"state": "ACTIVE"``), and those Title Case / all-caps statuses pass any
+ *   capitalization gate; the regional ``bundesland`` / ``provincie`` keys stay.
+ *   Every candidate resumes the scan at or past the text it read, so the pass
+ *   is linear in the input.
  *
  * ``UNIVERSAL_DETECTORS`` (key-aware person/address, email, IBAN, credit
  * card, BIC, MAC, IMEI, IP, location) always run; locale detectors are
@@ -1541,18 +1560,15 @@ export const nlLicensePlateDetector: Detector = {
   scrub: scrubNlLicensePlate,
 };
 
-// --- Key-aware masking (person / address; issue #52) ------------------------
-//
-// EN/NL/DE field names collected from tool-output samples where pattern
-// detectors have nothing to key off (a lone ``"Grabbe"`` or ``"33613"``).
-// Canonical keys use a space to mark a word break; ``keyAlternation`` turns
-// that into a separator class so ``first_name`` / ``First Name`` /
-// ``firstname`` all match the same entry.
 const PERSON_KEYS: readonly string[] = [
   "name",
-  "first_name",
+  "first name",
   "given name",
-  "last_name",
+  "last name",
+  "surname",
+  "full name",
+  "family name",
+  "familienname",
   "vorname",
   "nachname",
   "voornaam",
@@ -1569,11 +1585,14 @@ const ADDRESS_KEYS: readonly string[] = [
   "adresse",
   "adres",
   "building number",
+  "house number",
   "huisnummer",
+  "hausnummer",
   "gebäude",
   "gebaeude",
   "postcode",
   "postal code",
+  "zip code",
   "postleitzahl",
   "plz",
   "zip",
@@ -1581,48 +1600,108 @@ const ADDRESS_KEYS: readonly string[] = [
   "stadt",
   "stad",
   "plaats",
+  "woonplaats",
   "ort",
+  "wohnort",
   "bundesland",
   "provincie",
 ];
 const AMBIGUOUS_KEYS = new Set(["name"]);
+const KEY_MAX_WORDS = 4;
+const KEY_LOWER: Readonly<Record<string, string>> = { Ä: "ä", Ö: "ö", Ü: "ü", ẞ: "ß" };
 
-function splitKeyWords(key: string): string[] {
-  return key.split(/[\s_-]+/).filter((word) => word.length > 0);
+/**
+ * A recognized field name: the category its value is masked as, and whether
+ * the value must pass ``looksLikeName`` first (bare ``name``).
+ */
+export interface KeyField {
+  readonly category: "person" | "address";
+  readonly gated: boolean;
 }
 
-function escapeRegExp(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+function keyId(words: readonly string[]): string {
+  return words.join("").replace(/[A-ZÄÖÜẞ]/g, (c) => KEY_LOWER[c] ?? c.toLowerCase());
+}
+
+const KEY_FIELDS: ReadonlyMap<string, KeyField> = new Map<string, KeyField>([
+  ...ADDRESS_KEYS.map(
+    (key): [string, KeyField] => [keyId(key.split(" ")), { category: "address", gated: false }],
+  ),
+  ...PERSON_KEYS.map((key): [string, KeyField] => {
+    const id = keyId(key.split(" "));
+    return [id, { category: "person", gated: AMBIGUOUS_KEYS.has(id) }];
+  }),
+]);
+
+function isKeyWordCode(code: number): boolean {
+  return (
+    code >= 0x80 ||
+    (code >= 0x30 && code <= 0x39) ||
+    (code >= 0x41 && code <= 0x5a) ||
+    (code >= 0x61 && code <= 0x7a)
+  );
+}
+
+function isKeySepCode(code: number): boolean {
+  return code === 0x20 || code === 0x09 || code === 0x5f || code === 0x2d;
+}
+
+function isAsciiDigitCode(code: number): boolean {
+  return code >= 0x30 && code <= 0x39;
 }
 
 /**
- * Case/separator-insensitive key id: drop ``_``/``-``/space separators,
- * lowercase, then drop a trailing numeric suffix (``LastName1`` ->
- * ``lastname``). Used for an exact match so a compound key (``city_count``,
- * ``street_view``, ``username``) never collides with a bare one.
+ * Field for the longest recognized suffix of ``words`` (up to three), so
+ * ``Customer First Name`` is ``first name`` and ``Customer Name`` is
+ * ``name``. Both passes build ``words`` the same way (see
+ * ``payloadKeyWords`` and ``textKeyWords``).
  */
-export function normalizeKey(key: string): string {
-  const compact = key.replace(/[\s_-]+/g, "").toLowerCase();
-  return compact.replace(/\d+$/, "");
-}
-
-const PERSON_KEY_IDS = new Set(PERSON_KEYS.map(normalizeKey));
-const ADDRESS_KEY_IDS = new Set(ADDRESS_KEYS.map(normalizeKey));
-
-/**
- * ``[category, ambiguous]`` for a recognized person/address field name,
- * ``null`` otherwise. ``ambiguous`` marks a key (``name``) whose
- * value needs ``looksLikeName`` before it is masked.
- */
-export function keyFieldCategory(key: string): ["person" | "address", boolean] | null {
-  const keyId = normalizeKey(key);
-  if (PERSON_KEY_IDS.has(keyId)) {
-    return ["person", AMBIGUOUS_KEYS.has(keyId)];
-  }
-  if (ADDRESS_KEY_IDS.has(keyId)) {
-    return ["address", AMBIGUOUS_KEYS.has(keyId)];
+function matchKeyWords(words: readonly string[]): KeyField | null {
+  for (const size of [3, 2, 1]) {
+    if (size <= words.length) {
+      const field = KEY_FIELDS.get(keyId(words.slice(words.length - size)));
+      if (field !== undefined) {
+        return field;
+      }
+    }
   }
   return null;
+}
+
+function payloadKeyWords(key: string): string[] {
+  let start = key.length;
+  while (
+    start > 0 &&
+    (isKeyWordCode(key.charCodeAt(start - 1)) || isKeySepCode(key.charCodeAt(start - 1)))
+  ) {
+    start -= 1;
+  }
+  let end = key.length;
+  while (end > start && isAsciiDigitCode(key.charCodeAt(end - 1))) {
+    end -= 1;
+  }
+  if (end < key.length && end > start && (key[end - 1] === "_" || key[end - 1] === "-")) {
+    end -= 1;
+  }
+  if (end === start || !isKeyWordCode(key.charCodeAt(end - 1))) {
+    return [];
+  }
+  const words = key
+    .slice(start, end)
+    .split(/[ \t_-]+/)
+    .filter((word) => word.length > 0);
+  return words.slice(Math.max(0, words.length - KEY_MAX_WORDS));
+}
+
+/**
+ * The recognized person/address field an object key names, or ``null``.
+ *
+ * Used by ``scrubPayloadJs``'s walk; the text pass reads the same words off
+ * the text before a ``:``/``=`` and applies the same match, so
+ * ``{"Customer Name": …}`` and ``Customer Name: …`` agree.
+ */
+export function keyField(key: string): KeyField | null {
+  return matchKeyWords(payloadKeyWords(key));
 }
 
 const NAME_PARTICLES = new Set([
@@ -1672,119 +1751,260 @@ export function looksLikeName(value: string): boolean {
   return false;
 }
 
-/**
- * ``word`` with its first letter as an upper/lower class, rest literal
- * lowercase: matches snake_case, PascalCase/camelCase and Title Case without
- * a case-insensitive flag, which the Python backend measured at 3x slower in
- * practice (full Unicode case folding on every alternative, at every word
- * boundary in the input) for a feature that only needs ASCII first-letter
- * case. Screaming-case keys (``NAME:``) are not matched — an accepted trade
- * kept identical across backends.
- */
-function caseFlexWord(word: string): string {
-  const escaped = escapeRegExp(word);
-  const first = escaped.charAt(0);
-  return `[${first.toUpperCase()}${first.toLowerCase()}]${escaped.slice(1)}`;
+const NAME_WS_ONLY_RE =
+  /^[ \t\n\r\v\f\u0085\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000]*$/u;
+
+function gateSpan(value: string): string {
+  const stop = value.search(/[,;]/);
+  return stop === -1 ? value : value.slice(0, stop);
 }
 
-function keyAlternation(keys: readonly string[]): string {
-  return keys
-    .map((key) => splitKeyWords(key).map(caseFlexWord).join("[\\s_-]*"))
-    .join("|");
+/**
+ * Whether a string value under ``field`` is masked: it must hold something
+ * besides ``White_Space`` and, for the gated ``name`` key, pass
+ * ``looksLikeName`` on its first ``,``/``;``-separated part
+ * (``name: build-cache, owner: Ops`` stays clean). Shared by the text pass
+ * (quoted values) and ``scrubPayloadJs``.
+ */
+export function fieldValueMasked(field: KeyField, value: string): boolean {
+  if (NAME_WS_ONLY_RE.test(value)) {
+    return false;
+  }
+  return !field.gated || looksLikeName(gateSpan(value));
 }
 
-const PERSON_KEY_RE = new RegExp(
-  `\\b(?<key>${keyAlternation(PERSON_KEYS)})\\d*"?[ \\t]*[:=][ \\t]*`,
-  "g",
-);
-const ADDRESS_KEY_RE = new RegExp(
-  `\\b(?<key>${keyAlternation(ADDRESS_KEYS)})\\d*"?[ \\t]*[:=][ \\t]*`,
-  "g",
-);
-
 /**
- * Value span right after a matched ``key:``/``key=``: to the matching
- * closing quote, or, unquoted, up to the end of the line (trailing
- * spaces/tabs and one run of trailing sentence punctuation trimmed, so
- * ``adres: Hoofdstraat 12.`` keeps the ``.`` outside the mask). Nothing short
- * of a newline ends an unquoted value — not a comma, not a space — because
- * ``Straat: Kerkstraat, 12`` must stay one value for the existing street +
- * house-number masking to keep seeing it whole; so a single line holding
- * more than one bare ``key: value``/``key=value`` pair, comma- or
- * space-separated (``a: 1, b: 2``, ``first_name=Jan last_name=Jansen``),
- * over-masks past the first one. Quoted values do not have this gap.
- *
- * The key text itself is left in place (only the value is replaced), so a
- * later detector still scans it: a key glued with no separator before its
- * digit suffix (``LastName2``) can coincidentally match the loose NL
- * passport shape and get labeled ``[PASSPORT]``. Running first, so this
- * detector claims the value before anything else can, is safer than the
- * alternative (running last risks a coincidental key match hiding the
- * value from this detector entirely, leaking it).
+ * Up to ``KEY_MAX_WORDS`` key words right before a ``:``/``=`` at ``end``,
+ * and whether the key was quoted (``"key":``, ``'key':``, ``\"key\":``).
  */
-function kvValueSpan(text: string, start: number): [number, number] {
-  const n = text.length;
-  const startChar = text.charAt(start);
-  if (start < n && (startChar === '"' || startChar === "'")) {
-    const after = start + 1;
-    const close = text.indexOf(startChar, after);
-    const newline = text.indexOf("\n", after);
-    if (close === -1 || (newline !== -1 && newline < close)) {
-      return [after, newline === -1 ? n : newline];
+function textKeyWords(text: string, end: number): [string[], boolean] {
+  let i = end;
+  while (i > 0 && (text[i - 1] === " " || text[i - 1] === "\t")) {
+    i -= 1;
+  }
+  let quoted = false;
+  if (i > 0 && (text[i - 1] === '"' || text[i - 1] === "'")) {
+    quoted = true;
+    i -= 1;
+    if (i > 0 && text[i - 1] === "\\") {
+      i -= 1;
     }
-    return [after, close];
   }
-  const newline = text.indexOf("\n", start);
-  let end = newline === -1 ? n : newline;
-  while (end > start && (text.charAt(end - 1) === " " || text.charAt(end - 1) === "\t")) {
-    end -= 1;
+  const digitsEnd = i;
+  while (i > 0 && isAsciiDigitCode(text.charCodeAt(i - 1))) {
+    i -= 1;
   }
-  while (end > start && ".,;:!?".includes(text.charAt(end - 1))) {
-    end -= 1;
+  if (i < digitsEnd && i > 0 && (text[i - 1] === "_" || text[i - 1] === "-")) {
+    i -= 1;
   }
-  while (end > start && (text.charAt(end - 1) === " " || text.charAt(end - 1) === "\t")) {
-    end -= 1;
+  const words: string[] = [];
+  while (words.length < KEY_MAX_WORDS) {
+    const wordEnd = i;
+    while (i > 0 && isKeyWordCode(text.charCodeAt(i - 1))) {
+      i -= 1;
+    }
+    if (i === wordEnd) {
+      break;
+    }
+    words.push(text.slice(i, wordEnd));
+    let j = i;
+    while (j > 0 && isKeySepCode(text.charCodeAt(j - 1))) {
+      j -= 1;
+    }
+    if (j === i || j === 0 || !isKeyWordCode(text.charCodeAt(j - 1))) {
+      break;
+    }
+    i = j;
   }
-  return [start, end];
+  words.reverse();
+  return [words, quoted];
 }
 
-function scrubKeyValue(
-  text: string,
-  keyRe: RegExp,
-  placeholder: string,
-  checkAmbiguous: boolean,
-): { text: string; count: number } {
-  const re = cloneRegExp(keyRe);
-  let count = 0;
-  let out = "";
-  let last = 0;
-  for (let m = re.exec(text); m !== null; m = re.exec(text)) {
-    const matchEnd = m.index + m[0].length;
-    const [innerStart, innerEnd] = kvValueSpan(text, matchEnd);
-    const value = text.slice(innerStart, innerEnd);
-    const keyText = m.groups?.key ?? "";
-    const ambiguous = checkAmbiguous && AMBIGUOUS_KEYS.has(normalizeKey(keyText));
-    if (value.length === 0 || (ambiguous && !looksLikeName(value))) {
-      re.lastIndex = matchEnd;
+const UNQUOTED_LITERALS = new Set(["null", "true", "false", "None", "True", "False"]);
+
+function findAny(text: string, pos: number, set: string): number {
+  for (let i = pos; i < text.length; i += 1) {
+    if (set.includes(text[i] as string)) {
+      return i;
+    }
+  }
+  return text.length;
+}
+
+/**
+ * End of a ``"…"``/``'…'`` value: the first quote not escaped by an odd run
+ * of backslashes, or the line end when it is unterminated.
+ */
+function quotedValueEnd(text: string, start: number, quote: string): [number, boolean] {
+  const n = text.length;
+  let p = start;
+  while (p < n) {
+    const c = text[p];
+    if (c === "\r" || c === "\n") {
+      return [p, false];
+    }
+    if (c === quote) {
+      return [p, true];
+    }
+    if (c === "\\" && p + 1 < n && text[p + 1] !== "\r" && text[p + 1] !== "\n") {
+      p += 2;
+    } else {
+      p += 1;
+    }
+  }
+  return [n, false];
+}
+
+/**
+ * End of a ``\"…\"`` value (JSON encoded twice): the closing ``\"`` is a
+ * backslash run of length 1 mod 4 before ``"`` (``\\\"`` is a literal quote
+ * inside it).
+ */
+function escapedQuotedValueEnd(text: string, start: number): [number, boolean] {
+  const n = text.length;
+  let p = start;
+  while (p < n) {
+    const c = text[p];
+    if (c === "\r" || c === "\n") {
+      return [p, false];
+    }
+    if (c === "\\") {
+      let run = p;
+      while (run < n && text[run] === "\\") {
+        run += 1;
+      }
+      if (run < n && text[run] === '"' && (run - p) % 4 === 1) {
+        return [p, true];
+      }
+      p = run;
       continue;
     }
-    out += text.slice(last, innerStart) + placeholder;
-    last = innerEnd;
-    re.lastIndex = innerEnd;
-    count += 1;
+    p += 1;
+  }
+  return [n, false];
+}
+
+function trimBareValueEnd(text: string, start: number, end: number): number {
+  let e = end;
+  while (e > start && (text[e - 1] === " " || text[e - 1] === "\t")) {
+    e -= 1;
+  }
+  while (e > start && ".,;:!?".includes(text[e - 1] as string)) {
+    e -= 1;
+  }
+  while (e > start && (text[e - 1] === " " || text[e - 1] === "\t")) {
+    e -= 1;
+  }
+  return e;
+}
+
+/**
+ * ``[start, end, resume, masked]`` for the value after a key's ``:``/``=``.
+ *
+ * Every branch resumes at or past what it scanned, so the pass stays linear:
+ * a rejected bare ``name`` value resumes at the end of its gate span
+ * (``name: build-cache, city: Utrecht`` still reaches ``city``), anything
+ * else after its value.
+ */
+function keyValueSpan(
+  text: string,
+  from: number,
+  field: KeyField,
+  keyQuoted: boolean,
+): [number, number, number, boolean] {
+  const n = text.length;
+  let pos = from;
+  while (pos < n && (text[pos] === " " || text[pos] === "\t")) {
+    pos += 1;
+  }
+  if (pos >= n) {
+    return [pos, pos, pos, false];
+  }
+  const c = text[pos] as string;
+  if (c === "\\" && text[pos + 1] === '"') {
+    const start = pos + 2;
+    const [end, closed] = escapedQuotedValueEnd(text, start);
+    return [start, end, closed ? end + 2 : end, fieldValueMasked(field, text.slice(start, end))];
+  }
+  if (c === '"' || c === "'") {
+    const start = pos + 1;
+    const [end, closed] = quotedValueEnd(text, start, c);
+    return [start, end, closed ? end + 1 : end, fieldValueMasked(field, text.slice(start, end))];
+  }
+  if (c === "{" || c === "[" || c === "\r" || c === "\n") {
+    return [pos, pos, pos, false];
+  }
+  if (field.gated) {
+    const gateEnd = findAny(text, pos, keyQuoted ? ",;}]\r\n" : ",;\r\n");
+    if (!looksLikeName(text.slice(pos, gateEnd))) {
+      return [pos, gateEnd, gateEnd, false];
+    }
+  }
+  let end: number;
+  if (keyQuoted) {
+    end = findAny(text, pos, ",}]\r\n");
+    while (end > pos && (text[end - 1] === " " || text[end - 1] === "\t")) {
+      end -= 1;
+    }
+  } else {
+    end = trimBareValueEnd(text, pos, findAny(text, pos, "\r\n"));
+  }
+  const masked = end > pos && !UNQUOTED_LITERALS.has(text.slice(pos, end));
+  return [pos, end, end, masked];
+}
+
+/**
+ * Mask every value of ``category`` that follows a recognized field name.
+ *
+ * Both passes (person, address) walk the same key/value structure and resume
+ * at the same places; each only replaces its own category.
+ */
+function scrubKeyValues(
+  text: string,
+  category: "person" | "address",
+  placeholder: string,
+): { text: string; count: number } {
+  const n = text.length;
+  const parts: string[] = [];
+  let count = 0;
+  let last = 0;
+  let pos = 0;
+  while (pos < n) {
+    const delim = findAny(text, pos, ":=");
+    if (delim === n) {
+      break;
+    }
+    pos = delim + 1;
+    const next = text[pos];
+    if (next === ":" || next === "=" || next === ">") {
+      continue;
+    }
+    const [words, keyQuoted] = textKeyWords(text, delim);
+    const field = words.length > 0 ? matchKeyWords(words) : null;
+    if (field === null) {
+      continue;
+    }
+    const [start, end, resume, masked] = keyValueSpan(text, pos, field, keyQuoted);
+    pos = Math.max(pos, resume);
+    if (masked && field.category === category) {
+      parts.push(text.slice(last, start), placeholder);
+      last = end;
+      count += 1;
+    }
   }
   if (count === 0) {
     return { text, count: 0 };
   }
-  return { text: out + text.slice(last), count };
+  parts.push(text.slice(last));
+  return { text: parts.join(""), count };
 }
 
 function scrubKeyValuePerson(text: string): { text: string; count: number } {
-  return scrubKeyValue(text, PERSON_KEY_RE, "[PERSON]", true);
+  return scrubKeyValues(text, "person", "[PERSON]");
 }
 
 function scrubKeyValueAddress(text: string): { text: string; count: number } {
-  return scrubKeyValue(text, ADDRESS_KEY_RE, "[ADDRESS]", true);
+  return scrubKeyValues(text, "address", "[ADDRESS]");
 }
 
 export const keyValuePersonDetector: Detector = {

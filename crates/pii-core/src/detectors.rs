@@ -22,18 +22,49 @@
 //! document type, optional MRZ check digit (weights 7-3-1, `A`=10 .. `Z`=35,
 //! mod 10) validated when present. See `checksum::de_passport_valid`. A hit
 //! next to `-` or before `=` is left alone, same guard as NINO.
-//! Key-aware masking (`person`, `address`; issue #52): a value right after a
-//! recognized EN/NL/DE field name (`name`/`vorname`/`naam`,
-//! `street`/`straße`/`straat`, `postcode`/`plz`/`zip`, `city`/`stadt`/
-//! `plaats`, …) is masked whole, with no format check. A key normalizes
-//! case, `_`/`-`/space separators and a trailing numeric suffix
-//! (`LastName1`) before an exact match, so a compound key (`city_count`,
-//! `street_view`, `username`) is left alone. `name` is ambiguous
-//! (`name: "build-cache"`) and is gated on the value looking like one or more
-//! capitalized words. See `scrub_key_value`. There is no bare `state` key: in
-//! tool output it is a job/resource status (`State: Running`,
-//! `"state": "ACTIVE"`) far more often than a US state, and those statuses
-//! pass any capitalization gate; `bundesland` / `provincie` stay.
+//! Key-aware masking (`person`, `address`; issue #52): a value that sits
+//! right after a recognized field name is masked whole, with no format check —
+//! most names and address parts in tool output (`"last_name": "Grabbe"`,
+//! `Nachname: Eckerlin`, `PLZ: 33613`) give pattern detectors nothing else
+//! to key off. The field names are an EN/NL/DE list (`name`/`vorname`/
+//! `naam`, `street`/`straße`/`straat`, `postcode`/`plz`/`zip`,
+//! `city`/`stadt`/`plaats`, …).
+//!
+//! Keys. The text pass looks at each `:` or `=` (not `::`, `==`,
+//! `=>`, `:=`) and reads up to four words before it, skipping spaces and
+//! tabs, one closing quote (`"`, `'` or `\"`) and a numeric suffix
+//! (`LastName1`, `last_name_1`). A word is a run of ASCII letters and
+//! digits or non-ASCII characters; words are separated by space, tab, `_`
+//! or `-`, and any other ASCII character starts the key. The longest suffix
+//! of up to three words, joined and lowercased (ASCII plus `Ä`/`Ö`/`Ü`/
+//! `ẞ`), must equal a field name, so `first_name`, `First Name`,
+//! `FIRST-NAME` and `firstName` all match, and a word in front of the
+//! field name (`Customer Name`, `billing_address`) does not stop it. A
+//! compound without a separator (`username`, `customerName`,
+//! `city_count`, `street_view`) is a different key and is left alone.
+//! `scrub_payload` reads dict keys the same way.
+//!
+//! Values. A quoted value (`"…"`, `'…'`, `\"…\"` in JSON encoded
+//! twice) runs to the first matching quote that is not escaped, or to the
+//! end of the line. An unquoted value after a quoted key (JSON or a Python
+//! dict repr) ends at `,`, `}` or `]`; `null`/`true`/`false`
+//! (`None`/`True`/`False`) are never masked, and a value starting with
+//! `{` or `[` is nested structure the text pass does not mask whole. An
+//! unquoted value after a bare key (`Adresse: Kerkstraat 12, 3511 AB
+//! Utrecht`) runs to the end of the line (`\r` or `\n`), with trailing
+//! sentence punctuation left outside; so a line holding several bare pairs
+//! (`first_name=Jan last_name=Jansen`) is masked as one value.
+//!
+//! `name` (resource/build names, `name: "build-cache"`) is ambiguous and
+//! gated: the part of the value before the first `,` or `;` must look like
+//! one or more capitalized words (Dutch/German particles — `van`, `der`,
+//! `von`, … — stay lowercase), so `name: build-cache, owner: Ops` stays
+//! clean. There is no bare `state` key: in tool output it is a job/resource
+//! status far more often than a US state (`State: Running`,
+//! `"state": "ACTIVE"`), and those Title Case / all-caps statuses pass any
+//! capitalization gate; the regional `bundesland` / `provincie` keys stay.
+//! Every candidate resumes the scan at or past the text it read, so the pass
+//! is linear in the input.
 
 use crate::checksum::{
     bsn_valid_grouped, de_passport_valid, iban_valid, imei_valid, is_group_sep,
@@ -41,6 +72,7 @@ use crate::checksum::{
     ssn_valid_grouped, tax_id_valid_grouped, uk_postcode_valid, GROUP_DASHES, GROUP_SPACES,
 };
 use regex::Regex;
+use std::collections::HashMap;
 use std::sync::OnceLock;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -2135,18 +2167,15 @@ fn scrub_nl_license_plate(text: &str) -> (Option<String>, u32) {
     )
 }
 
-// --- Key-aware masking (person / address; issue #52) ------------------------
-//
-// EN/NL/DE field names collected from tool-output samples where pattern
-// detectors have nothing to key off (a lone `"Grabbe"` or `"33613"`).
-// Canonical keys use a space to mark a word break; `key_alternation` turns
-// that into a separator class so `first_name` / `First Name` / `firstname`
-// all match the same entry.
 const PERSON_KEYS: &[&str] = &[
     "name",
-    "first_name",
+    "first name",
     "given name",
-    "last_name",
+    "last name",
+    "surname",
+    "full name",
+    "family name",
+    "familienname",
     "vorname",
     "nachname",
     "voornaam",
@@ -2163,11 +2192,14 @@ const ADDRESS_KEYS: &[&str] = &[
     "adresse",
     "adres",
     "building number",
+    "house number",
     "huisnummer",
+    "hausnummer",
     "gebäude",
     "gebaeude",
     "postcode",
     "postal code",
+    "zip code",
     "postleitzahl",
     "plz",
     "zip",
@@ -2175,55 +2207,122 @@ const ADDRESS_KEYS: &[&str] = &[
     "stadt",
     "stad",
     "plaats",
+    "woonplaats",
     "ort",
+    "wohnort",
     "bundesland",
     "provincie",
 ];
 const AMBIGUOUS_KEYS: &[&str] = &["name"];
+const KEY_MAX_WORDS: usize = 4;
 
-fn split_key_words(key: &str) -> Vec<&str> {
-    key.split(|c: char| c.is_whitespace() || c == '_' || c == '-')
-        .filter(|w| !w.is_empty())
+/// A recognized field name: the category its value is masked as, and
+/// whether the value must pass `looks_like_name` first (bare `name`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct KeyField {
+    pub category: PiiCategory,
+    pub gated: bool,
+}
+
+fn key_lower(c: char) -> char {
+    match c {
+        'A'..='Z' => c.to_ascii_lowercase(),
+        'Ä' => 'ä',
+        'Ö' => 'ö',
+        'Ü' => 'ü',
+        'ẞ' => 'ß',
+        _ => c,
+    }
+}
+
+fn key_id(words: &[&str]) -> String {
+    words
+        .iter()
+        .flat_map(|w| w.chars())
+        .map(key_lower)
         .collect()
 }
 
-/// Case/separator-insensitive key id: drop `_`/`-`/space separators,
-/// lowercase, then drop a trailing numeric suffix (`LastName1` ->
-/// `lastname`). Used for an exact match so a compound key (`city_count`,
-/// `street_view`, `username`) never collides with a bare one.
-pub fn normalize_key(key: &str) -> String {
-    let compact: String = key
-        .chars()
-        .filter(|c| !(c.is_whitespace() || *c == '_' || *c == '-'))
-        .collect::<String>()
-        .to_lowercase();
-    compact
-        .trim_end_matches(|c: char| c.is_ascii_digit())
-        .to_string()
+fn key_fields() -> &'static HashMap<String, KeyField> {
+    static FIELDS: OnceLock<HashMap<String, KeyField>> = OnceLock::new();
+    FIELDS.get_or_init(|| {
+        let mut map = HashMap::new();
+        for key in ADDRESS_KEYS {
+            let words: Vec<&str> = key.split(' ').collect();
+            let field = KeyField {
+                category: PiiCategory::Address,
+                gated: false,
+            };
+            map.insert(key_id(&words), field);
+        }
+        for key in PERSON_KEYS {
+            let words: Vec<&str> = key.split(' ').collect();
+            let id = key_id(&words);
+            let field = KeyField {
+                category: PiiCategory::Person,
+                gated: AMBIGUOUS_KEYS.contains(&id.as_str()),
+            };
+            map.insert(id, field);
+        }
+        map
+    })
 }
 
-fn person_key_ids() -> &'static [String] {
-    static IDS: OnceLock<Vec<String>> = OnceLock::new();
-    IDS.get_or_init(|| PERSON_KEYS.iter().map(|k| normalize_key(k)).collect())
+fn is_key_word_byte(b: u8) -> bool {
+    b >= 0x80 || b.is_ascii_alphanumeric()
 }
 
-fn address_key_ids() -> &'static [String] {
-    static IDS: OnceLock<Vec<String>> = OnceLock::new();
-    IDS.get_or_init(|| ADDRESS_KEYS.iter().map(|k| normalize_key(k)).collect())
+fn is_key_sep_byte(b: u8) -> bool {
+    matches!(b, b' ' | b'\t' | b'_' | b'-')
 }
 
-/// `(category, ambiguous)` for a recognized person/address field name,
-/// `None` otherwise. `ambiguous` marks a key (`name`) whose value
-/// needs `looks_like_name` before it is masked.
-pub fn key_field_category(key: &str) -> Option<(PiiCategory, bool)> {
-    let key_id = normalize_key(key);
-    if person_key_ids().contains(&key_id) {
-        return Some((PiiCategory::Person, AMBIGUOUS_KEYS.contains(&key_id.as_str())));
-    }
-    if address_key_ids().contains(&key_id) {
-        return Some((PiiCategory::Address, AMBIGUOUS_KEYS.contains(&key_id.as_str())));
+/// Field for the longest recognized suffix of `words` (up to three), so
+/// `Customer First Name` is `first name` and `Customer Name` is `name`.
+/// Both passes build `words` the same way (see `payload_key_words` and
+/// `text_key_words`).
+fn match_key_words(words: &[&str]) -> Option<KeyField> {
+    for size in [3usize, 2, 1] {
+        if size <= words.len() {
+            if let Some(field) = key_fields().get(&key_id(&words[words.len() - size..])) {
+                return Some(*field);
+            }
+        }
     }
     None
+}
+
+#[cfg(feature = "payload")]
+fn payload_key_words(key: &str) -> Vec<&str> {
+    let bytes = key.as_bytes();
+    let mut start = bytes.len();
+    while start > 0 && (is_key_word_byte(bytes[start - 1]) || is_key_sep_byte(bytes[start - 1])) {
+        start -= 1;
+    }
+    let tail = &key[start..];
+    let mut stripped = tail.trim_end_matches(|c: char| c.is_ascii_digit());
+    if stripped.len() < tail.len() && (stripped.ends_with('_') || stripped.ends_with('-')) {
+        stripped = &stripped[..stripped.len() - 1];
+    }
+    match stripped.as_bytes().last() {
+        Some(&b) if is_key_word_byte(b) => {}
+        _ => return Vec::new(),
+    }
+    let words: Vec<&str> = stripped
+        .split([' ', '\t', '_', '-'])
+        .filter(|w| !w.is_empty())
+        .collect();
+    let skip = words.len().saturating_sub(KEY_MAX_WORDS);
+    words[skip..].to_vec()
+}
+
+/// The recognized person/address field a payload key names, or `None`.
+///
+/// Used by `scrub_payload`'s walk; the text pass reads the same words off
+/// the text before a `:`/`=` and applies the same match, so
+/// `{"Customer Name": …}` and `Customer Name: …` agree.
+#[cfg(feature = "payload")]
+pub fn key_field(key: &str) -> Option<KeyField> {
+    match_key_words(&payload_key_words(key))
 }
 
 const NAME_PARTICLES: &[&str] = &[
@@ -2277,136 +2376,241 @@ pub fn looks_like_name(value: &str) -> bool {
     false
 }
 
-/// ``word`` with its first letter as an upper/lower class, rest literal
-/// lowercase: matches snake_case, PascalCase/camelCase and Title Case
-/// without a case-insensitive flag, which the Python backend measured at 3x
-/// slower in practice (full Unicode case folding on every alternative, at
-/// every word boundary in the input) for a feature that only needs ASCII
-/// first-letter case. Screaming-case keys (``NAME:``) are not matched — an
-/// accepted trade kept identical across backends.
-fn case_flex_word(word: &str) -> String {
-    let escaped = regex::escape(word);
-    let mut chars = escaped.chars();
-    match chars.next() {
-        Some(first) => format!(
-            "[{}{}]{}",
-            first.to_ascii_uppercase(),
-            first.to_ascii_lowercase(),
-            chars.as_str()
-        ),
-        None => escaped,
+fn gate_span(value: &str) -> &str {
+    match value.find([',', ';']) {
+        Some(i) => &value[..i],
+        None => value,
     }
 }
 
-fn key_alternation(keys: &[&str]) -> String {
-    keys.iter()
-        .map(|key| {
-            split_key_words(key)
-                .iter()
-                .map(|w| case_flex_word(w))
-                .collect::<Vec<_>>()
-                .join(r"[\s_-]*")
-        })
-        .collect::<Vec<_>>()
-        .join("|")
+/// Whether a string value under `field` is masked: it must hold something
+/// besides `White_Space` and, for the gated `name` key, pass
+/// `looks_like_name` on its first `,`/`;`-separated part
+/// (`name: build-cache, owner: Ops` stays clean). Shared by the text pass
+/// (quoted values) and `scrub_payload`.
+pub fn field_value_masked(field: KeyField, value: &str) -> bool {
+    if value.chars().all(char::is_whitespace) {
+        return false;
+    }
+    !field.gated || looks_like_name(gate_span(value))
 }
 
-fn person_key_re() -> &'static Regex {
-    static RE: OnceLock<Regex> = OnceLock::new();
-    RE.get_or_init(|| {
-        Regex::new(&format!(
-            r#"(?-u:\b)(?P<key>{})\d*"?[ \t]*[:=][ \t]*"#,
-            key_alternation(PERSON_KEYS)
-        ))
-        .unwrap()
-    })
+/// Up to `KEY_MAX_WORDS` key words right before a `:`/`=` at `end`, and
+/// whether the key was quoted (`"key":`, `'key':`, `\"key\":`).
+fn text_key_words(text: &str, end: usize) -> (Vec<&str>, bool) {
+    let b = text.as_bytes();
+    let mut i = end;
+    while i > 0 && matches!(b[i - 1], b' ' | b'\t') {
+        i -= 1;
+    }
+    let mut quoted = false;
+    if i > 0 && matches!(b[i - 1], b'"' | b'\'') {
+        quoted = true;
+        i -= 1;
+        if i > 0 && b[i - 1] == b'\\' {
+            i -= 1;
+        }
+    }
+    let digits_end = i;
+    while i > 0 && b[i - 1].is_ascii_digit() {
+        i -= 1;
+    }
+    if i < digits_end && i > 0 && matches!(b[i - 1], b'_' | b'-') {
+        i -= 1;
+    }
+    let mut words = Vec::new();
+    while words.len() < KEY_MAX_WORDS {
+        let word_end = i;
+        while i > 0 && is_key_word_byte(b[i - 1]) {
+            i -= 1;
+        }
+        if i == word_end {
+            break;
+        }
+        words.push(&text[i..word_end]);
+        let mut j = i;
+        while j > 0 && is_key_sep_byte(b[j - 1]) {
+            j -= 1;
+        }
+        if j == i || j == 0 || !is_key_word_byte(b[j - 1]) {
+            break;
+        }
+        i = j;
+    }
+    words.reverse();
+    (words, quoted)
 }
 
-fn address_key_re() -> &'static Regex {
-    static RE: OnceLock<Regex> = OnceLock::new();
-    RE.get_or_init(|| {
-        Regex::new(&format!(
-            r#"(?-u:\b)(?P<key>{})\d*"?[ \t]*[:=][ \t]*"#,
-            key_alternation(ADDRESS_KEYS)
-        ))
-        .unwrap()
-    })
+const UNQUOTED_LITERALS: &[&str] = &["null", "true", "false", "None", "True", "False"];
+
+fn find_any(b: &[u8], pos: usize, set: &[u8]) -> usize {
+    b[pos..]
+        .iter()
+        .position(|c| set.contains(c))
+        .map_or(b.len(), |i| pos + i)
 }
 
-/// Value span right after a matched `key:`/`key=`: to the matching closing
-/// quote, or, unquoted, up to the end of the line (trailing spaces/tabs and
-/// one run of trailing sentence punctuation trimmed, so
-/// `adres: Hoofdstraat 12.` keeps the `.` outside the mask). Nothing short of
-/// a newline ends an unquoted value — not a comma, not a space — because
-/// `Straat: Kerkstraat, 12` must stay one value for the existing street +
-/// house-number masking to keep seeing it whole; so a single line holding
-/// more than one bare `key: value`/`key=value` pair, comma- or
-/// space-separated (`a: 1, b: 2`, `first_name=Jan last_name=Jansen`),
-/// over-masks past the first one. Quoted values do not have this gap.
+/// End of a `"…"`/`'…'` value: the first quote not escaped by an odd run of
+/// backslashes, or the line end when it is unterminated.
+fn quoted_value_end(b: &[u8], start: usize, quote: u8) -> (usize, bool) {
+    let n = b.len();
+    let mut p = start;
+    while p < n {
+        let c = b[p];
+        if c == b'\r' || c == b'\n' {
+            return (p, false);
+        }
+        if c == quote {
+            return (p, true);
+        }
+        if c == b'\\' && p + 1 < n && b[p + 1] != b'\r' && b[p + 1] != b'\n' {
+            p += 2;
+        } else {
+            p += 1;
+        }
+    }
+    (n, false)
+}
+
+/// End of a `\"…\"` value (JSON encoded twice): the closing `\"` is a
+/// backslash run of length 1 mod 4 before `"` (`\\\"` is a literal quote
+/// inside it).
+fn escaped_quoted_value_end(b: &[u8], start: usize) -> (usize, bool) {
+    let n = b.len();
+    let mut p = start;
+    while p < n {
+        let c = b[p];
+        if c == b'\r' || c == b'\n' {
+            return (p, false);
+        }
+        if c == b'\\' {
+            let mut run = p;
+            while run < n && b[run] == b'\\' {
+                run += 1;
+            }
+            if run < n && b[run] == b'"' && (run - p) % 4 == 1 {
+                return (p, true);
+            }
+            p = run;
+            continue;
+        }
+        p += 1;
+    }
+    (n, false)
+}
+
+fn trim_bare_value_end(b: &[u8], start: usize, mut end: usize) -> usize {
+    while end > start && matches!(b[end - 1], b' ' | b'\t') {
+        end -= 1;
+    }
+    while end > start && matches!(b[end - 1], b'.' | b',' | b';' | b':' | b'!' | b'?') {
+        end -= 1;
+    }
+    while end > start && matches!(b[end - 1], b' ' | b'\t') {
+        end -= 1;
+    }
+    end
+}
+
+/// `(start, end, resume, masked)` for the value after a key's `:`/`=`.
 ///
-/// The key text itself is left in place (only the value is replaced), so a
-/// later detector still scans it: a key glued with no separator before its
-/// digit suffix (`LastName2`) can coincidentally match the loose NL passport
-/// shape and get labeled `[PASSPORT]`. Running first, so this detector
-/// claims the value before anything else can, is safer than the alternative
-/// (running last risks a coincidental key match hiding the value from this
-/// detector entirely, leaking it).
-fn kv_value_span(text: &str, start: usize) -> (usize, usize) {
-    let n = text.len();
-    let bytes = text.as_bytes();
-    if start < n && (bytes[start] == b'"' || bytes[start] == b'\'') {
-        let quote = bytes[start] as char;
-        let after = start + 1;
-        let close = text[after..].find(quote).map(|i| after + i);
-        let newline = text[after..].find('\n').map(|i| after + i);
-        return match (close, newline) {
-            (Some(c), Some(nl)) if nl < c => (after, nl),
-            (Some(c), _) => (after, c),
-            (None, Some(nl)) => (after, nl),
-            (None, None) => (after, n),
-        };
+/// Every branch resumes at or past what it scanned, so the pass stays
+/// linear: a rejected bare `name` value resumes at the end of its gate span
+/// (`name: build-cache, city: Utrecht` still reaches `city`), anything else
+/// after its value.
+fn key_value_span(
+    text: &str,
+    mut pos: usize,
+    field: KeyField,
+    key_quoted: bool,
+) -> (usize, usize, usize, bool) {
+    let b = text.as_bytes();
+    let n = b.len();
+    while pos < n && matches!(b[pos], b' ' | b'\t') {
+        pos += 1;
     }
-    let newline = text[start..].find('\n').map(|i| start + i);
-    let mut end = newline.unwrap_or(n);
-    while end > start && matches!(bytes[end - 1], b' ' | b'\t') {
-        end -= 1;
+    if pos >= n {
+        return (pos, pos, pos, false);
     }
-    while end > start && matches!(bytes[end - 1], b'.' | b',' | b';' | b':' | b'!' | b'?') {
-        end -= 1;
+    let c = b[pos];
+    if c == b'\\' && pos + 1 < n && b[pos + 1] == b'"' {
+        let start = pos + 2;
+        let (end, closed) = escaped_quoted_value_end(b, start);
+        let resume = if closed { end + 2 } else { end };
+        return (
+            start,
+            end,
+            resume,
+            field_value_masked(field, &text[start..end]),
+        );
     }
-    while end > start && matches!(bytes[end - 1], b' ' | b'\t') {
-        end -= 1;
+    if c == b'"' || c == b'\'' {
+        let start = pos + 1;
+        let (end, closed) = quoted_value_end(b, start, c);
+        let resume = if closed { end + 1 } else { end };
+        return (
+            start,
+            end,
+            resume,
+            field_value_masked(field, &text[start..end]),
+        );
     }
-    (start, end)
+    if matches!(c, b'{' | b'[' | b'\r' | b'\n') {
+        return (pos, pos, pos, false);
+    }
+    if field.gated {
+        let stops: &[u8] = if key_quoted { b",;}]\r\n" } else { b",;\r\n" };
+        let gate_end = find_any(b, pos, stops);
+        if !looks_like_name(&text[pos..gate_end]) {
+            return (pos, gate_end, gate_end, false);
+        }
+    }
+    let end = if key_quoted {
+        let mut end = find_any(b, pos, b",}]\r\n");
+        while end > pos && matches!(b[end - 1], b' ' | b'\t') {
+            end -= 1;
+        }
+        end
+    } else {
+        trim_bare_value_end(b, pos, find_any(b, pos, b"\r\n"))
+    };
+    let masked = end > pos && !UNQUOTED_LITERALS.contains(&&text[pos..end]);
+    (pos, end, end, masked)
 }
 
-fn scrub_key_value(
-    text: &str,
-    key_re: &Regex,
-    placeholder: &str,
-    check_ambiguous: bool,
-) -> (Option<String>, u32) {
+/// Mask every value of `category` that follows a recognized field name.
+///
+/// Both passes (person, address) walk the same key/value structure and
+/// resume at the same places; each only replaces its own category.
+fn scrub_key_values(text: &str, category: PiiCategory, placeholder: &str) -> (Option<String>, u32) {
+    let b = text.as_bytes();
+    let n = b.len();
     let mut count = 0u32;
     let mut out: Option<String> = None;
     let mut last = 0usize;
     let mut pos = 0usize;
-    while let Some(caps) = key_re.captures_at(text, pos) {
-        let whole = caps.get(0).unwrap();
-        let key_text = caps.name("key").unwrap().as_str();
-        let (inner_start, inner_end) = kv_value_span(text, whole.end());
-        let value = &text[inner_start..inner_end];
-        let ambiguous =
-            check_ambiguous && AMBIGUOUS_KEYS.contains(&normalize_key(key_text).as_str());
-        if value.is_empty() || (ambiguous && !looks_like_name(value)) {
-            pos = whole.end();
+    while let Some(offset) = b[pos..].iter().position(|&c| c == b':' || c == b'=') {
+        let delim = pos + offset;
+        pos = delim + 1;
+        if pos < n && matches!(b[pos], b':' | b'=' | b'>') {
             continue;
         }
-        let buf = out.get_or_insert_with(|| String::with_capacity(text.len()));
-        buf.push_str(&text[last..inner_start]);
-        buf.push_str(placeholder);
-        last = inner_end;
-        pos = inner_end;
-        count += 1;
+        let (words, key_quoted) = text_key_words(text, delim);
+        if words.is_empty() {
+            continue;
+        }
+        let Some(field) = match_key_words(&words) else {
+            continue;
+        };
+        let (start, end, resume, masked) = key_value_span(text, pos, field, key_quoted);
+        pos = pos.max(resume);
+        if masked && field.category == category {
+            let buf = out.get_or_insert_with(|| String::with_capacity(n));
+            buf.push_str(&text[last..start]);
+            buf.push_str(placeholder);
+            last = end;
+            count += 1;
+        }
     }
     match out {
         None => (None, 0),
@@ -2418,11 +2622,11 @@ fn scrub_key_value(
 }
 
 fn scrub_key_value_person(text: &str) -> (Option<String>, u32) {
-    scrub_key_value(text, person_key_re(), "[PERSON]", true)
+    scrub_key_values(text, PiiCategory::Person, "[PERSON]")
 }
 
 fn scrub_key_value_address(text: &str) -> (Option<String>, u32) {
-    scrub_key_value(text, address_key_re(), "[ADDRESS]", true)
+    scrub_key_values(text, PiiCategory::Address, "[ADDRESS]")
 }
 
 const UNIVERSAL: &[Detector] = &[

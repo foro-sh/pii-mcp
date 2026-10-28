@@ -127,25 +127,45 @@ Patterns:
   right after a recognized field name is masked whole, with no format check —
   most names and address parts in tool output (``"last_name": "Grabbe"``,
   ``Nachname: Eckerlin``, ``PLZ: 33613``) give pattern detectors nothing else
-  to key off. Runs on ``key: value``, ``key=value`` and ``"key": "value"``
-  on one line; a key normalizes case, ``_``/``-``/space separators, and a
-  trailing numeric suffix (``LastName1``, ``lastName2``) before an exact
-  match against the EN/NL/DE field-name list (``name``/``vorname``/``naam``,
-  ``street``/``straße``/``straat``, ``postcode``/``plz``/``zip``,
-  ``city``/``stadt``/``plaats``, …) — a compound key such as ``city_count`` or
-  ``street_view`` normalizes to something else entirely and is left alone. The
-  value runs to the matching closing quote or, unquoted, to the end of the
-  line (trailing sentence punctuation stays outside the mask; a comma does
-  not end it, so ``Straat: Kerkstraat, 12`` stays one value — see
-  ``_kv_value_span``). ``name``
-  (resource/build names, ``name: "build-cache"``) is ambiguous and gated: the
-  value must look like one or more capitalized words (Dutch/German particles — ``van``,
-  ``der``, ``von``, … — stay lowercase). ``scrub_payload`` applies the same
-  dictionary structurally, by dict key, in ``_scrub_walk``. There is no bare
-  ``state`` key: in tool output it is a job/resource status far more often
-  than a US state (``State: Running``, ``"state": "ACTIVE"``), and those
-  Title Case / all-caps statuses pass any capitalization gate; the regional
-  ``bundesland`` / ``provincie`` keys stay.
+  to key off. The field names are an EN/NL/DE list (``name``/``vorname``/
+  ``naam``, ``street``/``straße``/``straat``, ``postcode``/``plz``/``zip``,
+  ``city``/``stadt``/``plaats``, …).
+
+  Keys. The text pass looks at each ``:`` or ``=`` (not ``::``, ``==``,
+  ``=>``, ``:=``) and reads up to four words before it, skipping spaces and
+  tabs, one closing quote (``"``, ``'`` or ``\\"``) and a numeric suffix
+  (``LastName1``, ``last_name_1``). A word is a run of ASCII letters and
+  digits or non-ASCII characters; words are separated by space, tab, ``_``
+  or ``-``, and any other ASCII character starts the key. The longest suffix
+  of up to three words, joined and lowercased (ASCII plus ``Ä``/``Ö``/``Ü``/
+  ``ẞ``), must equal a field name, so ``first_name``, ``First Name``,
+  ``FIRST-NAME`` and ``firstName`` all match, and a word in front of the
+  field name (``Customer Name``, ``billing_address``) does not stop it. A
+  compound without a separator (``username``, ``customerName``,
+  ``city_count``, ``street_view``) is a different key and is left alone.
+  ``scrub_payload`` reads dict keys the same way.
+
+  Values. A quoted value (``"…"``, ``'…'``, ``\\"…\\"`` in JSON encoded
+  twice) runs to the first matching quote that is not escaped, or to the
+  end of the line. An unquoted value after a quoted key (JSON or a Python
+  dict repr) ends at ``,``, ``}`` or ``]``; ``null``/``true``/``false``
+  (``None``/``True``/``False``) are never masked, and a value starting with
+  ``{`` or ``[`` is nested structure the text pass does not mask whole. An
+  unquoted value after a bare key (``Adresse: Kerkstraat 12, 3511 AB
+  Utrecht``) runs to the end of the line (``\\r`` or ``\\n``), with trailing
+  sentence punctuation left outside; so a line holding several bare pairs
+  (``first_name=Jan last_name=Jansen``) is masked as one value.
+
+  ``name`` (resource/build names, ``name: "build-cache"``) is ambiguous and
+  gated: the part of the value before the first ``,`` or ``;`` must look like
+  one or more capitalized words (Dutch/German particles — ``van``, ``der``,
+  ``von``, … — stay lowercase), so ``name: build-cache, owner: Ops`` stays
+  clean. There is no bare ``state`` key: in tool output it is a job/resource
+  status far more often than a US state (``State: Running``,
+  ``"state": "ACTIVE"``), and those Title Case / all-caps statuses pass any
+  capitalization gate; the regional ``bundesland`` / ``provincie`` keys stay.
+  Every candidate resumes the scan at or past the text it read, so the pass
+  is linear in the input.
 
 ``UNIVERSAL_DETECTORS`` (key-aware person/address, email, IBAN, credit card,
 BIC, MAC, IMEI, IP, location) always run; locale detectors are selected by
@@ -157,7 +177,7 @@ from __future__ import annotations
 import ipaddress
 import re
 import unicodedata
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from typing import Literal
 
@@ -1467,18 +1487,15 @@ nl_license_plate_detector = Detector(
     type="license_plate", scrub=_scrub_nl_license_plate
 )
 
-# --- Key-aware masking (person / address; issue #52) ------------------------
-#
-# EN/NL/DE field names collected from tool-output samples where pattern
-# detectors have nothing to key off (a lone ``"Grabbe"`` or ``"33613"``).
-# Canonical keys use a space to mark a word break; ``_key_alternation`` turns
-# that into a separator class so ``first_name`` / ``First Name`` / ``firstname``
-# all match the same entry.
 _PERSON_KEYS: tuple[str, ...] = (
     "name",
-    "first_name",
+    "first name",
     "given name",
-    "last_name",
+    "last name",
+    "surname",
+    "full name",
+    "family name",
+    "familienname",
     "vorname",
     "nachname",
     "voornaam",
@@ -1495,11 +1512,14 @@ _ADDRESS_KEYS: tuple[str, ...] = (
     "adresse",
     "adres",
     "building number",
+    "house number",
     "huisnummer",
+    "hausnummer",
     "gebäude",
     "gebaeude",
     "postcode",
     "postal code",
+    "zip code",
     "postleitzahl",
     "plz",
     "zip",
@@ -1507,40 +1527,80 @@ _ADDRESS_KEYS: tuple[str, ...] = (
     "stadt",
     "stad",
     "plaats",
+    "woonplaats",
     "ort",
+    "wohnort",
     "bundesland",
     "provincie",
 )
 _AMBIGUOUS_KEYS = frozenset({"name"})
-
-_KEY_SEP_RE = re.compile(r"[\s_-]+")
-_KEY_TRAILING_DIGITS_RE = re.compile(r"\d+$")
-
-
-def normalize_key(key: str) -> str:
-    """Case/separator-insensitive key id: drop ``_``/``-``/space separators,
-    lowercase, then drop a trailing numeric suffix (``LastName1`` ->
-    ``lastname``). Used for an exact match so a compound key (``city_count``,
-    ``street_view``, ``username``) never collides with a bare one."""
-    compact = _KEY_SEP_RE.sub("", key).lower()
-    return _KEY_TRAILING_DIGITS_RE.sub("", compact)
-
-
-PERSON_KEY_IDS = frozenset(normalize_key(k) for k in _PERSON_KEYS)
-ADDRESS_KEY_IDS = frozenset(normalize_key(k) for k in _ADDRESS_KEYS)
+_KEY_SEPARATORS = " \t_-"
+_KEY_DIGITS = "0123456789"
+_KEY_LOWER = str.maketrans("ABCDEFGHIJKLMNOPQRSTUVWXYZÄÖÜẞ", "abcdefghijklmnopqrstuvwxyzäöüß")
+_KEY_MAX_WORDS = 4
+_KEY_WORD_SPLIT_RE = re.compile(r"[ \t_-]+")
 KeyCategory = Literal["person", "address"]
 
 
-def key_field_category(key: str) -> tuple[KeyCategory, bool] | None:
-    """``(category, ambiguous)`` for a recognized person/address field name,
-    ``None`` otherwise. ``ambiguous`` marks a key (``name``) whose value needs
-    ``looks_like_name`` before it is masked."""
-    key_id = normalize_key(key)
-    if key_id in PERSON_KEY_IDS:
-        return "person", key_id in _AMBIGUOUS_KEYS
-    if key_id in ADDRESS_KEY_IDS:
-        return "address", key_id in _AMBIGUOUS_KEYS
+@dataclass(frozen=True)
+class KeyField:
+    """A recognized field name: the category its value is masked as, and
+    whether the value must pass ``looks_like_name`` first (bare ``name``)."""
+
+    category: KeyCategory
+    gated: bool
+
+
+def _key_id(words: Sequence[str]) -> str:
+    return "".join(words).translate(_KEY_LOWER)
+
+
+_KEY_FIELDS: dict[str, KeyField] = {
+    **{_key_id(key.split()): KeyField("address", False) for key in _ADDRESS_KEYS},
+    **{
+        _key_id(key.split()): KeyField("person", _key_id(key.split()) in _AMBIGUOUS_KEYS)
+        for key in _PERSON_KEYS
+    },
+}
+
+
+def _is_key_word_char(char: str) -> bool:
+    return char >= "\x80" or char.isalnum()
+
+
+def _match_key_words(words: Sequence[str]) -> KeyField | None:
+    """Field for the longest recognized suffix of ``words`` (up to three),
+    so ``Customer First Name`` is ``first name`` and ``Customer Name`` is
+    ``name``. Both passes build ``words`` the same way (see
+    ``_payload_key_words`` and ``_text_key_words``)."""
+    for size in (3, 2, 1):
+        if size <= len(words):
+            field = _KEY_FIELDS.get(_key_id(words[-size:]))
+            if field is not None:
+                return field
     return None
+
+
+def _payload_key_words(key: str) -> list[str]:
+    start = len(key)
+    while start and (_is_key_word_char(key[start - 1]) or key[start - 1] in _KEY_SEPARATORS):
+        start -= 1
+    tail = key[start:]
+    stripped = tail.rstrip(_KEY_DIGITS)
+    if len(stripped) < len(tail) and stripped[-1:] in ("_", "-"):
+        stripped = stripped[:-1]
+    if not stripped or not _is_key_word_char(stripped[-1]):
+        return []
+    return [word for word in _KEY_WORD_SPLIT_RE.split(stripped) if word][-_KEY_MAX_WORDS:]
+
+
+def key_field(key: str) -> KeyField | None:
+    """The recognized person/address field a dict key names, or ``None``.
+
+    Used by ``scrub_payload``'s walk; the text pass reads the same words off
+    the text before a ``:``/``=`` and applies the same match, so
+    ``{"Customer Name": …}`` and ``Customer Name: …`` agree."""
+    return _match_key_words(_payload_key_words(key))
 
 
 _NAME_PARTICLES = frozenset(
@@ -1595,89 +1655,184 @@ def looks_like_name(value: str) -> bool:
     return False
 
 
-def _case_flex_word(word: str) -> str:
-    """``word`` with its first letter as an upper/lower class, rest literal
-    lowercase: matches snake_case, PascalCase/camelCase and Title Case
-    without ``re.IGNORECASE`` — 3x slower in practice (full Unicode case
-    folding on every alternative, at every word boundary in the input) for
-    a feature that only needs ASCII first-letter case. Screaming-case keys
-    (``NAME:``) are not matched — an accepted trade kept identical across
-    the Python, Rust and TypeScript backends."""
-    escaped = re.escape(word)
-    return f"[{escaped[0].upper()}{escaped[0].lower()}]{escaped[1:]}"
+def _gate_span(value: str) -> str:
+    end = len(value)
+    for stop in ",;":
+        index = value.find(stop)
+        if index != -1 and index < end:
+            end = index
+    return value[:end]
 
 
-def _key_alternation(keys: tuple[str, ...]) -> str:
-    return "|".join(
-        r"[\s_-]*".join(_case_flex_word(word) for word in _KEY_SEP_RE.split(key) if word)
-        for key in keys
-    )
+def field_value_masked(field: KeyField, value: str) -> bool:
+    """Whether a string value under ``field`` is masked: it must be non-empty
+    and, for the gated ``name`` key, pass ``looks_like_name`` on its first
+    ``,``/``;``-separated part (``name: build-cache, owner: Ops`` stays
+    clean). A blank value (only ``White_Space``) is left alone. Shared by
+    the text pass (quoted values) and ``scrub_payload``."""
+    if not value or _NAME_WS_RE.fullmatch(value):
+        return False
+    return not field.gated or looks_like_name(_gate_span(value))
 
 
-_KEY_VALUE_FLAGS = re.ASCII
-PERSON_KEY_RE = re.compile(
-    rf'\b(?P<key>{_key_alternation(_PERSON_KEYS)})\d*"?[ \t]*[:=][ \t]*', _KEY_VALUE_FLAGS
-)
-ADDRESS_KEY_RE = re.compile(
-    rf'\b(?P<key>{_key_alternation(_ADDRESS_KEYS)})\d*"?[ \t]*[:=][ \t]*', _KEY_VALUE_FLAGS
-)
+def _text_key_words(text: str, end: int) -> tuple[list[str], bool]:
+    """Up to ``_KEY_MAX_WORDS`` key words right before a ``:``/``=`` at
+    ``end``, and whether the key was quoted (``"key":``, ``'key':``,
+    ``\\"key\\":``)."""
+    i = end
+    while i and text[i - 1] in " \t":
+        i -= 1
+    quoted = False
+    if i and text[i - 1] in "\"'":
+        quoted = True
+        i -= 1
+        if i and text[i - 1] == "\\":
+            i -= 1
+    digits_end = i
+    while i and text[i - 1] in _KEY_DIGITS:
+        i -= 1
+    if i < digits_end and i and text[i - 1] in "_-":
+        i -= 1
+    words: list[str] = []
+    while len(words) < _KEY_MAX_WORDS:
+        word_end = i
+        while i and _is_key_word_char(text[i - 1]):
+            i -= 1
+        if i == word_end:
+            break
+        words.append(text[i:word_end])
+        j = i
+        while j and text[j - 1] in _KEY_SEPARATORS:
+            j -= 1
+        if j == i or not j or not _is_key_word_char(text[j - 1]):
+            break
+        i = j
+    words.reverse()
+    return words, quoted
 
 
-def _kv_value_span(text: str, start: int) -> tuple[int, int]:
-    """Value span right after a matched ``key:``/``key=``: to the matching
-    closing quote, or, unquoted, up to the end of the line (trailing
-    spaces/tabs and one run of trailing sentence punctuation trimmed, so
-    ``adres: Hoofdstraat 12.`` keeps the ``.`` outside the mask). Nothing
-    short of a newline ends an unquoted value — not a comma, not a space —
-    because ``Straat: Kerkstraat, 12`` must stay one value for the existing
-    street + house-number masking to keep seeing it whole; so a single line
-    holding more than one bare ``key: value``/``key=value`` pair, comma- or
-    space-separated (``a: 1, b: 2``, ``first_name=Jan last_name=Jansen``),
-    over-masks past the first one. Quoted values do not have this gap.
+_KV_DELIM_RE = re.compile(r"[:=]")
+_LINE_END_RE = re.compile(r"[\r\n]")
+_BARE_KEY_GATE_END_RE = re.compile(r"[,;\r\n]")
+_QUOTED_KEY_VALUE_END_RE = re.compile(r"[,}\]\r\n]")
+_QUOTED_KEY_GATE_END_RE = re.compile(r"[,;}\]\r\n]")
+_QUOTED_BODY_RES = {
+    '"': re.compile(r'(?:[^"\\\r\n]|\\[^\r\n])*'),
+    "'": re.compile(r"(?:[^'\\\r\n]|\\[^\r\n])*"),
+}
+_UNQUOTED_LITERALS = frozenset({"null", "true", "false", "None", "True", "False"})
 
-    The key text itself is left in place (only the value is replaced), so a
-    later detector still scans it: a key glued with no separator before its
-    digit suffix (``LastName2``) can coincidentally match the loose NL
-    passport shape and get labeled ``[PASSPORT]``. Running first, so this
-    detector claims the value before anything else can, is safer than the
-    alternative (running last risks a coincidental key match hiding the
-    value from this detector entirely, leaking it)."""
+
+def _find(pattern: re.Pattern[str], text: str, pos: int) -> int:
+    match = pattern.search(text, pos)
+    return len(text) if match is None else match.start()
+
+
+def _quoted_value_end(text: str, start: int, quote: str) -> tuple[int, bool]:
+    """End of a ``"…"``/``'…'`` value: the first quote not escaped by an odd
+    run of backslashes, or the line end when it is unterminated."""
+    end = _QUOTED_BODY_RES[quote].match(text, start).end()  # type: ignore[union-attr]
+    if end < len(text) and text[end] == quote:
+        return end, True
+    return _find(_LINE_END_RE, text, end), False
+
+
+def _escaped_quoted_value_end(text: str, start: int) -> tuple[int, bool]:
+    """End of a ``\\"…\\"`` value (JSON encoded twice): the closing ``\\"`` is
+    a backslash run of length 1 mod 4 before ``"`` (``\\\\\\"`` is a literal
+    quote inside it)."""
     n = len(text)
-    if start < n and text[start] in "\"'":
-        quote = text[start]
-        close = text.find(quote, start + 1)
-        newline = text.find("\n", start + 1)
-        if close == -1 or (newline != -1 and newline < close):
-            return start + 1, (newline if newline != -1 else n)
-        return start + 1, close
-    newline = text.find("\n", start)
-    end = n if newline == -1 else newline
+    pos = start
+    while pos < n:
+        char = text[pos]
+        if char in "\r\n":
+            return pos, False
+        if char == "\\":
+            run = pos
+            while run < n and text[run] == "\\":
+                run += 1
+            if run < n and text[run] == '"' and (run - pos) % 4 == 1:
+                return pos, True
+            pos = run
+            continue
+        pos += 1
+    return n, False
+
+
+def _trim_bare_value_end(text: str, start: int, end: int) -> int:
     while end > start and text[end - 1] in " \t":
         end -= 1
     while end > start and text[end - 1] in ".,;:!?":
         end -= 1
     while end > start and text[end - 1] in " \t":
         end -= 1
-    return start, end
+    return end
 
 
-def _scrub_key_value(
-    text: str, key_re: re.Pattern[str], placeholder: str, check_ambiguous: bool
-) -> tuple[str, int]:
+def _key_value_span(
+    text: str, pos: int, field: KeyField, key_quoted: bool
+) -> tuple[int, int, int, bool]:
+    """``(start, end, resume, masked)`` for the value after a key's ``:``/``=``.
+
+    Every branch resumes at or past what it scanned, so the pass stays
+    linear: a rejected bare ``name`` value resumes at the end of its gate
+    span (``name: build-cache, city: Utrecht`` still reaches ``city``),
+    anything else after its value."""
+    n = len(text)
+    while pos < n and text[pos] in " \t":
+        pos += 1
+    if pos >= n:
+        return pos, pos, pos, False
+    char = text[pos]
+    if char == "\\" and text.startswith('"', pos + 1):
+        start = pos + 2
+        end, closed = _escaped_quoted_value_end(text, start)
+        return start, end, end + 2 if closed else end, field_value_masked(field, text[start:end])
+    if char in "\"'":
+        start = pos + 1
+        end, closed = _quoted_value_end(text, start, char)
+        return start, end, end + 1 if closed else end, field_value_masked(field, text[start:end])
+    if char in "{[\r\n":
+        return pos, pos, pos, False
+    if field.gated:
+        gate_end = _find(_QUOTED_KEY_GATE_END_RE if key_quoted else _BARE_KEY_GATE_END_RE, text, pos)
+        if not looks_like_name(text[pos:gate_end]):
+            return pos, gate_end, gate_end, False
+    if key_quoted:
+        end = _find(_QUOTED_KEY_VALUE_END_RE, text, pos)
+        while end > pos and text[end - 1] in " \t":
+            end -= 1
+    else:
+        end = _trim_bare_value_end(text, pos, _find(_LINE_END_RE, text, pos))
+    masked = end > pos and text[pos:end] not in _UNQUOTED_LITERALS
+    return pos, end, end, masked
+
+
+def _scrub_key_values(text: str, category: KeyCategory, placeholder: str) -> tuple[str, int]:
+    """Mask every value of ``category`` that follows a recognized field name.
+
+    Both passes (person, address) walk the same key/value structure and
+    resume at the same places; each only replaces its own category."""
     count = 0
     parts: list[str] = []
     last = pos = 0
-    while (match := key_re.search(text, pos)) is not None:
-        inner_start, inner_end = _kv_value_span(text, match.end())
-        value = text[inner_start:inner_end]
-        ambiguous = check_ambiguous and normalize_key(match.group("key")) in _AMBIGUOUS_KEYS
-        if not value or (ambiguous and not looks_like_name(value)):
-            pos = match.end()
+    n = len(text)
+    while (match := _KV_DELIM_RE.search(text, pos)) is not None:
+        delim = match.start()
+        pos = delim + 1
+        if pos < n and text[pos] in ":=>":
             continue
-        parts.append(text[last:inner_start])
-        parts.append(placeholder)
-        last = pos = inner_end
-        count += 1
+        words, key_quoted = _text_key_words(text, delim)
+        field = _match_key_words(words) if words else None
+        if field is None:
+            continue
+        start, end, resume, masked = _key_value_span(text, pos, field, key_quoted)
+        pos = max(pos, resume)
+        if masked and field.category == category:
+            parts.append(text[last:start])
+            parts.append(placeholder)
+            last = end
+            count += 1
     if count == 0:
         return text, 0
     parts.append(text[last:])
@@ -1685,11 +1840,11 @@ def _scrub_key_value(
 
 
 def _scrub_key_value_person(text: str) -> tuple[str, int]:
-    return _scrub_key_value(text, PERSON_KEY_RE, "[PERSON]", check_ambiguous=True)
+    return _scrub_key_values(text, "person", "[PERSON]")
 
 
 def _scrub_key_value_address(text: str) -> tuple[str, int]:
-    return _scrub_key_value(text, ADDRESS_KEY_RE, "[ADDRESS]", check_ambiguous=True)
+    return _scrub_key_values(text, "address", "[ADDRESS]")
 
 
 key_value_person_detector = Detector(type="person", scrub=_scrub_key_value_person)
