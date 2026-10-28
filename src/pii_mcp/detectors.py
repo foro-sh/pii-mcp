@@ -1539,8 +1539,10 @@ US_ZIP_RE = re.compile(
 )
 
 
-_STREET_LETTER_RE = re.compile(f"[{_STREET_UP}{_STREET_LOW}]")
-_STREET_UPPER_RE = re.compile(f"[{_STREET_UP}]")
+_STREET_UPPER = frozenset(c for c in map(chr, range(0x180)) if re.fullmatch(f"[{_STREET_UP}]", c))
+_STREET_LETTERS = _STREET_UPPER | frozenset(
+    c for c in map(chr, range(0x180)) if re.fullmatch(f"[{_STREET_LOW}]", c)
+)
 _US_STATUS_WORDS = frozenset(
     form
     for word in "Done Error Failed Warning Info Success Status Result".split()
@@ -1564,12 +1566,12 @@ def _us_state_after_city(text: str, start: int) -> bool:
     if i == 0 or text[i - 1] != ",":
         return False
     j = i - 1
-    while j > 0 and _STREET_LETTER_RE.fullmatch(text[j - 1]):
+    while j > 0 and text[j - 1] in _STREET_LETTERS:
         j -= 1
     word = text[j : i - 1]
     return (
         len(word) >= 3
-        and _STREET_UPPER_RE.fullmatch(word[0]) is not None
+        and word[0] in _STREET_UPPER
         and word not in _US_STATUS_WORDS
     )
 
@@ -1589,9 +1591,9 @@ def _us_state_after_address_line(text: str, start: int) -> bool:
         return False
     for words in range(1, 4):
         j = i
-        while j > 0 and _STREET_LETTER_RE.fullmatch(text[j - 1]):
+        while j > 0 and text[j - 1] in _STREET_LETTERS:
             j -= 1
-        if i - j < 2 or _STREET_UPPER_RE.fullmatch(text[j]) is None:
+        if i - j < 2 or text[j] not in _STREET_UPPER:
             return False
         i = j
         if i > 0 and text[i - 1] == "\n":
