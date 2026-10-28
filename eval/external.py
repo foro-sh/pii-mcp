@@ -1,57 +1,43 @@
-"""External benchmark: score pii-mcp against real ai4privacy text.
+"""External benchmark: score pii-mcp against ai4privacy text.
 
-    python eval/external.py                  # phone/address/structured-id recall+precision
+    python eval/external.py                  # email/phone/address/structured-id scores
     python eval/external.py --ner             # also print person/place (context only)
     python eval/external.py --n 500 --seed 1  # larger sample, different draw
 
 Opt-in: needs the ``datasets`` package (``pip install -e ".[eval]"``) and
-network access to the Hugging Face Hub. The validation split is ~900 MB and
-is cached by ``datasets`` after the first run; it is never vendored into this
-repository.
+network access to the Hugging Face Hub. The validation split is streamed on
+every run (about two minutes for the default sample) and never stored in
+this repository. ``PII_MCP_BACKEND`` picks the backend (default ``python``).
 
-Dataset: ``ai4privacy/pii-masking-openpii-1m`` (CC BY 4.0), not the
-``ai4privacy/pii-masking-300k`` dataset named in issue #56. That dataset's
-license restricts use to non-commercial academic research and forbids
-derivative products without a separate written license from AI4Privacy,
-terms this MIT-licensed, commercially deployed package cannot meet. The
-``openpii`` dataset is the CC-BY sibling from the same project: same
-``privacy_mask`` schema, same ``en``/``nl``/``de`` locales, licensed for
-reuse with attribution. Credit: AI4Privacy, ai4privacy/pii-masking-openpii-1m,
-https://huggingface.co/datasets/ai4privacy/pii-masking-openpii-1m (CC BY 4.0).
+Dataset: ``ai4privacy/pii-masking-openpii-1m``, pinned to revision
+``DATASET_REVISION`` so a seed always draws the same texts. It is synthetic
+text with PII annotations, licensed CC BY 4.0. Credit: Ai4Privacy / Ai Suisse
+SA, https://huggingface.co/datasets/ai4privacy/pii-masking-openpii-1m. The
+``ai4privacy/pii-masking-300k`` dataset named in issue #56 is not used: its
+license allows only non-commercial research use and no derivative products,
+which this MIT-licensed, commercially used package cannot meet.
 
-Its 19-label set has no IP/MAC/IBAN/coordinate labels, so this benchmark
-cannot score recall for those categories; ``eval/score.py``'s synthetic
-generators already cover them. Masked runs pii-mcp labels IP, email, IBAN,
-BIC, MAC, IMEI or location also carry no per-group precision here, for the
-same reason; they still count in ``no_gold_overlap_rate``.
+The dataset has no IP, MAC, IBAN or coordinate labels, so recall for those
+categories is not scored here; ``eval/score.py`` covers them. Runs pii-mcp
+labels ``IP``, ``IBAN``, ``BIC``, ``MAC``, ``IMEI``, ``LOCATION`` or
+``LICENSE_PLATE`` get no per-group precision for the same reason; they still
+count in ``no_gold_overlap_rate``.
 
-Scoring: for each text, pii-mcp's output is aligned back to the source by
-anchoring the literal (non-placeholder) chunks of the output onto the source
-in order with ``str.find``; whatever source text falls between two anchors
-is the span the placeholder between them replaced. A character-level
-``difflib`` diff was tried first and rejected: a placeholder such as
-``[ADDRESS]`` can share a letter with nearby source text (``...Street`` /
-``...[ADDRE``), and ``SequenceMatcher`` then aligns on that coincidence,
-splitting one masked span into two and losing its placeholder label.
-Anchoring on whole literal chunks avoids that failure mode; its own
-remaining edge case (two placeholders with nothing between them) is
-documented on ``_diff_runs``. A gold span counts as caught when none of its
-alphanumeric characters survive unchanged in the output; a gold span with no
-alphanumeric characters at all (an empty or punctuation-only annotation, a
-known noise pattern in crowd-labeled PII datasets) is not scored either way.
-Gold labels are
-grouped: ``person`` (GIVENNAME, SURNAME), ``street_address`` (STREET,
-BUILDINGNUM, ZIPCODE), ``place`` (CITY), ``phone`` (TELEPHONENUM) and
-``structured_id`` (SOCIALNUM, TAXNUM, IDCARDNUM, PASSPORTNUM,
-DRIVERLICENSENUM, CREDITCARDNUMBER). ``person`` and ``place`` are printed
-only with ``--ner``: pii-mcp's pattern layer does not target prose names or
-city/place names (README "Scope"; a Presidio/NER sidecar owns that tier on
-foro), so they are reported as platform-baseline context, never a gate.
+Scoring: each scrubbed text is aligned back to its source (see
+``_diff_runs``). A gold span counts as caught when none of its alphanumeric
+characters survive unchanged; a gold span with no alphanumeric characters is
+not scored. Gold labels are grouped: ``person`` (GIVENNAME, SURNAME),
+``street_address`` (STREET, BUILDINGNUM, ZIPCODE), ``place`` (CITY),
+``email`` (EMAIL), ``phone`` (TELEPHONENUM) and ``structured_id``
+(SOCIALNUM, TAXNUM, IDCARDNUM, PASSPORTNUM, DRIVERLICENSENUM,
+CREDITCARDNUMBER). ``person`` and ``place`` are printed only with ``--ner``:
+the pattern layer does not target prose names or place names (README
+"Scope"), so they are context, never a target.
 
-Precision per group and the share of masked runs with no gold overlap at all
-both come from pii-mcp's own ``[LABEL]`` placeholders: each anchored run is
-attributed to the detector category named in its placeholder, then checked
-against gold spans of the matching group.
+Precision per group and the share of masked runs with no gold overlap both
+come from pii-mcp's ``[LABEL]`` placeholders: each run is attributed to the
+category in its placeholder and checked against gold spans of the matching
+group.
 
 The last line printed is machine-readable JSON.
 """
@@ -79,6 +65,7 @@ from pii_mcp import scrub_text  # noqa: E402
 _SPLIT_RE = re.compile(f"({PLACEHOLDER_RE.pattern})")
 
 DATASET = "ai4privacy/pii-masking-openpii-1m"
+DATASET_REVISION = "ecfdc547f4a0955600cfe6ab98ba2a162207fcc0"
 DATASET_URL = "https://huggingface.co/datasets/ai4privacy/pii-masking-openpii-1m"
 LANGUAGES: tuple[str, ...] = ("en", "nl", "de")
 DEFAULT_N = 300
@@ -88,6 +75,7 @@ GROUPS: dict[str, tuple[str, ...]] = {
     "person": ("GIVENNAME", "SURNAME"),
     "street_address": ("STREET", "BUILDINGNUM", "ZIPCODE"),
     "place": ("CITY",),
+    "email": ("EMAIL",),
     "phone": ("TELEPHONENUM",),
     "structured_id": (
         "SOCIALNUM",
@@ -106,6 +94,7 @@ CONTEXT_ONLY_GROUPS = frozenset({"person", "place"})
 MCP_LABEL_TO_GROUP: dict[str, str] = {
     "PERSON": "person",
     "ADDRESS": "street_address",
+    "EMAIL": "email",
     "PHONE": "phone",
     "BSN": "structured_id",
     "SSN": "structured_id",
@@ -113,7 +102,6 @@ MCP_LABEL_TO_GROUP: dict[str, str] = {
     "PASSPORT": "structured_id",
     "VAT_ID": "structured_id",
     "CREDIT_CARD": "structured_id",
-    "LICENSE_PLATE": "structured_id",
 }
 
 
@@ -130,7 +118,7 @@ def _load_sample(n_per_language: int, seed: int) -> list[tuple[str, dict]]:
             "eval/external.py needs the `datasets` package: "
             'pip install -e ".[eval]"'
         )
-    rows = load_dataset(DATASET, split="validation", streaming=True)
+    rows = load_dataset(DATASET, split="validation", streaming=True, revision=DATASET_REVISION)
     rng = random.Random(seed)
     buckets: dict[str, list[dict]] = {lang: [] for lang in LANGUAGES}
     seen: dict[str, int] = dict.fromkeys(LANGUAGES, 0)
@@ -269,6 +257,7 @@ def score_sample(sample: list[tuple[str, dict]]) -> dict:
 
     return {
         "dataset": DATASET,
+        "revision": DATASET_REVISION,
         "n_texts": len(sample),
         "per_group": per_group,
         "no_gold_overlap_rate": round(no_overlap_runs / total_runs, 4) if total_runs else 0.0,
@@ -285,7 +274,7 @@ def main() -> None:
     ap.add_argument("--ner", action="store_true", help="also print person/place (context only, not a target)")
     args = ap.parse_args()
 
-    print(f"ai4privacy/pii-masking-openpii-1m (CC BY 4.0): {DATASET_URL}")
+    print(f"{DATASET}@{DATASET_REVISION[:12]} (CC BY 4.0, Ai4Privacy / Ai Suisse SA): {DATASET_URL}")
     sample = _load_sample(args.n, args.seed)
     result = score_sample(sample)
 

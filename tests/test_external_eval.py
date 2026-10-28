@@ -133,16 +133,23 @@ def test_recall_counts_a_leaked_structured_id() -> None:
     assert result["per_group"]["structured_id"]["recall"] == 0.0
 
 
-def test_place_recall_is_zero_person_and_place_are_not_a_target() -> None:
-    sample = [_row("ship to 221B Baker Street, London", [
+def test_person_and_place_are_scored_but_not_masked() -> None:
+    sample = [_row("Jan Smit, ship to 221B Baker Street, London", [
+        ("GIVENNAME", "Jan"),
         ("BUILDINGNUM", "221B"),
         ("STREET", "Baker Street"),
         ("CITY", "London"),
     ])]
     result = score_sample(sample)
     assert result["per_group"]["street_address"] == {"n": 2, "recall": 1.0, "precision": 1.0}
-    assert result["per_group"]["place"]["recall"] == 0.0
-    assert result["per_group"]["place"]["precision"] is None
+    assert result["per_group"]["person"] == {"n": 1, "recall": 0.0, "precision": None}
+    assert result["per_group"]["place"] == {"n": 1, "recall": 0.0, "precision": None}
+
+
+def test_email_is_scored_as_its_own_group() -> None:
+    sample = [_row("Mail 1956AM@aol.com.", [("EMAIL", "1956AM@aol.com")])]
+    result = score_sample(sample)
+    assert result["per_group"]["email"] == {"n": 1, "recall": 1.0, "precision": 1.0}
 
 
 def test_masked_run_with_no_gold_span_counts_as_no_overlap() -> None:
