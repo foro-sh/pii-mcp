@@ -1792,8 +1792,7 @@ const NAME_LETTERS_RE = /^[\p{L}\p{M}]+$/u;
  * (lowercase particles — ``van``, ``der``, ``von``, … — don't count against
  * it). Gates the ambiguous ``name`` key: ``build-cache`` and ``true`` fail
  * this; ``Grabbe``, ``O'Brien`` and ``John Smith (verified)`` pass —
- * requiring *every* word to look like a name let one trailing annotation
- * hide the whole value, unmasked.
+ * one such word is enough, so a trailing annotation cannot hide a real name.
  *
  * Character classes are spelled out so every backend agrees: words split on
  * Unicode ``White_Space``; a word passes when its first character is an

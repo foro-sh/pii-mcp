@@ -1164,11 +1164,9 @@ mod tests {
         assert_eq!(r.counts["person"], 1);
     }
 
+    /// A real name followed by a parenthetical or suffix is still masked.
     #[test]
     fn ambiguous_key_gate_does_not_leak_on_a_trailing_annotation() {
-        // A real name followed by a parenthetical/suffix must still be
-        // masked: requiring every word to look like a name let one trailing
-        // annotation hide the whole value, unmasked.
         let langs = [LanguageCode::En, LanguageCode::Nl, LanguageCode::De];
         for (text, expected) in [
             (

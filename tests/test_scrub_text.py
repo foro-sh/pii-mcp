@@ -833,8 +833,7 @@ class TestUkPostcode:
         assert result["counts"]["address"] == 2
 
     def test_masks_inside_json(self) -> None:
-        # "city" is a key-aware address field (issue #52): its value is
-        # masked too, on top of the postcode the pattern detector alone finds.
+        """The postcode is masked by its pattern and ``city`` by its key."""
         result = scrub_text(
             '{"postcode": "EC1A 1BB", "city": "London"}', languages=["en"]
         )
@@ -1186,9 +1185,8 @@ class TestKeyAwareMasking:
     def test_ambiguous_key_gate_does_not_leak_on_a_trailing_annotation(
         self, text: str, expected: str
     ) -> None:
-        """A real name followed by a parenthetical/suffix must still be
-        masked: requiring every word to look like a name let one trailing
-        annotation hide the whole value, unmasked."""
+        """A real name followed by a parenthetical or suffix is still
+        masked."""
         result = scrub_text(text, languages=["en", "nl", "de"])
         assert result["text"] == expected
         assert result["counts"]["person"] == 1

@@ -643,8 +643,8 @@ CLEAN: list[tuple[str, Callable[[R], str]]] = [
     ("uk_postcode_product", lambda r: r.choice(["A4 2PK", "PS5 1TB", "A1 2PK"])),
     # ITIN-shaped, but group 89 / 93 (other TINs) or outside the ITIN ranges.
     ("itin_shaped", lambda r: f"9{_digits(r, 2)}-{r.choice(['89', '93', '40', '69'])}-{_digits(r, 4)}"),
-    # Hard negatives for key-aware masking (issue #52): "name", "state" and a
-    # compound key that only looks like a recognized one.
+    # Key-aware masking (issue #52): keys and values that only look like a
+    # recognized field.
     ("key_name_hard_negative", lambda r: f'name: "{r.choice(["build-cache", "staging", "default"])}"'),
     ("key_state_hard_negative", lambda r: f"state: {r.choice(['active', 'running', 'completed', 'pending'])}"),
     ("key_state_status_hard_negative", lambda r: r.choice(["State: Running", "Last State: Terminated", '"state": "ACTIVE"', "State: Waiting"])),

@@ -967,9 +967,7 @@ describe("scrubText", () => {
     expect(result.counts.address).toBe(2);
   });
 
-  it("masks a UK postcode inside JSON", () => {
-    // "city" is a key-aware address field (issue #52): its value is masked
-    // too, on top of the postcode the pattern detector alone finds.
+  it("masks a UK postcode and a key-aware city inside JSON", () => {
     const result = scrubText('{"postcode": "EC1A 1BB", "city": "London"}', {
       languages: ["en"],
     });
@@ -1270,9 +1268,6 @@ describe("key-aware masking", () => {
   ])(
     "the ambiguous key gate does not leak on a trailing annotation: %s",
     (text, expected) => {
-      // A real name followed by a parenthetical/suffix must still be
-      // masked: requiring every word to look like a name let one trailing
-      // annotation hide the whole value, unmasked.
       const result = scrubText(text, { languages: ["en", "nl", "de"] });
       expect(result.text).toBe(expected);
       expect(result.counts.person).toBe(1);

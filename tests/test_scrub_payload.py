@@ -207,9 +207,7 @@ def test_key_aware_masking_by_dict_key() -> None:
 
 
 def test_ambiguous_key_gate_does_not_leak_on_a_trailing_annotation() -> None:
-    """A real name with a trailing annotation must still be masked whole:
-    requiring every word to look like a name let one annotation hide the
-    whole value, unmasked."""
+    """A real name with a trailing annotation is still masked whole."""
     result = scrub_payload(
         {"name": "John Smith (verified)"}, languages=["en", "nl", "de"]
     )

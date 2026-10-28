@@ -33,6 +33,9 @@ NOISE = "0123456789abcdefABx:.,;-/ @+()\n"
 
 
 def sample(r: random.Random) -> str:
+    """Random text mixing PII values, clean hard negatives, key-value pairs
+    (``PII_KEYED``, so the key-aware scanner is compared across backends
+    too) and noise characters."""
     parts = []
     for _ in range(r.randint(1, 4)):
         roll = r.random()
@@ -41,9 +44,6 @@ def sample(r: random.Random) -> str:
         elif roll < 0.55:
             parts.append(r.choice(CLEAN)[1](r))
         elif roll < 0.7:
-            # Key-value context (issue #52): without this branch the
-            # key-aware regex/gate logic in every backend gets no coverage
-            # from this cross-backend fuzz harness at all.
             _cat, gen, _langs, templates = r.choice(PII_KEYED)
             parts.append(r.choice(templates).replace("{}", gen(r)))
         else:

@@ -1687,9 +1687,8 @@ def looks_like_name(value: str) -> bool:
     """True when at least one word looks like a capitalized name/place part
     (lowercase particles — ``van``, ``der``, ``von``, … — don't count against
     it). Gates the ambiguous ``name`` key: ``build-cache`` and ``true`` fail
-    this; ``Grabbe``, ``O'Brien`` and ``John Smith (verified)`` pass —
-    requiring *every* word to look like a name let one trailing annotation
-    hide the whole value, unmasked.
+    this; ``Grabbe``, ``O'Brien`` and ``John Smith (verified)`` pass. One
+    such word is enough, so a trailing annotation cannot hide a real name.
 
     Character classes are spelled out so every backend agrees: words split
     on Unicode ``White_Space``; a word passes when its first character is an
