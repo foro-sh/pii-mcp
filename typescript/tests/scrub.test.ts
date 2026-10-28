@@ -1150,6 +1150,17 @@ describe("scrubText", () => {
     expect(scrubText(text, { languages }).text).toBe(expected);
   });
 
+  it.each<[string, string[], string]>([
+    ["PLZ/Ort: 33602 Gütersloh", ["de"], "[ADDRESS] Gütersloh"],
+    ["PLZ / Ort: 33602 Gütersloh", ["de"], "[ADDRESS] Gütersloh"],
+    ["PLZ und Ort: 33602 Gütersloh", ["de"], "[ADDRESS] Gütersloh"],
+    ["PLZ, Ort: 33602 Gütersloh", ["de"], "[ADDRESS] Gütersloh"],
+    ["PLZ & Ort: 10115 Berlin", ["de"], "[ADDRESS] Berlin"],
+    ["PLZ, 33602", ["de"], "PLZ, 33602"],
+  ])("masks a DE postcode after a PLZ/Ort label (%s)", (text, languages, expected) => {
+    expect(scrubText(text, { languages }).text).toBe(expected);
+  });
+
   it.each([["ZIP: 80920"], ["zip code 80920"], ["postal code: 80920"]])(
     "masks a US ZIP with a label (%s)",
     (value) => {

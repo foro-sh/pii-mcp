@@ -1413,8 +1413,12 @@ street_de_detector = Detector(
 street_en_detector = Detector(type="address", scrub=_scrub_street(STREET_EN_RE))
 
 _POSTCODE_SPACE = rf"[{_STREET_SEP_CHARS}]"
+_POSTCODE_ORT = (
+    rf"(?:{_POSTCODE_SPACE}{{0,3}}(?:/|,|&|(?i:und)){_POSTCODE_SPACE}{{0,3}}(?i:ort))?"
+)
 _POSTCODE_LABEL = (
-    rf"(?i:plz|postleitzahl|postal{_POSTCODE_SPACE}?code|postcode|zip(?:{_POSTCODE_SPACE}?code)?)"
+    rf"(?:(?i:plz){_POSTCODE_ORT}"
+    rf"|(?i:postleitzahl|postal{_POSTCODE_SPACE}?code|postcode|zip(?:{_POSTCODE_SPACE}?code)?))"
     rf"{_POSTCODE_SPACE}{{0,3}}(?:[:\-]{_POSTCODE_SPACE}{{0,3}})?"
 )
 

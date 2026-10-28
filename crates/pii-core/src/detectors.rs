@@ -2006,7 +2006,7 @@ fn scrub_street_en(text: &str) -> (Option<String>, u32) {
 fn postcode_label() -> String {
     let sp = r"[\x20\t\u{a0}\u{202f}]";
     format!(
-        r"(?:(?i-u:plz|postleitzahl|postcode)|(?i-u:postal){sp}?(?i-u:code)|(?i-u:zip)(?:{sp}?(?i-u:code))?){sp}{{0,3}}(?:[:\-]{sp}{{0,3}})?"
+        r"(?:(?i-u:plz)(?:{sp}{{0,3}}(?:/|,|&|(?i-u:und)){sp}{{0,3}}(?i-u:ort))?|(?i-u:postleitzahl|postcode)|(?i-u:postal){sp}?(?i-u:code)|(?i-u:zip)(?:{sp}?(?i-u:code))?){sp}{{0,3}}(?:[:\-]{sp}{{0,3}})?"
     )
 }
 

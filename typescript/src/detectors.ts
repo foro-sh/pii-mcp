@@ -1497,7 +1497,9 @@ function caseInsensitiveLiteral(word: string): string {
 
 const POSTCODE_SPACE = `[${STREET_SEP_CHARS}]`;
 const POSTCODE_LABEL =
-  `(?:${caseInsensitiveLiteral("plz")}|${caseInsensitiveLiteral("postleitzahl")}` +
+  `(?:${caseInsensitiveLiteral("plz")}` +
+  `(?:${POSTCODE_SPACE}{0,3}(?:/|,|&|${caseInsensitiveLiteral("und")})${POSTCODE_SPACE}{0,3}${caseInsensitiveLiteral("ort")})?` +
+  `|${caseInsensitiveLiteral("postleitzahl")}` +
   `|${caseInsensitiveLiteral("postal")}${POSTCODE_SPACE}?${caseInsensitiveLiteral("code")}` +
   `|${caseInsensitiveLiteral("postcode")}` +
   `|${caseInsensitiveLiteral("zip")}(?:${POSTCODE_SPACE}?${caseInsensitiveLiteral("code")})?)` +

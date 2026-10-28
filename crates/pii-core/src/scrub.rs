@@ -939,6 +939,23 @@ mod tests {
     }
 
     #[test]
+    fn de_postcode_after_a_plz_ort_label() {
+        let cases: [(&str, &[&str], &str); 6] = [
+            ("PLZ/Ort: 33602 Gütersloh", &["de"][..], "[ADDRESS] Gütersloh"),
+            ("PLZ / Ort: 33602 Gütersloh", &["de"][..], "[ADDRESS] Gütersloh"),
+            ("PLZ und Ort: 33602 Gütersloh", &["de"][..], "[ADDRESS] Gütersloh"),
+            ("PLZ, Ort: 33602 Gütersloh", &["de"][..], "[ADDRESS] Gütersloh"),
+            ("PLZ & Ort: 10115 Berlin", &["de"][..], "[ADDRESS] Berlin"),
+            ("PLZ, 33602", &["de"][..], "PLZ, 33602"),
+        ];
+        for (text, languages, expected) in cases {
+            let langs: Vec<String> = languages.iter().map(|l| l.to_string()).collect();
+            let r = scrub_text(text, Some(&langs), true).unwrap();
+            assert_eq!(r.text, expected, "{text}");
+        }
+    }
+
+    #[test]
     fn de_postcode_rejects_an_arbitrary_capitalized_word() {
         // German nouns are always capitalized, so a city allowlist is required.
         let langs = vec!["de".to_string()];
