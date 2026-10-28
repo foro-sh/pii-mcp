@@ -41,7 +41,6 @@ dev = [
 native = [
   "maturin>=1.7",
 ]
-# Optional: eval/external.py, an opt-in benchmark against a real-text dataset.
 eval = [
   "datasets>=2.18",
 ]

@@ -67,9 +67,10 @@ python eval/score.py                         # loss, false positives, ReDoS, per
 
 `eval/score.py` must print `"ok": true`.
 
-Optional: `python eval/external.py` scores pii-mcp against a real-text sample
-(`pip install -e ".[eval]"`; needs network access on first run). See its
-module docstring for the dataset, license and scoring method.
+Optional: `python eval/external.py` scores pii-mcp against a sample of the
+synthetic ai4privacy OpenPII dataset (`pip install -e ".[eval]"`; streams
+the data from the Hugging Face Hub on every run). See its module docstring
+for the dataset, license and scoring method.
 
 ## Commits and releases
 
