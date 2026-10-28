@@ -10,6 +10,8 @@ from __future__ import annotations
 
 import json
 import os
+import random
+import re
 import subprocess
 import sys
 import time
@@ -90,6 +92,31 @@ def test_align_runs_does_not_anchor_inside_the_masked_value() -> None:
 
 def test_align_runs_returns_none_when_literals_do_not_fit() -> None:
     assert _align_runs("a 0612345678 b SECRET", "a [PHONE] b X") is None
+
+
+def _regex_placement(source: str, output: str, lazy: bool) -> list[tuple[int, int]] | None:
+    literals, groups = external._split_output(output)
+    gap = "(.+?)" if lazy else "(.+)"
+    pattern = gap.join(re.escape(literal) for literal in literals)
+    match = re.fullmatch(pattern, source, re.DOTALL)
+    return None if match is None else [match.span(k + 1) for k in range(len(groups))]
+
+
+def test_align_runs_matches_the_earliest_and_latest_regex_placements() -> None:
+    rng = random.Random(0)
+    for _ in range(3000):
+        source = "".join(rng.choice("ab. \nß[") for _ in range(rng.randint(0, 9)))
+        parts = [rng.choice(["a", ".", " ", "b.", "[PHONE]", "[EMAIL]"]) for _ in range(rng.randint(0, 5))]
+        output = "".join(parts)
+        earliest = _regex_placement(source, output, lazy=True)
+        aligned = _align_runs(source, output)
+        if earliest is None:
+            assert aligned is None, (source, output)
+            continue
+        assert aligned is not None, (source, output)
+        _, runs, ambiguous = aligned
+        assert sorted({(start, end) for start, end, _ in runs}) == earliest, (source, output)
+        assert ambiguous == (earliest != _regex_placement(source, output, lazy=False)), (source, output)
 
 
 def test_align_runs_is_linear_when_literals_do_not_fit() -> None:
@@ -235,6 +262,7 @@ def test_main_prints_pattern_groups_and_json(
         for lang in external.LANGUAGES
     ]
     _fake_datasets(monkeypatch, rows)
+    monkeypatch.delenv("PII_MCP_BACKEND", raising=False)
     monkeypatch.setattr(sys, "argv", ["external.py", "--n", "1"])
     external.main()
     lines = capsys.readouterr().out.splitlines()
