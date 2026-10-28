@@ -8,6 +8,7 @@ Python detectors without touching the Hugging Face Hub.
 
 from __future__ import annotations
 
+import json
 import os
 import subprocess
 import sys
@@ -221,3 +222,27 @@ def test_load_sample_exits_when_a_language_has_too_few_rows(
     with pytest.raises(SystemExit):
         external._load_sample(1, seed=0)
 
+
+def test_main_prints_pattern_groups_and_json(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    rows = [
+        {
+            "language": lang,
+            "source_text": "Call 0611222333 now",
+            "privacy_mask": [{"label": "TELEPHONENUM", "start": 5, "end": 15}],
+        }
+        for lang in external.LANGUAGES
+    ]
+    _fake_datasets(monkeypatch, rows)
+    monkeypatch.setattr(sys, "argv", ["external.py", "--n", "1"])
+    external.main()
+    lines = capsys.readouterr().out.splitlines()
+    assert "phone: recall=1.0 precision=1.0 n=3" in lines
+    assert not any(line.startswith(("person:", "place:")) for line in lines)
+    assert json.loads(lines[-1])["per_group"]["phone"]["recall"] == 1.0
+
+    monkeypatch.setattr(sys, "argv", ["external.py", "--n", "1", "--ner"])
+    external.main()
+    lines = capsys.readouterr().out.splitlines()
+    assert any(line.startswith("person:") and "(context only" in line for line in lines)
