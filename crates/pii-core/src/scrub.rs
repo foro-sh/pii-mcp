@@ -994,7 +994,6 @@ mod tests {
 
     #[test]
     fn de_postcode_rejects_an_arbitrary_capitalized_word() {
-        // German nouns are always capitalized, so a city allowlist is required.
         let langs = vec!["de".to_string()];
         let r = scrub_text("12345 Dinge erledigt", Some(&langs), true).unwrap();
         assert_eq!(r.text, "12345 Dinge erledigt");
@@ -1029,8 +1028,6 @@ mod tests {
 
     #[test]
     fn near_address_window_does_not_reach_a_distant_hit() {
-        // A state-code hit must not legitimize a distant,
-        // unrelated bare number a full clause away.
         let langs = vec!["en".to_string(), "de".to_string()];
         let r = scrub_text(
             "order 10115, Salem, OR 90210, count: 80920",

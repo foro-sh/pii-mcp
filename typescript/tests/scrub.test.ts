@@ -1056,7 +1056,6 @@ describe("scrubText", () => {
   });
 
   it("does not mask an arbitrary capitalized word after a DE postcode", () => {
-    // German nouns are always capitalized, so a city allowlist is required.
     const result = scrubText("12345 Dinge erledigt", { languages: ["de"] });
     expect(result.counts.address).toBe(0);
     expect(result.text).toBe("12345 Dinge erledigt");
