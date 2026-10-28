@@ -1632,20 +1632,37 @@ function usZipStatePrefixOk(value: string): boolean {
 
 const STREET_SEP_SET = new Set([" ", "\t", "\u00a0", "\u202f"]);
 const STREET_LETTER_RE = new RegExp(`^[${STREET_UP}${STREET_LOW}]$`);
+const STREET_UPPER_RE = new RegExp(`^[${STREET_UP}]$`);
+const US_STATUS_WORDS = new Set(
+  "Done Error Failed Warning Info Success Status Result"
+    .split(" ")
+    .flatMap((word) => [word, word.toUpperCase()]),
+);
 
 /**
- * True when ``start`` follows a word, a comma and one to three spaces.
+ * True when ``start`` follows a city, a comma and one to three spaces.
  *
  * That is the ``City, ST 12345`` shape. A state code that merely collides
- * with a token before a number (``merged PR 48213``, ``Total DE 12345``,
- * ``route via AS 13335``) has no comma after a word in front of it.
+ * with a token before a number (``merged PR 48213``, ``Total DE 12345``)
+ * has no comma in front of it. The word before the comma must start
+ * uppercase and run at least three letters, which keeps log prose
+ * (``Request failed, ID 12345``) clean; status words that start a log line
+ * (``Done, OK 20000 rows``, ``Error, IN 12345``) are denied by name.
  */
 function usStateAfterCity(text: string, start: number): boolean {
   let i = start;
   while (i > 0 && start - i < 3 && STREET_SEP_SET.has(text[i - 1] ?? "")) {
     i -= 1;
   }
-  return i < start && i >= 2 && text[i - 1] === "," && STREET_LETTER_RE.test(text[i - 2] ?? "");
+  if (i === start || i === 0 || text[i - 1] !== ",") {
+    return false;
+  }
+  let j = i - 1;
+  while (j > 0 && STREET_LETTER_RE.test(text[j - 1] ?? "")) {
+    j -= 1;
+  }
+  const word = text.slice(j, i - 1);
+  return word.length >= 3 && STREET_UPPER_RE.test(word[0] ?? "") && !US_STATUS_WORDS.has(word);
 }
 
 /**

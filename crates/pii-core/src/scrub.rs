@@ -1098,6 +1098,26 @@ mod tests {
     }
 
     #[test]
+    fn us_state_code_needs_a_city_before_the_comma() {
+        let cases: [(&str, &[&str], &str); 9] = [
+            ("Request failed, ID 12345", &["en", "de"][..], "Request failed, ID 12345"),
+            ("Order shipped, ID 48213", &["en", "de"][..], "Order shipped, ID 48213"),
+            ("Done, OK 20000 rows", &["en", "de"][..], "Done, OK 20000 rows"),
+            ("Error, IN 12345", &["en", "de"][..], "Error, IN 12345"),
+            ("ERROR, IN 12345", &["en", "de"][..], "ERROR, IN 12345"),
+            ("Springfield, IL 62704", &["en"][..], "Springfield, [ADDRESS]"),
+            ("DENVER, CO 80202", &["en"][..], "DENVER, [ADDRESS]"),
+            ("Colorado Springs, CO 80920-1406", &["en"][..], "Colorado Springs, [ADDRESS]"),
+            ("Ely, NV 89301", &["en"][..], "Ely, [ADDRESS]"),
+        ];
+        for (text, languages, expected) in cases {
+            let langs: Vec<String> = languages.iter().map(|l| l.to_string()).collect();
+            let r = scrub_text(text, Some(&langs), true).unwrap();
+            assert_eq!(r.text, expected, "{text}");
+        }
+    }
+
+    #[test]
     fn us_zip_rejects_an_unknown_two_letter_prefix() {
         let langs = vec!["en".to_string()];
         let r = scrub_text("batch XX 80920", Some(&langs), true).unwrap();

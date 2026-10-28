@@ -1281,6 +1281,26 @@ class TestUsZip:
     def test_masks_a_state_code_after_a_city_or_street(self, text: str, expected: str) -> None:
         assert scrub_text(text, languages=["en"])["text"] == expected
 
+    @pytest.mark.parametrize(
+        ("text", "languages", "expected"),
+        [
+            ("Request failed, ID 12345", ["en", "de"], "Request failed, ID 12345"),
+            ("Order shipped, ID 48213", ["en", "de"], "Order shipped, ID 48213"),
+            ("Done, OK 20000 rows", ["en", "de"], "Done, OK 20000 rows"),
+            ("Error, IN 12345", ["en", "de"], "Error, IN 12345"),
+            ("ERROR, IN 12345", ["en", "de"], "ERROR, IN 12345"),
+            ("Springfield, IL 62704", ["en"], "Springfield, [ADDRESS]"),
+            ("DENVER, CO 80202", ["en"], "DENVER, [ADDRESS]"),
+            ("Colorado Springs, CO 80920-1406", ["en"], "Colorado Springs, [ADDRESS]"),
+            ("Ely, NV 89301", ["en"], "Ely, [ADDRESS]"),
+        ],
+    )
+    def test_state_code_needs_a_city_before_the_comma(
+        self, text: str, languages: list[str], expected: str
+    ) -> None:
+        """Log prose puts a lowercase word or a status word before the comma."""
+        assert scrub_text(text, languages=languages)["text"] == expected
+
     def test_rejects_an_unknown_two_letter_prefix(self) -> None:
         result = scrub_text("batch XX 80920", languages=["en"])
         assert result["counts"]["address"] == 0

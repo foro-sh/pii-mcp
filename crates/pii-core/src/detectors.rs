@@ -2110,24 +2110,41 @@ fn us_zip_re() -> &'static Regex {
     })
 }
 
-/// True when `start` follows a word, a comma and one to three spaces.
+/// True when `start` follows a city, a comma and one to three spaces.
 ///
 /// That is the `City, ST 12345` shape. A state code that merely collides
-/// with a token before a number (`merged PR 48213`, `Total DE 12345`,
-/// `route via AS 13335`) has no comma after a word in front of it.
+/// with a token before a number (`merged PR 48213`, `Total DE 12345`)
+/// has no comma in front of it. The word before the comma must start
+/// uppercase and run at least three letters, which keeps log prose
+/// (`Request failed, ID 12345`) clean; status words that start a log line
+/// (`Done, OK 20000 rows`, `Error, IN 12345`) are denied by name.
 fn us_state_after_city(text: &str, start: usize) -> bool {
-    let mut back = text[..start].chars().rev();
-    let mut seps = 0;
-    let mut next = back.next();
-    while seps < 3 && matches!(next, Some(' ' | '\t' | '\u{a0}' | '\u{202f}')) {
-        seps += 1;
-        next = back.next();
+    const STATUS_WORDS: &[&str] = &[
+        "Done", "Error", "Failed", "Warning", "Info", "Success", "Status", "Result",
+    ];
+    let before = text[..start].trim_end_matches([' ', '\t', '\u{a0}', '\u{202f}']);
+    let seps = text[before.len()..start].chars().count();
+    if seps == 0 || seps > 3 {
+        return false;
     }
-    seps > 0
-        && next == Some(',')
-        && back.next().is_some_and(|c| {
-            matches!(c, 'A'..='Z' | 'a'..='z' | '\u{c0}'..='\u{d6}' | '\u{d8}'..='\u{f6}' | '\u{f8}'..='\u{17f}')
-        })
+    let Some(before) = before.strip_suffix(',') else {
+        return false;
+    };
+    let city = before.trim_end_matches(is_street_letter);
+    let word = &before[city.len()..];
+    word.chars().count() >= 3
+        && word.starts_with(is_street_upper)
+        && !STATUS_WORDS
+            .iter()
+            .any(|w| *w == word || w.chars().map(|c| c.to_ascii_uppercase()).eq(word.chars()))
+}
+
+fn is_street_letter(c: char) -> bool {
+    is_street_upper(c) || matches!(c, 'a'..='z' | '\u{df}'..='\u{f6}' | '\u{f8}'..='\u{17f}')
+}
+
+fn is_street_upper(c: char) -> bool {
+    matches!(c, 'A'..='Z' | '\u{c0}'..='\u{d6}' | '\u{d8}'..='\u{de}')
 }
 
 /// Accept a US ZIP hit by the hint its branch matched.

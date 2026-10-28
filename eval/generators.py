@@ -629,6 +629,8 @@ CLEAN: list[tuple[str, Callable[[R], str]]] = [
     ("postcode_label_word", lambda r: r.choice([f"zip {_digits(r, 5)} files into one archive", f"ZIP {_digits(r, 5)} bytes compressed", f"plz {_digits(r, 5)} thx"])),
     # A state code that is just a token before a number, not ``City, ST``.
     ("us_state_code_word", lambda r: f"{r.choice(['Ticket ID', 'merged PR', 'route via AS', 'HTTP OK', 'Total DE', 'choose red OR', 'paid IN'])} {_digits(r, 5)}"),
+    # Log prose with a comma before the code: a lowercase word or a status word.
+    ("us_state_code_log", lambda r: f"{r.choice(['Request failed, ID', 'Order shipped, ID', 'Done, OK', 'Error, IN'])} {_digits(r, 5)}"),
 ]
 
 # Clean text that looks like PII to any pattern matcher (bare 9-digit ids vs

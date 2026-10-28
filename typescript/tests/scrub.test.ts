@@ -1232,6 +1232,20 @@ describe("scrubText", () => {
     expect(scrubText(text, { languages: ["en"] }).text).toBe(expected);
   });
 
+  it.each<[string, string[], string]>([
+    ["Request failed, ID 12345", ["en", "de"], "Request failed, ID 12345"],
+    ["Order shipped, ID 48213", ["en", "de"], "Order shipped, ID 48213"],
+    ["Done, OK 20000 rows", ["en", "de"], "Done, OK 20000 rows"],
+    ["Error, IN 12345", ["en", "de"], "Error, IN 12345"],
+    ["ERROR, IN 12345", ["en", "de"], "ERROR, IN 12345"],
+    ["Springfield, IL 62704", ["en"], "Springfield, [ADDRESS]"],
+    ["DENVER, CO 80202", ["en"], "DENVER, [ADDRESS]"],
+    ["Colorado Springs, CO 80920-1406", ["en"], "Colorado Springs, [ADDRESS]"],
+    ["Ely, NV 89301", ["en"], "Ely, [ADDRESS]"],
+  ])("needs a city before the comma ahead of a US state code (%s)", (text, languages, expected) => {
+    expect(scrubText(text, { languages }).text).toBe(expected);
+  });
+
   it("rejects an unknown two-letter prefix before a US ZIP", () => {
     const result = scrubText("batch XX 80920", { languages: ["en"] });
     expect(result.counts.address).toBe(0);

@@ -1536,23 +1536,37 @@ US_ZIP_RE = re.compile(
 
 
 _STREET_LETTER_RE = re.compile(f"[{_STREET_UP}{_STREET_LOW}]")
+_STREET_UPPER_RE = re.compile(f"[{_STREET_UP}]")
+_US_STATUS_WORDS = frozenset(
+    form
+    for word in "Done Error Failed Warning Info Success Status Result".split()
+    for form in (word, word.upper())
+)
 
 
 def _us_state_after_city(text: str, start: int) -> bool:
-    """True when ``start`` follows a word, a comma and one to three spaces.
+    """True when ``start`` follows a city, a comma and one to three spaces.
 
     That is the ``City, ST 12345`` shape. A state code that merely collides
-    with a token before a number (``merged PR 48213``, ``Total DE 12345``,
-    ``route via AS 13335``) has no comma after a word in front of it.
+    with a token before a number (``merged PR 48213``, ``Total DE 12345``)
+    has no comma in front of it. The word before the comma must start
+    uppercase and run at least three letters, which keeps log prose
+    (``Request failed, ID 12345``) clean; status words that start a log line
+    (``Done, OK 20000 rows``, ``Error, IN 12345``) are denied by name.
     """
     i = start
     while i > 0 and start - i < 3 and text[i - 1] in _STREET_SEP_CHARS_SET:
         i -= 1
+    if i == start or i == 0 or text[i - 1] != ",":
+        return False
+    j = i - 1
+    while j > 0 and _STREET_LETTER_RE.fullmatch(text[j - 1]):
+        j -= 1
+    word = text[j : i - 1]
     return (
-        i < start
-        and i >= 2
-        and text[i - 1] == ","
-        and _STREET_LETTER_RE.fullmatch(text[i - 2]) is not None
+        len(word) >= 3
+        and _STREET_UPPER_RE.fullmatch(word[0]) is not None
+        and word not in _US_STATUS_WORDS
     )
 
 
