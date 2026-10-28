@@ -4,8 +4,9 @@ Pattern-based PII redaction for MCP servers (regex + checksums). Same detectors
 as the Python package: emails, IBANs, cards, BICs, MACs, IMEIs, IPs, coordinates,
 BSNs, US SSNs and ITINs, UK National Insurance and NHS numbers, German tax
 IDs, Dutch BTW-ids, Dutch passport/ID numbers, phones, street + house number
-addresses, Dutch and UK postcodes, and Dutch license plates. Language packs:
-`en`, `nl`, and opt-in `de`.
+addresses, Dutch and UK postcodes, Dutch license plates, and names/addresses
+that sit right after a recognized EN/NL/DE field name (`last_name`, `vorname`,
+`straße`, `plz`, …). Language packs: `en`, `nl`, and opt-in `de`.
 
 FastMCP middleware stays Python-only (`pii_mcp.fastmcp`); this package is the
 core scrub API for Node/TypeScript callers.
@@ -36,8 +37,9 @@ When the napi addon is loadable, `scrubText` / `scrubPayload` use it.
 Force the JS path with `PII_MCP_BACKEND=js`. Require native with
 `PII_MCP_BACKEND=native`.
 
-`person` is pattern / key-aware when available; until then the count stays
-`0` (issue #52). Prose NER is out of band: Tier 1 (this package, no model)
+`person` is key-aware only (issue #52): a value right after a recognized
+field name (`name`, `first_name`, `vorname`, `naam`, …) is masked; there is no
+pattern for a bare name on its own. Prose NER is out of band: Tier 1 (this package, no model)
 in live MCP gates; Tier 2 (Presidio or another NER sidecar) on API paths.
 Do not run a second in-process NER beside Presidio. Details:
 [Using with foro / Presidio](https://github.com/foro-sh/pii-mcp#using-with-foro--presidio).

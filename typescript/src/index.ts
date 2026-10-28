@@ -3,8 +3,9 @@
  *
  * Sync, in-process, regex + checksum detectors, including street + house
  * number addresses. Optional Rust acceleration via the napi addon built from
- * ``crates/pii-mcp-napi``. ``person`` counts stay 0 until key-aware masking
- * (issue #52); in-process NER is out of scope.
+ * ``crates/pii-mcp-napi``. ``person`` is key-aware only (issue #52): a value
+ * right after a recognized field name (``last_name``, ``vorname``, ``naam``,
+ * …) is masked; in-process NER is out of scope.
  */
 
 export {
