@@ -262,7 +262,7 @@ def test_main_prints_pattern_groups_and_json(
         for lang in external.LANGUAGES
     ]
     _fake_datasets(monkeypatch, rows)
-    monkeypatch.delenv("PII_MCP_BACKEND", raising=False)
+    monkeypatch.setenv("PII_MCP_BACKEND", "python")
     monkeypatch.setattr(sys, "argv", ["external.py", "--n", "1"])
     external.main()
     lines = capsys.readouterr().out.splitlines()
