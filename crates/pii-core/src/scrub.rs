@@ -1118,6 +1118,24 @@ mod tests {
     }
 
     #[test]
+    fn us_state_code_on_a_usps_last_line() {
+        let cases: [(&str, &[&str], &str); 7] = [
+            ("123 Main St\nSpringfield IL 62704", &["en"][..], "[ADDRESS]\nSpringfield [ADDRESS]"),
+            ("123 Main St\r\nColorado Springs CO 80920-1406", &["en"][..], "[ADDRESS]\r\nColorado Springs [ADDRESS]"),
+            ("123 Main St\nSalt Lake City UT 84101", &["en"][..], "[ADDRESS]\nSalt Lake City [ADDRESS]"),
+            ("Springfield,IL 62704", &["en"][..], "Springfield,[ADDRESS]"),
+            ("Springfield IL 62704", &["en"][..], "Springfield IL 62704"),
+            ("123 Main St\nmerged PR 48213", &["en"][..], "[ADDRESS]\nmerged PR 48213"),
+            ("123 Main St\n\nSpringfield IL 62704", &["en"][..], "[ADDRESS]\n\nSpringfield IL 62704"),
+        ];
+        for (text, languages, expected) in cases {
+            let langs: Vec<String> = languages.iter().map(|l| l.to_string()).collect();
+            let r = scrub_text(text, Some(&langs), true).unwrap();
+            assert_eq!(r.text, expected, "{text}");
+        }
+    }
+
+    #[test]
     fn us_zip_rejects_an_unknown_two_letter_prefix() {
         let langs = vec!["en".to_string()];
         let r = scrub_text("batch XX 80920", Some(&langs), true).unwrap();

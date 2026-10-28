@@ -1094,7 +1094,7 @@ function usStateAfterCity(text, start) {
   while (i > 0 && start - i < 3 && STREET_SEP_SET.has(text[i - 1] ?? "")) {
     i -= 1;
   }
-  if (i === start || i === 0 || text[i - 1] !== ",") {
+  if (i === 0 || text[i - 1] !== ",") {
     return false;
   }
   let j = i - 1;
@@ -1104,6 +1104,37 @@ function usStateAfterCity(text, start) {
   const word = text.slice(j, i - 1);
   return word.length >= 3 && STREET_UPPER_RE.test(word[0] ?? "") && !US_STATUS_WORDS.has(word);
 }
+function usStateAfterAddressLine(text, start) {
+  let i = start;
+  while (i > 0 && start - i < 3 && STREET_SEP_SET.has(text[i - 1] ?? "")) {
+    i -= 1;
+  }
+  if (i === start) {
+    return false;
+  }
+  for (let words = 1; words <= 3; words += 1) {
+    let j = i;
+    while (j > 0 && STREET_LETTER_RE.test(text[j - 1] ?? "")) {
+      j -= 1;
+    }
+    if (i - j < 2 || !STREET_UPPER_RE.test(text[j] ?? "")) {
+      return false;
+    }
+    i = j;
+    if (i > 0 && text[i - 1] === "\n") {
+      i -= 1;
+      if (i > 0 && text[i - 1] === "\r") {
+        i -= 1;
+      }
+      return text.endsWith("[ADDRESS]", i);
+    }
+    if (words === 3 || i === 0 || !STREET_SEP_SET.has(text[i - 1] ?? "")) {
+      return false;
+    }
+    i -= 1;
+  }
+  return false;
+}
 function usZipAccept(text, start, end) {
   const value = text.slice(start, end);
   const accept = (() => {
@@ -1111,7 +1142,7 @@ function usZipAccept(text, start, end) {
       return postcodeAfterAddress(text, start);
     }
     if (usZipStatePrefixOk(value)) {
-      return US_STATE_ABBR.has(value.slice(0, 2)) && (usStateAfterCity(text, start) || postcodeAfterAddress(text, start));
+      return US_STATE_ABBR.has(value.slice(0, 2)) && (usStateAfterCity(text, start) || postcodeAfterAddress(text, start) || usStateAfterAddressLine(text, start));
     }
     return true;
   })();

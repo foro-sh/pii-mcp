@@ -1246,6 +1246,18 @@ describe("scrubText", () => {
     expect(scrubText(text, { languages }).text).toBe(expected);
   });
 
+  it.each<[string, string[], string]>([
+    ["123 Main St\nSpringfield IL 62704", ["en"], "[ADDRESS]\nSpringfield [ADDRESS]"],
+    ["123 Main St\r\nColorado Springs CO 80920-1406", ["en"], "[ADDRESS]\r\nColorado Springs [ADDRESS]"],
+    ["123 Main St\nSalt Lake City UT 84101", ["en"], "[ADDRESS]\nSalt Lake City [ADDRESS]"],
+    ["Springfield,IL 62704", ["en"], "Springfield,[ADDRESS]"],
+    ["Springfield IL 62704", ["en"], "Springfield IL 62704"],
+    ["123 Main St\nmerged PR 48213", ["en"], "[ADDRESS]\nmerged PR 48213"],
+    ["123 Main St\n\nSpringfield IL 62704", ["en"], "[ADDRESS]\n\nSpringfield IL 62704"],
+  ])("masks a US state code on a USPS last line (%s)", (text, languages, expected) => {
+    expect(scrubText(text, { languages }).text).toBe(expected);
+  });
+
   it("rejects an unknown two-letter prefix before a US ZIP", () => {
     const result = scrubText("batch XX 80920", { languages: ["en"] });
     expect(result.counts.address).toBe(0);

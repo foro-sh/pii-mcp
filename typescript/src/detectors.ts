@@ -1640,7 +1640,7 @@ const US_STATUS_WORDS = new Set(
 );
 
 /**
- * True when ``start`` follows a city, a comma and one to three spaces.
+ * True when ``start`` follows a city, a comma and up to three spaces.
  *
  * That is the ``City, ST 12345`` shape. A state code that merely collides
  * with a token before a number (``merged PR 48213``, ``Total DE 12345``)
@@ -1654,7 +1654,7 @@ function usStateAfterCity(text: string, start: number): boolean {
   while (i > 0 && start - i < 3 && STREET_SEP_SET.has(text[i - 1] ?? "")) {
     i -= 1;
   }
-  if (i === start || i === 0 || text[i - 1] !== ",") {
+  if (i === 0 || text[i - 1] !== ",") {
     return false;
   }
   let j = i - 1;
@@ -1663,6 +1663,46 @@ function usStateAfterCity(text: string, start: number): boolean {
   }
   const word = text.slice(j, i - 1);
   return word.length >= 3 && STREET_UPPER_RE.test(word[0] ?? "") && !US_STATUS_WORDS.has(word);
+}
+
+/**
+ * True when ``start`` follows a USPS last line after an address line.
+ *
+ * USPS Pub 28 writes ``CITY ST ZIP`` without a comma, on the line after
+ * the street: ``123 Main St\nSpringfield IL 62704``. One to three
+ * capitalized words before the code count when the line break before them
+ * directly follows an ``[ADDRESS]``.
+ */
+function usStateAfterAddressLine(text: string, start: number): boolean {
+  let i = start;
+  while (i > 0 && start - i < 3 && STREET_SEP_SET.has(text[i - 1] ?? "")) {
+    i -= 1;
+  }
+  if (i === start) {
+    return false;
+  }
+  for (let words = 1; words <= 3; words += 1) {
+    let j = i;
+    while (j > 0 && STREET_LETTER_RE.test(text[j - 1] ?? "")) {
+      j -= 1;
+    }
+    if (i - j < 2 || !STREET_UPPER_RE.test(text[j] ?? "")) {
+      return false;
+    }
+    i = j;
+    if (i > 0 && text[i - 1] === "\n") {
+      i -= 1;
+      if (i > 0 && text[i - 1] === "\r") {
+        i -= 1;
+      }
+      return text.endsWith("[ADDRESS]", i);
+    }
+    if (words === 3 || i === 0 || !STREET_SEP_SET.has(text[i - 1] ?? "")) {
+      return false;
+    }
+    i -= 1;
+  }
+  return false;
 }
 
 /**
@@ -1682,7 +1722,9 @@ function usZipAccept(text: string, start: number, end: number): number {
     if (usZipStatePrefixOk(value)) {
       return (
         US_STATE_ABBR.has(value.slice(0, 2)) &&
-        (usStateAfterCity(text, start) || postcodeAfterAddress(text, start))
+        (usStateAfterCity(text, start) ||
+          postcodeAfterAddress(text, start) ||
+          usStateAfterAddressLine(text, start))
       );
     }
     return true;

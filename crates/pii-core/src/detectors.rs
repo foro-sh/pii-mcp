@@ -2110,7 +2110,7 @@ fn us_zip_re() -> &'static Regex {
     })
 }
 
-/// True when `start` follows a city, a comma and one to three spaces.
+/// True when `start` follows a city, a comma and up to three spaces.
 ///
 /// That is the `City, ST 12345` shape. A state code that merely collides
 /// with a token before a number (`merged PR 48213`, `Total DE 12345`)
@@ -2124,7 +2124,7 @@ fn us_state_after_city(text: &str, start: usize) -> bool {
     ];
     let before = text[..start].trim_end_matches([' ', '\t', '\u{a0}', '\u{202f}']);
     let seps = text[before.len()..start].chars().count();
-    if seps == 0 || seps > 3 {
+    if seps > 3 {
         return false;
     }
     let Some(before) = before.strip_suffix(',') else {
@@ -2137,6 +2137,37 @@ fn us_state_after_city(text: &str, start: usize) -> bool {
         && !STATUS_WORDS
             .iter()
             .any(|w| *w == word || w.chars().map(|c| c.to_ascii_uppercase()).eq(word.chars()))
+}
+
+/// True when `start` follows a USPS last line after an address line.
+///
+/// USPS Pub 28 writes `CITY ST ZIP` without a comma, on the line after
+/// the street: `123 Main St\nSpringfield IL 62704`. One to three
+/// capitalized words before the code count when the line break before them
+/// directly follows an `[ADDRESS]`.
+fn us_state_after_address_line(text: &str, start: usize) -> bool {
+    let is_sep = |c: char| matches!(c, ' ' | '\t' | '\u{a0}' | '\u{202f}');
+    let mut rest = text[..start].trim_end_matches(is_sep);
+    let seps = text[rest.len()..start].chars().count();
+    if seps == 0 || seps > 3 {
+        return false;
+    }
+    for words in 1..=3 {
+        let head = rest.trim_end_matches(is_street_letter);
+        let word = &rest[head.len()..];
+        if word.chars().count() < 2 || !word.starts_with(is_street_upper) {
+            return false;
+        }
+        rest = head;
+        if let Some(line) = rest.strip_suffix('\n') {
+            return line.strip_suffix('\r').unwrap_or(line).ends_with("[ADDRESS]");
+        }
+        match rest.chars().next_back() {
+            Some(c) if words < 3 && is_sep(c) => rest = &rest[..rest.len() - c.len_utf8()],
+            _ => return false,
+        }
+    }
+    false
 }
 
 fn is_street_letter(c: char) -> bool {
@@ -2160,7 +2191,9 @@ fn us_zip_accept(text: &str, value: &str, start: usize) -> bool {
     }
     if us_zip_state_prefix_ok(value) {
         return us_state_abbr_known(&value[..2])
-            && (us_state_after_city(text, start) || postcode_after_address(text, start));
+            && (us_state_after_city(text, start)
+                || postcode_after_address(text, start)
+                || us_state_after_address_line(text, start));
     }
     true
 }

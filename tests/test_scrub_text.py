@@ -1301,6 +1301,24 @@ class TestUsZip:
         """Log prose puts a lowercase word or a status word before the comma."""
         assert scrub_text(text, languages=languages)["text"] == expected
 
+    @pytest.mark.parametrize(
+        ("text", "languages", "expected"),
+        [
+            ("123 Main St\nSpringfield IL 62704", ["en"], "[ADDRESS]\nSpringfield [ADDRESS]"),
+            ("123 Main St\r\nColorado Springs CO 80920-1406", ["en"], "[ADDRESS]\r\nColorado Springs [ADDRESS]"),
+            ("123 Main St\nSalt Lake City UT 84101", ["en"], "[ADDRESS]\nSalt Lake City [ADDRESS]"),
+            ("Springfield,IL 62704", ["en"], "Springfield,[ADDRESS]"),
+            ("Springfield IL 62704", ["en"], "Springfield IL 62704"),
+            ("123 Main St\nmerged PR 48213", ["en"], "[ADDRESS]\nmerged PR 48213"),
+            ("123 Main St\n\nSpringfield IL 62704", ["en"], "[ADDRESS]\n\nSpringfield IL 62704"),
+        ],
+    )
+    def test_state_code_on_a_usps_last_line(
+        self, text: str, languages: list[str], expected: str
+    ) -> None:
+        """USPS Pub 28 drops the comma; the address line above stands in for it."""
+        assert scrub_text(text, languages=languages)["text"] == expected
+
     def test_rejects_an_unknown_two_letter_prefix(self) -> None:
         result = scrub_text("batch XX 80920", languages=["en"])
         assert result["counts"]["address"] == 0

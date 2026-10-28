@@ -1545,7 +1545,7 @@ _US_STATUS_WORDS = frozenset(
 
 
 def _us_state_after_city(text: str, start: int) -> bool:
-    """True when ``start`` follows a city, a comma and one to three spaces.
+    """True when ``start`` follows a city, a comma and up to three spaces.
 
     That is the ``City, ST 12345`` shape. A state code that merely collides
     with a token before a number (``merged PR 48213``, ``Total DE 12345``)
@@ -1557,7 +1557,7 @@ def _us_state_after_city(text: str, start: int) -> bool:
     i = start
     while i > 0 and start - i < 3 and text[i - 1] in _STREET_SEP_CHARS_SET:
         i -= 1
-    if i == start or i == 0 or text[i - 1] != ",":
+    if i == 0 or text[i - 1] != ",":
         return False
     j = i - 1
     while j > 0 and _STREET_LETTER_RE.fullmatch(text[j - 1]):
@@ -1568,6 +1568,37 @@ def _us_state_after_city(text: str, start: int) -> bool:
         and _STREET_UPPER_RE.fullmatch(word[0]) is not None
         and word not in _US_STATUS_WORDS
     )
+
+
+def _us_state_after_address_line(text: str, start: int) -> bool:
+    """True when ``start`` follows a USPS last line after an address line.
+
+    USPS Pub 28 writes ``CITY ST ZIP`` without a comma, on the line after
+    the street: ``123 Main St\\nSpringfield IL 62704``. One to three
+    capitalized words before the code count when the line break before them
+    directly follows an ``[ADDRESS]``.
+    """
+    i = start
+    while i > 0 and start - i < 3 and text[i - 1] in _STREET_SEP_CHARS_SET:
+        i -= 1
+    if i == start:
+        return False
+    for words in range(1, 4):
+        j = i
+        while j > 0 and _STREET_LETTER_RE.fullmatch(text[j - 1]):
+            j -= 1
+        if i - j < 2 or _STREET_UPPER_RE.fullmatch(text[j]) is None:
+            return False
+        i = j
+        if i > 0 and text[i - 1] == "\n":
+            i -= 1
+            if i > 0 and text[i - 1] == "\r":
+                i -= 1
+            return text.endswith("[ADDRESS]", 0, i)
+        if words == 3 or i == 0 or text[i - 1] not in _STREET_SEP_CHARS_SET:
+            return False
+        i -= 1
+    return False
 
 
 def _us_zip_accept(text: str, start: int, end: int) -> bool:
@@ -1583,7 +1614,9 @@ def _us_zip_accept(text: str, start: int, end: int) -> bool:
         return _postcode_after_address(text, start)
     if _US_ZIP_STATE_PREFIX_RE.match(value):
         return value[:2] in _US_STATE_ABBR and (
-            _us_state_after_city(text, start) or _postcode_after_address(text, start)
+            _us_state_after_city(text, start)
+            or _postcode_after_address(text, start)
+            or _us_state_after_address_line(text, start)
         )
     return True
 
