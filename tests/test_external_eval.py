@@ -11,6 +11,7 @@ from __future__ import annotations
 import os
 import subprocess
 import sys
+import types
 from pathlib import Path
 
 import pytest
@@ -161,3 +162,35 @@ def test_masked_run_with_no_gold_span_counts_as_no_overlap() -> None:
     result = score_sample(sample)
     assert result["no_gold_overlap_rate"] == 0.5
     assert result["per_group"]["phone"] == {"n": 1, "recall": 1.0, "precision": 1.0}
+
+
+def _fake_datasets(monkeypatch: pytest.MonkeyPatch, rows: list[dict]) -> list[dict]:
+    calls: list[dict] = []
+
+    def load_dataset(name: str, **kwargs: object) -> list[dict]:
+        calls.append({"name": name, **kwargs})
+        return rows
+
+    monkeypatch.setitem(sys.modules, "datasets", types.SimpleNamespace(load_dataset=load_dataset))
+    return calls
+
+
+def test_load_sample_is_seeded_per_language_at_a_pinned_revision(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    rows = [{"language": lang, "id": f"{lang}{i}"} for i in range(50) for lang in ("en", "nl", "de", "fr")]
+    calls = _fake_datasets(monkeypatch, rows)
+    first = external._load_sample(5, seed=0)
+    assert first == external._load_sample(5, seed=0)
+    assert first != external._load_sample(5, seed=1)
+    assert [lang for lang, _ in first] == ["en"] * 5 + ["nl"] * 5 + ["de"] * 5
+    assert all(row["language"] == lang for lang, row in first)
+    assert calls[0]["revision"] == external.DATASET_REVISION
+
+
+def test_load_sample_exits_when_a_language_has_too_few_rows(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _fake_datasets(monkeypatch, [{"language": "en", "id": "en0"}])
+    with pytest.raises(SystemExit):
+        external._load_sample(1, seed=0)
