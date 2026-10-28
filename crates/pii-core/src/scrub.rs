@@ -11,7 +11,15 @@
 //! value is masked whole, by its key, before recursing (see
 //! [`crate::detectors::key_field`]), so `{"last_name": "Grabbe"}` is
 //! caught even though the string leaf `"Grabbe"` alone carries no `key:`
-//! context for `scrub_text_langs`'s pattern pass to see.
+//! context for `scrub_text_langs`'s pattern pass to see. Under a recognized
+//! key, a string passes the same value checks as in text
+//! ([`crate::detectors::field_value_masked`]), a number is masked unless the
+//! key is the gated `name` (`{"zip": 33613}`), and each string or number
+//! element of an array is masked the same way
+//! (`{"address": ["Hoofdstraat 1", "3511 AB Utrecht"]}`); booleans and `null`
+//! stay. Known gap: an object under a recognized key is walked like any other
+//! (`{"name": {"first": "Jan", "last": "Jansen"}}` keeps both names, since
+//! `first` / `last` are not field names on their own).
 //!
 //! MCP binary content is left unscrubbed (foro-pii `binaryKey` parity): on an
 //! object with `type` of `image` or `audio` and a string `data`, that `data`
@@ -237,8 +245,29 @@ mod payload {
         }
     }
 
-    fn field_placeholder(field: KeyField) -> Value {
-        Value::String(format!("[{}]", field.category.as_str().to_uppercase()))
+    /// A value under a recognized field name: a string that passes
+    /// `field_value_masked` or a number (not under `name`) becomes the
+    /// field's placeholder; anything else is walked as usual.
+    fn scrub_field_value(
+        field: KeyField,
+        value: Value,
+        counts: &mut PiiCounts,
+        depth: usize,
+        langs: &[LanguageCode],
+    ) -> Result<Value, PiiScrubError> {
+        let masked = match &value {
+            Value::String(s) => field_value_masked(field, s),
+            Value::Number(_) => !field.gated,
+            _ => false,
+        };
+        if !masked {
+            return scrub_walk(value, counts, depth, langs);
+        }
+        bump_count(counts, field.category, 1);
+        Ok(Value::String(format!(
+            "[{}]",
+            field.category.as_str().to_uppercase()
+        )))
     }
 
     fn scrub_walk(
@@ -277,16 +306,31 @@ mod payload {
                         out.insert(key, item);
                         continue;
                     }
-                    if let Value::String(s) = &item {
-                        if let Some(field) = key_field(&key) {
-                            if field_value_masked(field, s) {
-                                bump_count(counts, field.category, 1);
-                                out.insert(key, field_placeholder(field));
-                                continue;
+                    let value = match (key_field(&key), item) {
+                        (None, item) => scrub_walk(item, counts, depth + 1, langs)?,
+                        (Some(field), Value::Array(items)) => {
+                            if depth + 1 > MAX_DEPTH {
+                                return Err(PiiScrubError::new(format!(
+                                    "payload nests past the {MAX_DEPTH}-level scrub limit"
+                                )));
                             }
+                            let mut masked = Vec::with_capacity(items.len());
+                            for element in items {
+                                masked.push(scrub_field_value(
+                                    field,
+                                    element,
+                                    counts,
+                                    depth + 2,
+                                    langs,
+                                )?);
+                            }
+                            Value::Array(masked)
                         }
-                    }
-                    out.insert(key, scrub_walk(item, counts, depth + 1, langs)?);
+                        (Some(field), item) => {
+                            scrub_field_value(field, item, counts, depth + 1, langs)?
+                        }
+                    };
+                    out.insert(key, value);
                 }
                 Ok(Value::Object(out))
             }
@@ -1448,5 +1492,35 @@ mod tests {
         let r = scrub_text_langs(text, &KV_LANGS, true).unwrap();
         assert_eq!(r.text, text);
         assert_eq!(r.counts["passport"], 0);
+    }
+
+    #[cfg(feature = "payload")]
+    #[test]
+    fn payload_masks_numbers_and_list_elements_under_a_field_key() {
+        let langs = vec!["en".to_string(), "nl".to_string()];
+        let r = scrub_payload(
+            serde_json::json!({
+                "zip": 33613,
+                "huisnummer": 12,
+                "name": 42,
+                "city": true,
+                "address": ["Hoofdstraat 1", "3511 AB Utrecht", null, {"note": "ok"}],
+                "names": ["Jan Jansen"],
+            }),
+            Some(&langs),
+        )
+        .unwrap();
+        assert_eq!(
+            r.payload,
+            serde_json::json!({
+                "zip": "[ADDRESS]",
+                "huisnummer": "[ADDRESS]",
+                "name": 42,
+                "city": true,
+                "address": ["[ADDRESS]", "[ADDRESS]", null, {"note": "ok"}],
+                "names": ["Jan Jansen"],
+            })
+        );
+        assert_eq!(r.counts["address"], 4);
     }
 }

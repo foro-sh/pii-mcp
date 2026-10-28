@@ -286,3 +286,32 @@ def test_payload_network_and_code_values_are_not_addresses() -> None:
         "zip": "zipfile.ZipFile(path)",
     }
     assert result["counts"]["address"] == 0
+
+
+def test_payload_masks_numbers_and_list_elements_under_a_field_key() -> None:
+    payload = {
+        "zip": 33613,
+        "huisnummer": 12,
+        "name": 42,
+        "city": True,
+        "address": ["Hoofdstraat 1", "3511 AB Utrecht", None, {"note": "ok"}],
+        "names": ["Jan Jansen"],
+    }
+    result = scrub_payload(payload, languages=["en", "nl"])
+    assert result["payload"] == {
+        "zip": "[ADDRESS]",
+        "huisnummer": "[ADDRESS]",
+        "name": 42,
+        "city": True,
+        "address": ["[ADDRESS]", "[ADDRESS]", None, {"note": "ok"}],
+        "names": ["Jan Jansen"],
+    }
+    assert result["counts"]["address"] == 4
+
+
+def test_payload_non_string_keys_pass_through(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The pure-Python walk only reads ``str`` keys as field names; the
+    native backend takes JSON objects, whose keys are always strings."""
+    monkeypatch.setenv("PII_MCP_BACKEND", "python")
+    result = scrub_payload({1: "Jan", 2: "ada@example.com"})
+    assert result["payload"] == {1: "Jan", 2: "[EMAIL]"}

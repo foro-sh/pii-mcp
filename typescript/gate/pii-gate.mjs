@@ -1721,6 +1721,14 @@ function scrubTextJs(text, options = {}) {
   }
   return { text: out, found: totalPiiCount(counts) > 0, counts };
 }
+function scrubFieldValue(field, value, counts, depth, languages) {
+  const masked = typeof value === "string" ? fieldValueMasked(field, value) : typeof value === "number" && !field.gated;
+  if (!masked) {
+    return scrubWalk(value, counts, depth, languages);
+  }
+  counts[field.category] += 1;
+  return `[${field.category.toUpperCase()}]`;
+}
 function scrubWalk(value, counts, depth, languages) {
   if (depth > MAX_DEPTH) {
     throw new PiiScrubError(`payload nests past the ${MAX_DEPTH}-level scrub limit`);
@@ -1743,15 +1751,19 @@ function scrubWalk(value, counts, depth, languages) {
         out[key] = item;
         continue;
       }
-      if (typeof item === "string") {
-        const field = keyField(key);
-        if (field !== null && fieldValueMasked(field, item)) {
-          counts[field.category] += 1;
-          out[key] = `[${field.category.toUpperCase()}]`;
-          continue;
+      const field = keyField(key);
+      if (field === null) {
+        out[key] = scrubWalk(item, counts, depth + 1, languages);
+      } else if (Array.isArray(item)) {
+        if (depth + 1 > MAX_DEPTH) {
+          throw new PiiScrubError(`payload nests past the ${MAX_DEPTH}-level scrub limit`);
         }
+        out[key] = item.map(
+          (element) => scrubFieldValue(field, element, counts, depth + 2, languages)
+        );
+      } else {
+        out[key] = scrubFieldValue(field, item, counts, depth + 1, languages);
       }
-      out[key] = scrubWalk(item, counts, depth + 1, languages);
     }
     return out;
   }

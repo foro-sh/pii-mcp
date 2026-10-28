@@ -12,7 +12,14 @@ house number hits, NL / UK postcodes, and key-aware street/postcode/place hits.
 value is masked whole, by its key, before recursing (see
 ``detectors.key_field``), so ``{"last_name": "Grabbe"}`` is caught
 even though the string leaf ``"Grabbe"`` alone carries no ``key:`` context
-for ``scrub_text``'s pattern pass to see.
+for ``scrub_text``'s pattern pass to see. Under a recognized ``str`` key, a
+string passes the same value checks as in text (``field_value_masked``), a
+number is masked unless the key is the gated ``name`` (``{"zip": 33613}``),
+and each string or number element of a list is masked the same way
+(``{"address": ["Hoofdstraat 1", "3511 AB Utrecht"]}``); booleans and
+``null`` stay. Known gap: an object under a recognized key is walked like
+any other (``{"name": {"first": "Jan", "last": "Jansen"}}`` keeps both
+names, since ``first`` / ``last`` are not field names on their own).
 
 ``MAX_SCRUB_BYTES`` matches foro-proxy (32 MiB). Oversize raises
 ``PiiScrubError`` so callers withhold rather than forward unscrubbed text.
@@ -51,6 +58,7 @@ from typing import Any, Literal, TypedDict
 from pii_mcp.detectors import (
     UNIVERSAL_DETECTORS,
     Detector,
+    KeyField,
     bsn_detector,
     de_passport_detector,
     de_vat_detector,
@@ -332,6 +340,26 @@ def scrub_text(
     return {"text": out, "found": total_pii_count(counts) > 0, "counts": counts}
 
 
+def _scrub_field_value(
+    field: KeyField,
+    value: Any,
+    counts: PiiCounts,
+    depth: int,
+    languages: Sequence[str] | None,
+) -> Any:
+    """A value under a recognized field name: a string that passes
+    ``field_value_masked`` or a number (not under ``name``) becomes the
+    field's placeholder; anything else is walked as usual."""
+    if isinstance(value, str):
+        masked = field_value_masked(field, value)
+    else:
+        masked = isinstance(value, (int, float)) and not isinstance(value, bool) and not field.gated
+    if not masked:
+        return _scrub_walk(value, counts, depth, languages)
+    counts[field.category] += 1
+    return f"[{field.category.upper()}]"
+
+
 def _scrub_walk(
     value: Any,
     counts: PiiCounts,
@@ -350,18 +378,23 @@ def _scrub_walk(
         return [_scrub_walk(item, counts, depth + 1, languages) for item in value]
     if isinstance(value, dict):
         skip = _binary_key(value)
-        out: dict[str, Any] = {}
+        out: dict[Any, Any] = {}
         for key, item in value.items():
             if key == skip:
                 out[key] = item
                 continue
-            if isinstance(item, str):
-                field = key_field(key)
-                if field is not None and field_value_masked(field, item):
-                    counts[field.category] += 1
-                    out[key] = f"[{field.category.upper()}]"
-                    continue
-            out[key] = _scrub_walk(item, counts, depth + 1, languages)
+            field = key_field(key) if isinstance(key, str) else None
+            if field is None:
+                out[key] = _scrub_walk(item, counts, depth + 1, languages)
+            elif isinstance(item, list):
+                if depth + 1 > MAX_DEPTH:
+                    raise PiiScrubError(f"payload nests past the {MAX_DEPTH}-level scrub limit")
+                out[key] = [
+                    _scrub_field_value(field, element, counts, depth + 2, languages)
+                    for element in item
+                ]
+            else:
+                out[key] = _scrub_field_value(field, item, counts, depth + 1, languages)
         return out
     if value is None or isinstance(value, (bool, int, float)):
         return value

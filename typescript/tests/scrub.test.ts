@@ -1456,6 +1456,31 @@ describe("key-aware parsing", () => {
   });
 });
 
+describe("key-aware payload values", () => {
+  it("masks numbers and list elements under a field key", () => {
+    const result = scrubPayload(
+      {
+        zip: 33613,
+        huisnummer: 12,
+        name: 42,
+        city: true,
+        address: ["Hoofdstraat 1", "3511 AB Utrecht", null, { note: "ok" }],
+        names: ["Jan Jansen"],
+      },
+      { languages: ["en", "nl"] },
+    );
+    expect(result.payload).toEqual({
+      zip: "[ADDRESS]",
+      huisnummer: "[ADDRESS]",
+      name: 42,
+      city: true,
+      address: ["[ADDRESS]", "[ADDRESS]", null, { note: "ok" }],
+      names: ["Jan Jansen"],
+    });
+    expect(result.counts.address).toBe(4);
+  });
+});
+
 describe("native backend", () => {
   it("reports whether the napi addon is in use under auto", () => {
     delete process.env.PII_MCP_BACKEND;

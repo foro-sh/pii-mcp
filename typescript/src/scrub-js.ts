@@ -13,7 +13,15 @@
  * object value is masked whole, by its key, before recursing (see
  * ``keyField`` in ``./detectors.js``), so ``{"last_name": "Grabbe"}``
  * is caught even though the string leaf ``"Grabbe"`` alone carries no
- * ``key:`` context for ``scrubTextJs``'s pattern pass to see.
+ * ``key:`` context for ``scrubTextJs``'s pattern pass to see. Under a
+ * recognized key, a string passes the same value checks as in text
+ * (``fieldValueMasked``), a number is masked unless the key is the gated
+ * ``name`` (``{"zip": 33613}``), and each string or number element of an
+ * array is masked the same way
+ * (``{"address": ["Hoofdstraat 1", "3511 AB Utrecht"]}``); booleans and
+ * ``null`` stay. Known gap: an object under a recognized key is walked like
+ * any other (``{"name": {"first": "Jan", "last": "Jansen"}}`` keeps both
+ * names, since ``first`` / ``last`` are not field names on their own).
  *
  * ``MAX_SCRUB_BYTES`` matches foro-proxy (32 MiB). Oversize raises
  * ``PiiScrubError`` so callers withhold rather than forward unscrubbed text.
@@ -43,6 +51,7 @@ import {
   deVatDetector,
   itinDetector,
   fieldValueMasked,
+  type KeyField,
   keyField,
   nhsDetector,
   ninoDetector,
@@ -256,6 +265,29 @@ export function scrubTextJs(
   return { text: out, found: totalPiiCount(counts) > 0, counts };
 }
 
+/**
+ * A value under a recognized field name: a string that passes
+ * ``fieldValueMasked`` or a number (not under ``name``) becomes the field's
+ * placeholder; anything else is walked as usual.
+ */
+function scrubFieldValue(
+  field: KeyField,
+  value: unknown,
+  counts: PiiCounts,
+  depth: number,
+  languages: readonly string[] | null | undefined,
+): unknown {
+  const masked =
+    typeof value === "string"
+      ? fieldValueMasked(field, value)
+      : typeof value === "number" && !field.gated;
+  if (!masked) {
+    return scrubWalk(value, counts, depth, languages);
+  }
+  counts[field.category] += 1;
+  return `[${field.category.toUpperCase()}]`;
+}
+
 function scrubWalk(
   value: unknown,
   counts: PiiCounts,
@@ -283,15 +315,19 @@ function scrubWalk(
         out[key] = item;
         continue;
       }
-      if (typeof item === "string") {
-        const field = keyField(key);
-        if (field !== null && fieldValueMasked(field, item)) {
-          counts[field.category] += 1;
-          out[key] = `[${field.category.toUpperCase()}]`;
-          continue;
+      const field = keyField(key);
+      if (field === null) {
+        out[key] = scrubWalk(item, counts, depth + 1, languages);
+      } else if (Array.isArray(item)) {
+        if (depth + 1 > MAX_DEPTH) {
+          throw new PiiScrubError(`payload nests past the ${MAX_DEPTH}-level scrub limit`);
         }
+        out[key] = item.map((element) =>
+          scrubFieldValue(field, element, counts, depth + 2, languages),
+        );
+      } else {
+        out[key] = scrubFieldValue(field, item, counts, depth + 1, languages);
       }
-      out[key] = scrubWalk(item, counts, depth + 1, languages);
     }
     return out;
   }
