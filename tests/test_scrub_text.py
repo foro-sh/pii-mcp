@@ -1196,3 +1196,11 @@ class TestKeyAwareMasking:
         is still masked either way — no leak, just an odd label on the key."""
         result = scrub_text('"LastName1": "Müller"', languages=["nl"])
         assert result["text"] == '"[PASSPORT]": "[PERSON]"'
+
+    @pytest.mark.parametrize("text", ["name: 李明", "name: محمد", "name: Ⓙan"])
+    def test_name_gate_needs_an_uppercase_letter(self, text: str) -> None:
+        """Caseless scripts and symbol "letters" never pass the ``name`` gate,
+        the same on every backend."""
+        result = scrub_text(text, languages=["en", "nl", "de"])
+        assert result["text"] == text
+        assert result["counts"]["person"] == 0

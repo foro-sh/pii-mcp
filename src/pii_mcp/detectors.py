@@ -153,6 +153,7 @@ from __future__ import annotations
 
 import ipaddress
 import re
+import unicodedata
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Literal
@@ -1549,24 +1550,49 @@ _NAME_PARTICLES = frozenset(
 )
 
 
+_NAME_WS_RE = re.compile(
+    "[ \t\n\r\x0b\x0c\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000]+"
+)
+
+
+def _is_upper_letter(char: str) -> bool:
+    if char.isascii():
+        return "A" <= char <= "Z"
+    return unicodedata.category(char) == "Lu"
+
+
+def _is_name_letter(char: str) -> bool:
+    if char.isascii():
+        return char.isalpha()
+    return unicodedata.category(char)[0] in "LM"
+
+
 def looks_like_name(value: str) -> bool:
     """True when at least one word looks like a capitalized name/place part
     (lowercase particles — ``van``, ``der``, ``von``, … — don't count against
-    it). Gates the ambiguous ``name`` and ``state`` keys: ``build-cache``,
-    ``true`` and ``active`` fail this; ``Grabbe``, ``O'Brien``, ``California``
-    and ``John Smith (verified)`` pass — requiring *every* word to look like
-    a name let one trailing annotation hide the whole value, unmasked.
+    it). Gates the ambiguous ``name`` key: ``build-cache`` and ``true`` fail
+    this; ``Grabbe``, ``O'Brien`` and ``John Smith (verified)`` pass —
+    requiring *every* word to look like a name let one trailing annotation
+    hide the whole value, unmasked.
+
+    Character classes are spelled out so every backend agrees: words split
+    on Unicode ``White_Space``; a word passes when its first character is an
+    uppercase letter (general category ``Lu``) and, apart from ``-`` and
+    ``'``, it holds only letters and combining marks (``L*``/``M*``). A
+    caseless script (``李明``, ``محمد``) has no ``Lu`` and does not pass.
 
     Known trade-off: a Title Case resource name also passes
     (``name: "Production Cluster"``) — this pattern-only heuristic cannot
     tell that from a real person name without semantic understanding, which
     is out of scope (see the module docstring)."""
-    for word in value.split():
+    for word in _NAME_WS_RE.split(value):
         core = word.strip(".,;:'\"")
-        if not core or core.lower() in _NAME_PARTICLES:
+        if not core or (core.isascii() and core.lower() in _NAME_PARTICLES):
+            continue
+        if not _is_upper_letter(core[0]):
             continue
         letters = core.replace("-", "").replace("'", "")
-        if core[0].isupper() and letters.isalpha():
+        if letters and all(_is_name_letter(char) for char in letters):
             return True
     return False
 

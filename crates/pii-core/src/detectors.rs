@@ -2232,30 +2232,47 @@ const NAME_PARTICLES: &[&str] = &[
     "van", "der", "de", "den", "het", "ten", "ter", "von", "zu", "el", "al", "bin", "da",
 ];
 
+fn name_letter_res() -> &'static (Regex, Regex) {
+    static RES: OnceLock<(Regex, Regex)> = OnceLock::new();
+    RES.get_or_init(|| {
+        (
+            Regex::new(r"^\p{Lu}").unwrap(),
+            Regex::new(r"^[\p{L}\p{M}]+$").unwrap(),
+        )
+    })
+}
+
 /// True when at least one word looks like a capitalized name/place part
 /// (lowercase particles — `van`, `der`, `von`, … — don't count against it).
-/// Gates the ambiguous `name` and `state` keys: `build-cache`, `true` and
-/// `active` fail this; `Grabbe`, `O'Brien`, `California` and
-/// `John Smith (verified)` pass — requiring *every* word to look like a name
-/// let one trailing annotation hide the whole value, unmasked.
+/// Gates the ambiguous `name` key: `build-cache` and `true` fail this;
+/// `Grabbe`, `O'Brien` and `John Smith (verified)` pass — requiring *every*
+/// word to look like a name let one trailing annotation hide the whole
+/// value, unmasked.
+///
+/// Character classes are spelled out so every backend agrees: words split
+/// on Unicode `White_Space`; a word passes when its first character is an
+/// uppercase letter (general category `Lu`) and, apart from `-` and `'`, it
+/// holds only letters and combining marks (`L*`/`M*`). A caseless script
+/// (`李明`, `محمد`) has no `Lu` and does not pass.
 ///
 /// Known trade-off: a Title Case resource name also passes
 /// (`name: "Production Cluster"`) — this pattern-only heuristic cannot tell
 /// that from a real person name without semantic understanding, which is
 /// out of scope (see the module docs).
 pub fn looks_like_name(value: &str) -> bool {
-    for word in value.split_whitespace() {
+    let (upper_re, letters_re) = name_letter_res();
+    for word in value.split(char::is_whitespace) {
         let core = word.trim_matches(|c: char| ".,;:'\"".contains(c));
-        if core.is_empty() || NAME_PARTICLES.contains(&core.to_lowercase().as_str()) {
+        if core.is_empty()
+            || (core.is_ascii() && NAME_PARTICLES.contains(&core.to_ascii_lowercase().as_str()))
+        {
             continue;
         }
-        let first = match core.chars().next() {
-            Some(c) => c,
-            None => continue,
-        };
+        if !upper_re.is_match(core) {
+            continue;
+        }
         let letters: String = core.chars().filter(|&c| c != '-' && c != '\'').collect();
-        if first.is_uppercase() && !letters.is_empty() && letters.chars().all(char::is_alphabetic)
-        {
+        if letters_re.is_match(&letters) {
             return true;
         }
     }

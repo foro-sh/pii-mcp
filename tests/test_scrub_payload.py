@@ -229,3 +229,16 @@ def test_key_aware_masking_runs_on_siblings_of_a_skipped_binary_field() -> None:
     assert result["payload"]["data"] == "AAAA"
     assert result["payload"]["nachname"] == "[PERSON]"
     assert result["counts"]["person"] == 1
+
+
+def test_name_gate_needs_an_uppercase_letter() -> None:
+    """A caseless script or a symbol "letter" never passes the ``name``
+    gate; a combining mark (decomposed ``José``) does not block it."""
+    payload = {"a": {"name": "李明"}, "b": {"name": "Ⓙan"}, "c": {"name": "Jose\u0301"}}
+    result = scrub_payload(payload, languages=["en"])
+    assert result["payload"] == {
+        "a": {"name": "李明"},
+        "b": {"name": "Ⓙan"},
+        "c": {"name": "[PERSON]"},
+    }
+    assert result["counts"]["person"] == 1

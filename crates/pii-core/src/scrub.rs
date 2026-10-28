@@ -1206,4 +1206,30 @@ mod tests {
         assert_eq!(r.payload["nachname"], "[PERSON]");
         assert_eq!(r.counts["person"], 1);
     }
+
+    #[test]
+    fn name_gate_needs_an_uppercase_letter() {
+        let langs = [LanguageCode::En];
+        for text in ["name: 李明", "name: محمد", "name: Ⓙan"] {
+            let r = scrub_text_langs(text, &langs, true).unwrap();
+            assert_eq!(r.text, text, "{text:?}");
+            assert_eq!(r.counts["person"], 0, "{text:?}");
+        }
+    }
+
+    #[cfg(feature = "payload")]
+    #[test]
+    fn payload_name_gate_needs_an_uppercase_letter() {
+        let langs = vec!["en".to_string()];
+        let r = scrub_payload(
+            serde_json::json!({"a": {"name": "李明"}, "b": {"name": "Ⓙan"}, "c": {"name": "Jose\u{301}"}}),
+            Some(&langs),
+        )
+        .unwrap();
+        assert_eq!(
+            r.payload,
+            serde_json::json!({"a": {"name": "李明"}, "b": {"name": "Ⓙan"}, "c": {"name": "[PERSON]"}})
+        );
+        assert_eq!(r.counts["person"], 1);
+    }
 }

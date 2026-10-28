@@ -1631,13 +1631,24 @@ const NAME_PARTICLES = new Set([
   "van", "der", "de", "den", "het", "ten", "ter", "von", "zu", "el", "al", "bin", "da",
 ]);
 
+const NAME_WS_RE =
+  /[ \t\n\r\v\f\u0085\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000]+/u;
+const NAME_UPPER_RE = /^\p{Lu}/u;
+const NAME_LETTERS_RE = /^[\p{L}\p{M}]+$/u;
+
 /**
  * True when at least one word looks like a capitalized name/place part
  * (lowercase particles — ``van``, ``der``, ``von``, … — don't count against
- * it). Gates the ambiguous ``name`` and ``state`` keys: ``build-cache``,
- * ``true`` and ``active`` fail this; ``Grabbe``, ``O'Brien``, ``California``
- * and ``John Smith (verified)`` pass — requiring *every* word to look like a
- * name let one trailing annotation hide the whole value, unmasked.
+ * it). Gates the ambiguous ``name`` key: ``build-cache`` and ``true`` fail
+ * this; ``Grabbe``, ``O'Brien`` and ``John Smith (verified)`` pass —
+ * requiring *every* word to look like a name let one trailing annotation
+ * hide the whole value, unmasked.
+ *
+ * Character classes are spelled out so every backend agrees: words split on
+ * Unicode ``White_Space``; a word passes when its first character is an
+ * uppercase letter (general category ``Lu``) and, apart from ``-`` and
+ * ``'``, it holds only letters and combining marks (``L*``/``M*``). A
+ * caseless script (``李明``, ``محمد``) has no ``Lu`` and does not pass.
  *
  * Known trade-off: a Title Case resource name also passes
  * (``name: "Production Cluster"``) — this pattern-only heuristic cannot tell
@@ -1645,14 +1656,18 @@ const NAME_PARTICLES = new Set([
  * of scope (see the module docs).
  */
 export function looksLikeName(value: string): boolean {
-  for (const word of value.split(/\s+/)) {
+  for (const word of value.split(NAME_WS_RE)) {
     const core = word.replace(/^[.,;:'"]+|[.,;:'"]+$/g, "");
-    if (core.length === 0 || NAME_PARTICLES.has(core.toLowerCase())) {
+    if (core.length === 0) {
       continue;
     }
-    const letters = core.replace(/[-']/g, "");
-    const first = core.charAt(0);
-    if (first.toUpperCase() === first && /^\p{L}+$/u.test(letters)) {
+    if (/^[\x00-\x7f]+$/.test(core) && NAME_PARTICLES.has(core.toLowerCase())) {
+      continue;
+    }
+    if (!NAME_UPPER_RE.test(core)) {
+      continue;
+    }
+    if (NAME_LETTERS_RE.test(core.replace(/[-']/g, ""))) {
       return true;
     }
   }

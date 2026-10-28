@@ -1103,15 +1103,22 @@ var NAME_PARTICLES = /* @__PURE__ */ new Set([
   "bin",
   "da"
 ]);
+var NAME_WS_RE = /[ \t\n\r\v\f\u0085\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000]+/u;
+var NAME_UPPER_RE = new RegExp("^\\p{Lu}", "u");
+var NAME_LETTERS_RE = /^[\p{L}\p{M}]+$/u;
 function looksLikeName(value) {
-  for (const word of value.split(/\s+/)) {
+  for (const word of value.split(NAME_WS_RE)) {
     const core = word.replace(/^[.,;:'"]+|[.,;:'"]+$/g, "");
-    if (core.length === 0 || NAME_PARTICLES.has(core.toLowerCase())) {
+    if (core.length === 0) {
       continue;
     }
-    const letters = core.replace(/[-']/g, "");
-    const first = core.charAt(0);
-    if (first.toUpperCase() === first && new RegExp("^\\p{L}+$", "u").test(letters)) {
+    if (/^[\x00-\x7f]+$/.test(core) && NAME_PARTICLES.has(core.toLowerCase())) {
+      continue;
+    }
+    if (!NAME_UPPER_RE.test(core)) {
+      continue;
+    }
+    if (NAME_LETTERS_RE.test(core.replace(/[-']/g, ""))) {
       return true;
     }
   }

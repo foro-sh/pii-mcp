@@ -1285,6 +1285,30 @@ describe("key-aware masking", () => {
   });
 });
 
+describe("key-aware name gate", () => {
+  it.each(["name: 李明", "name: محمد", "name: Ⓙan"])(
+    "needs an uppercase letter: %s",
+    (text) => {
+      const result = scrubText(text, { languages: ["en"] });
+      expect(result.text).toBe(text);
+      expect(result.counts.person).toBe(0);
+    },
+  );
+
+  it("needs an uppercase letter in a payload value", () => {
+    const result = scrubPayload(
+      { a: { name: "李明" }, b: { name: "Ⓙan" }, c: { name: "Jose\u0301" } },
+      { languages: ["en"] },
+    );
+    expect(result.payload).toEqual({
+      a: { name: "李明" },
+      b: { name: "Ⓙan" },
+      c: { name: "[PERSON]" },
+    });
+    expect(result.counts.person).toBe(1);
+  });
+});
+
 describe("native backend", () => {
   it("reports whether the napi addon is in use under auto", () => {
     delete process.env.PII_MCP_BACKEND;
