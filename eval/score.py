@@ -34,7 +34,6 @@ import time
 from collections import Counter
 from pathlib import Path
 
-os.environ["PII_MCP_BACKEND"] = "python"
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "src"))
 sys.path.insert(0, str(ROOT / "eval"))
@@ -245,6 +244,7 @@ def gate_pytest() -> str | None:
 
 
 def main() -> None:
+    os.environ["PII_MCP_BACKEND"] = "python"
     ap = argparse.ArgumentParser()
     ap.add_argument("--split", choices=["dev", "holdout"], default="dev")
     ap.add_argument("--quick", action="store_true", help="skip pytest and perf gates")

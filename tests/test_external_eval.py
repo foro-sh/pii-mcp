@@ -8,6 +8,8 @@ Python detectors without touching the Hugging Face Hub.
 
 from __future__ import annotations
 
+import os
+import subprocess
 import sys
 from pathlib import Path
 
@@ -27,6 +29,18 @@ def _row(text: str, labels: list[tuple[str, str]]) -> tuple[str, dict]:
         start = text.index(value)
         mask.append({"label": label, "value": value, "start": start, "end": start + len(value)})
     return ("en", {"source_text": text, "privacy_mask": mask})
+
+
+def test_importing_the_eval_modules_leaves_the_backend_alone() -> None:
+    env = {k: v for k, v in os.environ.items() if k != "PII_MCP_BACKEND"}
+    code = (
+        "import os, sys; sys.path.insert(0, 'eval'); import external, score; "
+        "print(os.environ.get('PII_MCP_BACKEND'))"
+    )
+    out = subprocess.run(
+        [sys.executable, "-c", code], cwd=ROOT, env=env, capture_output=True, text=True, check=True
+    )
+    assert out.stdout.strip() == "None"
 
 
 def test_overlaps() -> None:
