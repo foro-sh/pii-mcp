@@ -1420,7 +1420,7 @@ _POSTCODE_LABEL = (
 
 
 _STREET_SEP_CHARS_SET = frozenset(" \t\u00a0\u202f")
-_POSTCODE_GAP = _STREET_SEP_CHARS_SET | frozenset(",\r\n")
+_POSTCODE_GAP = _STREET_SEP_CHARS_SET | frozenset(",;|/\r\n\u00b7\u2022\u2013\u2014")
 
 
 def _postcode_after_address(text: str, start: int, window: int = 12) -> bool:
@@ -1428,10 +1428,12 @@ def _postcode_after_address(text: str, start: int, window: int = 12) -> bool:
 
     A postcode follows its street (``Hauptstraße 5, 10115``, or the next
     line of an address block), so only a placeholder before the number
-    counts, and only across up to ``window`` commas, spaces, tabs or line
-    breaks: ``Order 48213, 12 Main Street`` and ``12 Main Street (48213
-    views)`` keep their numbers. The placeholder is not tagged by source, so
-    a UK or NL postcode hit counts like a street hit.
+    counts, and only across up to ``window`` spaces, line breaks and list
+    separators (``,`` ``;`` ``|`` ``/`` ``·`` ``•`` en and em dash, as in the
+    one-line DIN 5008 sender ``Firma · Hauptstraße 5 · 33602 Gütersloh``):
+    ``Order 48213, 12 Main Street`` and ``12 Main Street (48213 views)``
+    keep their numbers. The placeholder is not tagged by source, so a UK or
+    NL postcode hit counts like a street hit.
     """
     i = start
     floor = max(0, start - window)

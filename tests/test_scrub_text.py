@@ -1151,6 +1151,25 @@ class TestDePostcode:
     ) -> None:
         assert scrub_text(text, languages=["de"])["text"] == expected
 
+    @pytest.mark.parametrize(
+        ("text", "languages", "expected"),
+        [
+            ("Musterfirma GmbH · Hauptstraße 5 · 33602 Gütersloh", ["de"], "Musterfirma GmbH · [ADDRESS] · [ADDRESS] Gütersloh"),
+            ("Hauptstraße 5 • 10115", ["de"], "[ADDRESS] • [ADDRESS]"),
+            ("Hauptstraße 5 – 10115", ["de"], "[ADDRESS] – [ADDRESS]"),
+            ("Hauptstraße 5 — 10115", ["de"], "[ADDRESS] — [ADDRESS]"),
+            ("Hauptstraße 5; 10115", ["de"], "[ADDRESS]; [ADDRESS]"),
+            ("Hauptstraße 5 / 10115", ["de"], "[ADDRESS] / [ADDRESS]"),
+            ("12 Main Street | 80920", ["en"], "[ADDRESS] | [ADDRESS]"),
+            ("12 Main Street - 48213", ["en"], "[ADDRESS] - 48213"),
+        ],
+    )
+    def test_address_hint_spans_list_separators(
+        self, text: str, languages: list[str], expected: str
+    ) -> None:
+        """The one-line DIN 5008 sender separates street and postcode with a middle dot."""
+        assert scrub_text(text, languages=languages)["text"] == expected
+
     def test_near_address_window_does_not_reach_a_distant_hit(self) -> None:
         """A state-code hit must not legitimize a distant,
         unrelated bare number a full clause away."""

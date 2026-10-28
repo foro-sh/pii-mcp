@@ -1503,18 +1503,22 @@ const POSTCODE_LABEL =
   `|${caseInsensitiveLiteral("zip")}(?:${POSTCODE_SPACE}?${caseInsensitiveLiteral("code")})?)` +
   `${POSTCODE_SPACE}{0,3}(?:[:\\-]${POSTCODE_SPACE}{0,3})?`;
 
-const POSTCODE_GAP = new Set([",", "\r", "\n", " ", "\t", "\u00a0", "\u202f"]);
+const POSTCODE_GAP = new Set([
+  ",", ";", "|", "/", "\r", "\n", " ", "\t", "\u00a0", "\u202f", "\u00b7", "\u2022", "\u2013", "\u2014",
+]);
 
 /**
  * True when an ``[ADDRESS]`` ends just before ``start``.
  *
  * A postcode follows its street (``Hauptstraße 5, 10115``, or the next line
  * of an address block), so only a placeholder before the number counts, and
- * only across up to ``window`` commas, spaces, tabs or line breaks:
- * ``Order 48213, 12 Main Street`` and ``12 Main Street (48213 views)`` keep
- * their numbers. Every gap character is a single UTF-16 unit, so the window
- * counts the same as in Python and Rust. The placeholder is not tagged by
- * source, so a UK or NL postcode hit counts like a street hit.
+ * only across up to ``window`` spaces, line breaks and list separators (``,``
+ * ``;`` ``|`` ``/`` ``·`` ``•`` en and em dash, as in the one-line DIN 5008
+ * sender ``Firma · Hauptstraße 5 · 33602 Gütersloh``): ``Order 48213, 12 Main
+ * Street`` and ``12 Main Street (48213 views)`` keep their numbers. Every
+ * gap character is a single UTF-16 unit, so the window counts the same as in
+ * Python and Rust. The placeholder is not tagged by source, so a UK or NL
+ * postcode hit counts like a street hit.
  */
 function postcodeAfterAddress(text: string, start: number, window = 12): boolean {
   let i = start;

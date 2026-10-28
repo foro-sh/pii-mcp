@@ -920,6 +920,25 @@ mod tests {
     }
 
     #[test]
+    fn postcode_address_hint_spans_list_separators() {
+        let cases: [(&str, &[&str], &str); 8] = [
+            ("Musterfirma GmbH · Hauptstraße 5 · 33602 Gütersloh", &["de"][..], "Musterfirma GmbH · [ADDRESS] · [ADDRESS] Gütersloh"),
+            ("Hauptstraße 5 • 10115", &["de"][..], "[ADDRESS] • [ADDRESS]"),
+            ("Hauptstraße 5 – 10115", &["de"][..], "[ADDRESS] – [ADDRESS]"),
+            ("Hauptstraße 5 — 10115", &["de"][..], "[ADDRESS] — [ADDRESS]"),
+            ("Hauptstraße 5; 10115", &["de"][..], "[ADDRESS]; [ADDRESS]"),
+            ("Hauptstraße 5 / 10115", &["de"][..], "[ADDRESS] / [ADDRESS]"),
+            ("12 Main Street | 80920", &["en"][..], "[ADDRESS] | [ADDRESS]"),
+            ("12 Main Street - 48213", &["en"][..], "[ADDRESS] - 48213"),
+        ];
+        for (text, languages, expected) in cases {
+            let langs: Vec<String> = languages.iter().map(|l| l.to_string()).collect();
+            let r = scrub_text(text, Some(&langs), true).unwrap();
+            assert_eq!(r.text, expected, "{text}");
+        }
+    }
+
+    #[test]
     fn de_postcode_rejects_an_arbitrary_capitalized_word() {
         // German nouns are always capitalized, so a city allowlist is required.
         let langs = vec!["de".to_string()];

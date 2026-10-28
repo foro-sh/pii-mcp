@@ -2014,17 +2014,25 @@ fn postcode_label() -> String {
 ///
 /// A postcode follows its street (`Hauptstraße 5, 10115`, or the next line
 /// of an address block), so only a placeholder before the number counts,
-/// and only across up to `WINDOW` commas, spaces, tabs or line breaks:
-/// `Order 48213, 12 Main Street` and `12 Main Street (48213 views)` keep
-/// their numbers. The placeholder is not tagged by source, so a UK or NL
-/// postcode hit counts like a street hit.
+/// and only across up to `WINDOW` spaces, line breaks and list separators
+/// (`,` `;` `|` `/` `·` `•` en and em dash, as in the one-line DIN 5008
+/// sender `Firma · Hauptstraße 5 · 33602 Gütersloh`): `Order 48213, 12 Main
+/// Street` and `12 Main Street (48213 views)` keep their numbers. The
+/// placeholder is not tagged by source, so a UK or NL postcode hit counts
+/// like a street hit.
 fn postcode_after_address(text: &str, start: usize) -> bool {
     const WINDOW: usize = 12;
     let gap = text[..start]
         .chars()
         .rev()
         .take(WINDOW)
-        .take_while(|c| matches!(c, ',' | '\r' | '\n' | ' ' | '\t' | '\u{a0}' | '\u{202f}'))
+        .take_while(|c| {
+            matches!(
+                c,
+                ',' | ';' | '|' | '/' | '\r' | '\n' | ' ' | '\t' | '\u{a0}' | '\u{202f}'
+                    | '\u{b7}' | '\u{2022}' | '\u{2013}' | '\u{2014}'
+            )
+        })
         .map(char::len_utf8)
         .sum::<usize>();
     text[..start - gap].ends_with("[ADDRESS]")

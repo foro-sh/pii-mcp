@@ -1015,7 +1015,22 @@ function caseInsensitiveLiteral(word) {
 }
 var POSTCODE_SPACE = `[${STREET_SEP_CHARS}]`;
 var POSTCODE_LABEL = `(?:${caseInsensitiveLiteral("plz")}|${caseInsensitiveLiteral("postleitzahl")}|${caseInsensitiveLiteral("postal")}${POSTCODE_SPACE}?${caseInsensitiveLiteral("code")}|${caseInsensitiveLiteral("postcode")}|${caseInsensitiveLiteral("zip")}(?:${POSTCODE_SPACE}?${caseInsensitiveLiteral("code")})?)${POSTCODE_SPACE}{0,3}(?:[:\\-]${POSTCODE_SPACE}{0,3})?`;
-var POSTCODE_GAP = /* @__PURE__ */ new Set([",", "\r", "\n", " ", "	", "\xA0", "\u202F"]);
+var POSTCODE_GAP = /* @__PURE__ */ new Set([
+  ",",
+  ";",
+  "|",
+  "/",
+  "\r",
+  "\n",
+  " ",
+  "	",
+  "\xA0",
+  "\u202F",
+  "\xB7",
+  "\u2022",
+  "\u2013",
+  "\u2014"
+]);
 function postcodeAfterAddress(text, start, window = 12) {
   let i = start;
   const floor = Math.max(0, start - window);

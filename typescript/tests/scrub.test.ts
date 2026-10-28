@@ -1137,6 +1137,19 @@ describe("scrubText", () => {
     expect(scrubText(text, { languages: ["de"] }).text).toBe(expected);
   });
 
+  it.each<[string, string[], string]>([
+    ["Musterfirma GmbH · Hauptstraße 5 · 33602 Gütersloh", ["de"], "Musterfirma GmbH · [ADDRESS] · [ADDRESS] Gütersloh"],
+    ["Hauptstraße 5 • 10115", ["de"], "[ADDRESS] • [ADDRESS]"],
+    ["Hauptstraße 5 – 10115", ["de"], "[ADDRESS] – [ADDRESS]"],
+    ["Hauptstraße 5 — 10115", ["de"], "[ADDRESS] — [ADDRESS]"],
+    ["Hauptstraße 5; 10115", ["de"], "[ADDRESS]; [ADDRESS]"],
+    ["Hauptstraße 5 / 10115", ["de"], "[ADDRESS] / [ADDRESS]"],
+    ["12 Main Street | 80920", ["en"], "[ADDRESS] | [ADDRESS]"],
+    ["12 Main Street - 48213", ["en"], "[ADDRESS] - 48213"],
+  ])("spans list separators between street and postcode (%s)", (text, languages, expected) => {
+    expect(scrubText(text, { languages }).text).toBe(expected);
+  });
+
   it.each([["ZIP: 80920"], ["zip code 80920"], ["postal code: 80920"]])(
     "masks a US ZIP with a label (%s)",
     (value) => {
