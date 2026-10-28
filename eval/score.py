@@ -234,20 +234,22 @@ def gate_redos() -> str | None:
     return None
 
 
-# Byte length of the corpus ``perf_seconds`` measured against when the
-# checked-in ``.baseline.json`` was recorded. Fixed, not derived from
-# ``len(PII)``/``len(CLEAN)``, so a new eval generator (more test coverage,
-# not a detector change — e.g. ``PII_KEYED`` or a CLEAN hard negative) cannot
-# grow the blob and trip the perf gate on its own.
-PERF_BLOB_BYTES = 424_000
+PERF_BLOB_CHARS = 451_000
 
 
 def perf_seconds() -> float:
+    """Best of five ``scrub_text`` runs over a fixed-size corpus blob.
+
+    The blob is tiled or cut to ``PERF_BLOB_CHARS`` characters (at least the
+    size of the corpus the gate measured before key-aware masking), so a new
+    eval generator — more coverage, not a detector change — cannot grow it
+    and trip the gate on its own. ``.baseline.json`` is machine-local:
+    record it with ``--save-baseline`` on the base branch first."""
     pii, clean, _ = build(1234)
     texts = [fill(t, v) for _, _, t, v, _ in pii[::5]] + [t for _, t in clean[::5]]
     blob = "\n".join(texts) * 3
-    reps = PERF_BLOB_BYTES // len(blob) + 1
-    blob = (blob * reps)[:PERF_BLOB_BYTES]
+    reps = PERF_BLOB_CHARS // len(blob) + 1
+    blob = (blob * reps)[:PERF_BLOB_CHARS]
     best = float("inf")
     for _ in range(5):
         t0 = time.perf_counter()
