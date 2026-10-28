@@ -956,6 +956,27 @@ mod tests {
     }
 
     #[test]
+    fn bare_postcode_label_word_needs_a_colon() {
+        let cases: [(&str, &[&str], &str); 10] = [
+            ("zip 10000 files into one archive", &["en", "de"][..], "zip 10000 files into one archive"),
+            ("ZIP 12345 bytes compressed", &["en", "de"][..], "ZIP 12345 bytes compressed"),
+            ("plz 10000 thx", &["en", "de"][..], "plz 10000 thx"),
+            ("postcode 10115", &["de"][..], "postcode 10115"),
+            ("ZIP: 80920", &["en"][..], "[ADDRESS]"),
+            ("zip - 80920", &["en"][..], "[ADDRESS]"),
+            ("Plz: 33613", &["de"][..], "[ADDRESS]"),
+            ("postcode: 10115", &["de"][..], "[ADDRESS]"),
+            ("PLZ 33613", &["de"][..], "[ADDRESS]"),
+            ("zip code 80920", &["en"][..], "[ADDRESS]"),
+        ];
+        for (text, languages, expected) in cases {
+            let langs: Vec<String> = languages.iter().map(|l| l.to_string()).collect();
+            let r = scrub_text(text, Some(&langs), true).unwrap();
+            assert_eq!(r.text, expected, "{text}");
+        }
+    }
+
+    #[test]
     fn de_postcode_rejects_an_arbitrary_capitalized_word() {
         // German nouns are always capitalized, so a city allowlist is required.
         let langs = vec!["de".to_string()];

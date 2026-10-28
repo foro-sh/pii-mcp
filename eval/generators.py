@@ -467,6 +467,14 @@ def street_en(r: R) -> str:
 
 # Copied, not imported: the eval must not share logic with the code it scores.
 _POSTCODE_LABELS = ("PLZ", "Postleitzahl", "postal code", "postcode", "zip code")
+# Bare ``postcode`` / ``zip`` read as words in prose, so they need a colon.
+_POSTCODE_LABELS_NEED_COLON = ("postcode",)
+
+
+def _postcode_labelled(r: R, digits: str) -> str:
+    label = r.choice(_POSTCODE_LABELS)
+    colon = r.random() < 0.5 or label in _POSTCODE_LABELS_NEED_COLON
+    return f"{label}: {digits}" if colon else f"{label} {digits}"
 _DE_CITIES = (
     "Berlin Hamburg München Köln Frankfurt Stuttgart Düsseldorf Dortmund Essen "
     "Leipzig Bremen Dresden Hannover Nürnberg Duisburg Bochum Wuppertal "
@@ -487,8 +495,7 @@ def postcode_de(r: R) -> str:
     digits = _de_postcode_digits(r)
     kind = r.random()
     if kind < 1 / 3:
-        label = r.choice(_POSTCODE_LABELS)
-        return f"{label}: {digits}" if r.random() < 0.5 else f"{label} {digits}"
+        return _postcode_labelled(r, digits)
     if kind < 2 / 3:
         return f"{digits} {r.choice(_DE_CITIES)}"
     return f"{street_de(r)}, {digits}"
@@ -510,8 +517,7 @@ def postcode_us(r: R) -> str:
     digits = _us_zip_digits(r)
     kind = r.random()
     if kind < 1 / 3:
-        label = r.choice(_POSTCODE_LABELS)
-        return f"{label}: {digits}" if r.random() < 0.5 else f"{label} {digits}"
+        return _postcode_labelled(r, digits)
     if kind < 2 / 3:
         return f"{street_en(r)}, {r.choice(_US_STATE_ABBR)} {digits}"
     return f"{street_en(r)}, {digits}"
@@ -619,6 +625,8 @@ CLEAN: list[tuple[str, Callable[[R], str]]] = [
     # German nouns are always capitalized, so a bare digit + capitalized word
     # is not enough to mean "postcode city" (unlike the DE_CITIES allowlist).
     ("postcode_de_noun", lambda r: f"{_digits(r, 5)} {r.choice(['Dinge', 'Objekte', 'Einheiten', 'Stück'])}"),
+    # ``zip`` / ``plz`` as a verb or chat shorthand, with no colon after it.
+    ("postcode_label_word", lambda r: r.choice([f"zip {_digits(r, 5)} files into one archive", f"ZIP {_digits(r, 5)} bytes compressed", f"plz {_digits(r, 5)} thx"])),
     # A state code that is just a token before a number, not ``City, ST``.
     ("us_state_code_word", lambda r: f"{r.choice(['Ticket ID', 'merged PR', 'route via AS', 'HTTP OK', 'Total DE', 'choose red OR', 'paid IN'])} {_digits(r, 5)}"),
 ]

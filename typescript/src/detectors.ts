@@ -1496,14 +1496,17 @@ function caseInsensitiveLiteral(word: string): string {
 }
 
 const POSTCODE_SPACE = `[${STREET_SEP_CHARS}]`;
+const POSTCODE_ORT =
+  `(?:${POSTCODE_SPACE}{0,3}(?:/|,|&|${caseInsensitiveLiteral("und")})` +
+  `${POSTCODE_SPACE}{0,3}${caseInsensitiveLiteral("ort")})?`;
 const POSTCODE_LABEL =
-  `(?:${caseInsensitiveLiteral("plz")}` +
-  `(?:${POSTCODE_SPACE}{0,3}(?:/|,|&|${caseInsensitiveLiteral("und")})${POSTCODE_SPACE}{0,3}${caseInsensitiveLiteral("ort")})?` +
-  `|${caseInsensitiveLiteral("postleitzahl")}` +
+  `(?:(?:PLZ${POSTCODE_ORT}|${caseInsensitiveLiteral("postleitzahl")}` +
   `|${caseInsensitiveLiteral("postal")}${POSTCODE_SPACE}?${caseInsensitiveLiteral("code")}` +
-  `|${caseInsensitiveLiteral("postcode")}` +
-  `|${caseInsensitiveLiteral("zip")}(?:${POSTCODE_SPACE}?${caseInsensitiveLiteral("code")})?)` +
-  `${POSTCODE_SPACE}{0,3}(?:[:\\-]${POSTCODE_SPACE}{0,3})?`;
+  `|${caseInsensitiveLiteral("zip")}${POSTCODE_SPACE}?${caseInsensitiveLiteral("code")})` +
+  `${POSTCODE_SPACE}{0,3}(?:[:\\-]${POSTCODE_SPACE}{0,3})?` +
+  `|(?:${caseInsensitiveLiteral("plz")}${POSTCODE_ORT}` +
+  `|${caseInsensitiveLiteral("postcode")}|${caseInsensitiveLiteral("zip")})` +
+  `${POSTCODE_SPACE}{0,3}[:\\-]${POSTCODE_SPACE}{0,3})`;
 
 const POSTCODE_GAP = new Set([
   ",", ";", "|", "/", "\r", "\n", " ", "\t", "\u00a0", "\u202f", "\u00b7", "\u2022", "\u2013", "\u2014",

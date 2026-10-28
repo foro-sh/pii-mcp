@@ -2005,8 +2005,9 @@ fn scrub_street_en(text: &str) -> (Option<String>, u32) {
 /// long whitespace run; case folds in ASCII only, as in Python and JS.
 fn postcode_label() -> String {
     let sp = r"[\x20\t\u{a0}\u{202f}]";
+    let ort = format!(r"(?:{sp}{{0,3}}(?:/|,|&|(?i-u:und)){sp}{{0,3}}(?i-u:ort))?");
     format!(
-        r"(?:(?i-u:plz)(?:{sp}{{0,3}}(?:/|,|&|(?i-u:und)){sp}{{0,3}}(?i-u:ort))?|(?i-u:postleitzahl|postcode)|(?i-u:postal){sp}?(?i-u:code)|(?i-u:zip)(?:{sp}?(?i-u:code))?){sp}{{0,3}}(?:[:\-]{sp}{{0,3}})?"
+        r"(?:(?:PLZ{ort}|(?i-u:postleitzahl)|(?i-u:postal){sp}?(?i-u:code)|(?i-u:zip){sp}?(?i-u:code)){sp}{{0,3}}(?:[:\-]{sp}{{0,3}})?|(?:(?i-u:plz){ort}|(?i-u:postcode|zip)){sp}{{0,3}}[:\-]{sp}{{0,3}})"
     )
 }
 

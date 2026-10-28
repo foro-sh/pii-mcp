@@ -1161,6 +1161,21 @@ describe("scrubText", () => {
     expect(scrubText(text, { languages }).text).toBe(expected);
   });
 
+  it.each<[string, string[], string]>([
+    ["zip 10000 files into one archive", ["en", "de"], "zip 10000 files into one archive"],
+    ["ZIP 12345 bytes compressed", ["en", "de"], "ZIP 12345 bytes compressed"],
+    ["plz 10000 thx", ["en", "de"], "plz 10000 thx"],
+    ["postcode 10115", ["de"], "postcode 10115"],
+    ["ZIP: 80920", ["en"], "[ADDRESS]"],
+    ["zip - 80920", ["en"], "[ADDRESS]"],
+    ["Plz: 33613", ["de"], "[ADDRESS]"],
+    ["postcode: 10115", ["de"], "[ADDRESS]"],
+    ["PLZ 33613", ["de"], "[ADDRESS]"],
+    ["zip code 80920", ["en"], "[ADDRESS]"],
+  ])("needs a colon after a bare zip, plz or postcode label (%s)", (text, languages, expected) => {
+    expect(scrubText(text, { languages }).text).toBe(expected);
+  });
+
   it.each([["ZIP: 80920"], ["zip code 80920"], ["postal code: 80920"]])(
     "masks a US ZIP with a label (%s)",
     (value) => {

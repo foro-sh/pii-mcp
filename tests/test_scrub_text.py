@@ -1187,6 +1187,27 @@ class TestDePostcode:
         """German forms label the postcode and city field together."""
         assert scrub_text(text, languages=languages)["text"] == expected
 
+    @pytest.mark.parametrize(
+        ("text", "languages", "expected"),
+        [
+            ("zip 10000 files into one archive", ["en", "de"], "zip 10000 files into one archive"),
+            ("ZIP 12345 bytes compressed", ["en", "de"], "ZIP 12345 bytes compressed"),
+            ("plz 10000 thx", ["en", "de"], "plz 10000 thx"),
+            ("postcode 10115", ["de"], "postcode 10115"),
+            ("ZIP: 80920", ["en"], "[ADDRESS]"),
+            ("zip - 80920", ["en"], "[ADDRESS]"),
+            ("Plz: 33613", ["de"], "[ADDRESS]"),
+            ("postcode: 10115", ["de"], "[ADDRESS]"),
+            ("PLZ 33613", ["de"], "[ADDRESS]"),
+            ("zip code 80920", ["en"], "[ADDRESS]"),
+        ],
+    )
+    def test_bare_label_word_needs_a_colon(
+        self, text: str, languages: list[str], expected: str
+    ) -> None:
+        """``zip`` and ``plz`` are also a verb and chat shorthand; only ``PLZ`` and two-word labels go without a colon."""
+        assert scrub_text(text, languages=languages)["text"] == expected
+
     def test_near_address_window_does_not_reach_a_distant_hit(self) -> None:
         """A state-code hit must not legitimize a distant,
         unrelated bare number a full clause away."""

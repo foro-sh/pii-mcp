@@ -1014,7 +1014,8 @@ function caseInsensitiveLiteral(word) {
   return word.replace(/[a-zA-Z]/g, (c) => `[${c.toLowerCase()}${c.toUpperCase()}]`);
 }
 var POSTCODE_SPACE = `[${STREET_SEP_CHARS}]`;
-var POSTCODE_LABEL = `(?:${caseInsensitiveLiteral("plz")}(?:${POSTCODE_SPACE}{0,3}(?:/|,|&|${caseInsensitiveLiteral("und")})${POSTCODE_SPACE}{0,3}${caseInsensitiveLiteral("ort")})?|${caseInsensitiveLiteral("postleitzahl")}|${caseInsensitiveLiteral("postal")}${POSTCODE_SPACE}?${caseInsensitiveLiteral("code")}|${caseInsensitiveLiteral("postcode")}|${caseInsensitiveLiteral("zip")}(?:${POSTCODE_SPACE}?${caseInsensitiveLiteral("code")})?)${POSTCODE_SPACE}{0,3}(?:[:\\-]${POSTCODE_SPACE}{0,3})?`;
+var POSTCODE_ORT = `(?:${POSTCODE_SPACE}{0,3}(?:/|,|&|${caseInsensitiveLiteral("und")})${POSTCODE_SPACE}{0,3}${caseInsensitiveLiteral("ort")})?`;
+var POSTCODE_LABEL = `(?:(?:PLZ${POSTCODE_ORT}|${caseInsensitiveLiteral("postleitzahl")}|${caseInsensitiveLiteral("postal")}${POSTCODE_SPACE}?${caseInsensitiveLiteral("code")}|${caseInsensitiveLiteral("zip")}${POSTCODE_SPACE}?${caseInsensitiveLiteral("code")})${POSTCODE_SPACE}{0,3}(?:[:\\-]${POSTCODE_SPACE}{0,3})?|(?:${caseInsensitiveLiteral("plz")}${POSTCODE_ORT}|${caseInsensitiveLiteral("postcode")}|${caseInsensitiveLiteral("zip")})${POSTCODE_SPACE}{0,3}[:\\-]${POSTCODE_SPACE}{0,3})`;
 var POSTCODE_GAP = /* @__PURE__ */ new Set([
   ",",
   ";",
