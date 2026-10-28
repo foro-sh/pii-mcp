@@ -1015,11 +1015,14 @@ function caseInsensitiveLiteral(word) {
 }
 var POSTCODE_SPACE = `[${STREET_SEP_CHARS}]`;
 var POSTCODE_LABEL = `(?:${caseInsensitiveLiteral("plz")}|${caseInsensitiveLiteral("postleitzahl")}|${caseInsensitiveLiteral("postal")}${POSTCODE_SPACE}?${caseInsensitiveLiteral("code")}|${caseInsensitiveLiteral("postcode")}|${caseInsensitiveLiteral("zip")}(?:${POSTCODE_SPACE}?${caseInsensitiveLiteral("code")})?)${POSTCODE_SPACE}{0,3}(?:[:\\-]${POSTCODE_SPACE}{0,3})?`;
-function postcodeNearAddress(text, start, end) {
-  const window = 12;
-  const before = text.slice(Math.max(0, start - window), start);
-  const after = text.slice(end, end + window);
-  return before.includes("[ADDRESS]") || after.includes("[ADDRESS]");
+var POSTCODE_GAP = /* @__PURE__ */ new Set([",", "\r", "\n", " ", "	", "\xA0", "\u202F"]);
+function postcodeAfterAddress(text, start, window = 12) {
+  let i = start;
+  const floor = Math.max(0, start - window);
+  while (i > floor && POSTCODE_GAP.has(text[i - 1] ?? "")) {
+    i -= 1;
+  }
+  return text.endsWith("[ADDRESS]", i);
 }
 var DE_CITIES = new Set(
   "Berlin Hamburg M\xFCnchen Munich K\xF6ln Cologne Frankfurt Stuttgart D\xFCsseldorf Dortmund Essen Leipzig Bremen Dresden Hannover N\xFCrnberg Duisburg Bochum Wuppertal Bielefeld Bonn M\xFCnster Mannheim Karlsruhe Augsburg Wiesbaden M\xF6nchengladbach Gelsenkirchen Aachen Braunschweig Kiel Chemnitz Halle Magdeburg Freiburg Krefeld Mainz L\xFCbeck Erfurt Oberhausen Rostock Kassel Potsdam Saarbr\xFCcken Heidelberg".split(" ")
@@ -1038,7 +1041,7 @@ function dePostcodeAccept(text, start, end) {
       return dePostcodeRangeOk(value.slice(-5));
     }
     if (value.length === 5) {
-      return dePostcodeRangeOk(value) && postcodeNearAddress(text, start, end);
+      return dePostcodeRangeOk(value) && postcodeAfterAddress(text, start);
     }
     return dePostcodeRangeOk(value.slice(0, 5)) && DE_CITIES.has(value.slice(5).trim());
   })();
@@ -1064,7 +1067,7 @@ function usZipAccept(text, start, end) {
   const value = text.slice(start, end);
   const accept = (() => {
     if (/^\d/.test(value)) {
-      return postcodeNearAddress(text, start, end);
+      return postcodeAfterAddress(text, start);
     }
     if (usZipStatePrefixOk(value)) {
       return US_STATE_ABBR.has(value.slice(0, 2));

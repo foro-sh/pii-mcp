@@ -2016,27 +2016,24 @@ fn postcode_label() -> String {
     )
 }
 
-/// Any `[ADDRESS]` within `WINDOW` chars counts, regardless of source. A
-/// coincidental state/label/city hit can legitimize an unrelated bare number
-/// nearby (an accepted state-code collision a few words from an order
-/// number). Placeholders are not tagged by source category, so this cannot
-/// be told apart from a genuine street hit without a wider change.
-fn postcode_near_address(text: &str, start: usize, end: usize) -> bool {
+/// True when an `[ADDRESS]` ends just before `start`.
+///
+/// A postcode follows its street (`Hauptstraße 5, 10115`, or the next line
+/// of an address block), so only a placeholder before the number counts,
+/// and only across up to `WINDOW` commas, spaces, tabs or line breaks:
+/// `Order 48213, 12 Main Street` and `12 Main Street (48213 views)` keep
+/// their numbers. The placeholder is not tagged by source, so a UK or NL
+/// postcode hit counts like a street hit.
+fn postcode_after_address(text: &str, start: usize) -> bool {
     const WINDOW: usize = 12;
-    // ``nth(WINDOW - 1)``, not ``nth(WINDOW)``: Python's ``text[start-WINDOW:start]``
-    // is exactly ``WINDOW`` chars, and the 0-indexed ``WINDOW - 1``th char back
-    // is its leftmost one. ``nth(WINDOW)`` is one char too far and let a hint
-    // one char past Python's window still count (a real parity mismatch).
-    let before_start = text[..start]
-        .char_indices()
+    let gap = text[..start]
+        .chars()
         .rev()
-        .nth(WINDOW.saturating_sub(1))
-        .map_or(0, |(i, _)| i);
-    let after_end = text[end..]
-        .char_indices()
-        .nth(WINDOW)
-        .map_or(text.len(), |(i, _)| end + i);
-    text[before_start..start].contains("[ADDRESS]") || text[end..after_end].contains("[ADDRESS]")
+        .take(WINDOW)
+        .take_while(|c| matches!(c, ',' | '\r' | '\n' | ' ' | '\t' | '\u{a0}' | '\u{202f}'))
+        .map(char::len_utf8)
+        .sum::<usize>();
+    text[..start - gap].ends_with("[ADDRESS]")
 }
 
 fn de_postcode_re() -> &'static Regex {
@@ -2051,13 +2048,13 @@ fn de_postcode_re() -> &'static Regex {
     })
 }
 
-fn de_postcode_accept(text: &str, value: &str, start: usize, end: usize) -> bool {
+fn de_postcode_accept(text: &str, value: &str, start: usize) -> bool {
     let first = value.chars().next().unwrap();
     if !first.is_ascii_digit() {
         return de_postcode_range_ok(&value[value.len() - 5..]);
     }
     if value.len() == 5 {
-        return de_postcode_range_ok(value) && postcode_near_address(text, start, end);
+        return de_postcode_range_ok(value) && postcode_after_address(text, start);
     }
     de_postcode_range_ok(&value[..5]) && de_city_known(value[5..].trim())
 }
@@ -2067,7 +2064,7 @@ fn scrub_de_postcode(text: &str) -> (Option<String>, u32) {
         text,
         de_postcode_re(),
         "[ADDRESS]",
-        |v, s, e| de_postcode_accept(text, v, s, e),
+        |v, s, _| de_postcode_accept(text, v, s),
         false,
     )
 }
@@ -2095,10 +2092,10 @@ fn us_zip_re() -> &'static Regex {
     })
 }
 
-fn us_zip_accept(text: &str, value: &str, start: usize, end: usize) -> bool {
+fn us_zip_accept(text: &str, value: &str, start: usize) -> bool {
     let first = value.chars().next().unwrap();
     if first.is_ascii_digit() {
-        return postcode_near_address(text, start, end);
+        return postcode_after_address(text, start);
     }
     if us_zip_state_prefix_ok(value) {
         return us_state_abbr_known(&value[..2]);
@@ -2111,7 +2108,7 @@ fn scrub_us_zip(text: &str) -> (Option<String>, u32) {
         text,
         us_zip_re(),
         "[ADDRESS]",
-        |v, s, e| us_zip_accept(text, v, s, e),
+        |v, s, _| us_zip_accept(text, v, s),
         false,
     )
 }

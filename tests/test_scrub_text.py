@@ -1108,6 +1108,23 @@ class TestDePostcode:
         non-ASCII letter next to the hit does not block the word boundary."""
         assert scrub_text(text, languages=[lang])["text"] == expected
 
+    @pytest.mark.parametrize(
+        ("text", "lang", "expected"),
+        [
+            ("Order 48213, 12 Main Street", "en", "Order 48213, [ADDRESS]"),
+            ("12 Main Street (48213 views)", "en", "[ADDRESS] (48213 views)"),
+            ("12 Main Street\n80920", "en", "[ADDRESS]\n[ADDRESS]"),
+            ("Hauptstraße 5,\n    33602", "de", "[ADDRESS],\n    [ADDRESS]"),
+            ("Hauptstraße 5\U0001f600, 10115", "de", "[ADDRESS]\U0001f600, 10115"),
+        ],
+    )
+    def test_address_hint_must_precede_the_number(
+        self, text: str, lang: str, expected: str
+    ) -> None:
+        """Only an ``[ADDRESS]`` before the number, across commas, spaces and
+        line breaks, counts; the gap is measured in code points everywhere."""
+        assert scrub_text(text, languages=[lang])["text"] == expected
+
     def test_near_address_window_does_not_reach_a_distant_hit(self) -> None:
         """An accepted state-code collision must not legitimize a distant,
         unrelated bare number a full clause away."""

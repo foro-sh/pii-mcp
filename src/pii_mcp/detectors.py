@@ -1423,18 +1423,24 @@ _POSTCODE_LABEL = (
 )
 
 
-def _postcode_near_address(text: str, start: int, end: int, window: int = 12) -> bool:
-    """Any ``[ADDRESS]`` within ``window`` chars counts, regardless of source.
+_POSTCODE_GAP = frozenset(",\r\n \t\u00a0\u202f")
 
-    A coincidental state/label/city hit can legitimize an unrelated bare
-    number nearby (an accepted state-code collision a few words from an
-    order number). Placeholders are not tagged by source category, so this
-    cannot be told apart from a genuine street hit without a wider change.
+
+def _postcode_after_address(text: str, start: int, window: int = 12) -> bool:
+    """True when an ``[ADDRESS]`` ends just before ``start``.
+
+    A postcode follows its street (``Hauptstraße 5, 10115``, or the next
+    line of an address block), so only a placeholder before the number
+    counts, and only across up to ``window`` commas, spaces, tabs or line
+    breaks: ``Order 48213, 12 Main Street`` and ``12 Main Street (48213
+    views)`` keep their numbers. The placeholder is not tagged by source, so
+    a UK or NL postcode hit counts like a street hit.
     """
-    return (
-        "[ADDRESS]" in text[max(0, start - window) : start]
-        or "[ADDRESS]" in text[end : end + window]
-    )
+    i = start
+    floor = max(0, start - window)
+    while i > floor and text[i - 1] in _POSTCODE_GAP:
+        i -= 1
+    return text.endswith("[ADDRESS]", 0, i)
 
 
 # Major German cities, mirroring the UK postcode-area allowlist: any
@@ -1469,7 +1475,7 @@ def _de_postcode_accept(text: str, start: int, end: int) -> bool:
     if not value[0].isdigit():
         return _de_postcode_range_ok(value[-5:])
     if len(value) == 5:
-        return _de_postcode_range_ok(value) and _postcode_near_address(text, start, end)
+        return _de_postcode_range_ok(value) and _postcode_after_address(text, start)
     return _de_postcode_range_ok(value[:5]) and value[5:].strip() in _DE_CITIES
 
 
@@ -1503,7 +1509,7 @@ US_ZIP_RE = re.compile(
 def _us_zip_accept(text: str, start: int, end: int) -> bool:
     value = text[start:end]
     if value[0].isdigit():
-        return _postcode_near_address(text, start, end)
+        return _postcode_after_address(text, start)
     if _US_ZIP_STATE_PREFIX_RE.match(value):
         return value[:2] in _US_STATE_ABBR
     return True

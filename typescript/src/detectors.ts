@@ -1510,18 +1510,26 @@ const POSTCODE_LABEL =
   `|${caseInsensitiveLiteral("zip")}(?:${POSTCODE_SPACE}?${caseInsensitiveLiteral("code")})?)` +
   `${POSTCODE_SPACE}{0,3}(?:[:\\-]${POSTCODE_SPACE}{0,3})?`;
 
+const POSTCODE_GAP = new Set([",", "\r", "\n", " ", "\t", "\u00a0", "\u202f"]);
+
 /**
- * Any ``[ADDRESS]`` within ``window`` chars counts, regardless of source. A
- * coincidental state/label/city hit can legitimize an unrelated bare number
- * nearby (an accepted state-code collision a few words from an order
- * number). Placeholders are not tagged by source category, so this cannot be
- * told apart from a genuine street hit without a wider change.
+ * True when an ``[ADDRESS]`` ends just before ``start``.
+ *
+ * A postcode follows its street (``Hauptstraße 5, 10115``, or the next line
+ * of an address block), so only a placeholder before the number counts, and
+ * only across up to ``window`` commas, spaces, tabs or line breaks:
+ * ``Order 48213, 12 Main Street`` and ``12 Main Street (48213 views)`` keep
+ * their numbers. Every gap character is a single UTF-16 unit, so the window
+ * counts the same as in Python and Rust. The placeholder is not tagged by
+ * source, so a UK or NL postcode hit counts like a street hit.
  */
-function postcodeNearAddress(text: string, start: number, end: number): boolean {
-  const window = 12;
-  const before = text.slice(Math.max(0, start - window), start);
-  const after = text.slice(end, end + window);
-  return before.includes("[ADDRESS]") || after.includes("[ADDRESS]");
+function postcodeAfterAddress(text: string, start: number, window = 12): boolean {
+  let i = start;
+  const floor = Math.max(0, start - window);
+  while (i > floor && POSTCODE_GAP.has(text[i - 1] ?? "")) {
+    i -= 1;
+  }
+  return text.endsWith("[ADDRESS]", i);
 }
 
 // Major German cities, mirroring the UK postcode-area allowlist: any
@@ -1556,7 +1564,7 @@ function dePostcodeAccept(text: string, start: number, end: number): number {
       return dePostcodeRangeOk(value.slice(-5));
     }
     if (value.length === 5) {
-      return dePostcodeRangeOk(value) && postcodeNearAddress(text, start, end);
+      return dePostcodeRangeOk(value) && postcodeAfterAddress(text, start);
     }
     return dePostcodeRangeOk(value.slice(0, 5)) && DE_CITIES.has(value.slice(5).trim());
   })();
@@ -1598,7 +1606,7 @@ function usZipAccept(text: string, start: number, end: number): number {
   const value = text.slice(start, end);
   const accept = (() => {
     if (/^\d/.test(value)) {
-      return postcodeNearAddress(text, start, end);
+      return postcodeAfterAddress(text, start);
     }
     if (usZipStatePrefixOk(value)) {
       return US_STATE_ABBR.has(value.slice(0, 2));

@@ -878,6 +878,21 @@ mod tests {
     }
 
     #[test]
+    fn postcode_address_hint_must_precede_the_number() {
+        for (text, lang, expected) in [
+            ("Order 48213, 12 Main Street", "en", "Order 48213, [ADDRESS]"),
+            ("12 Main Street (48213 views)", "en", "[ADDRESS] (48213 views)"),
+            ("12 Main Street\n80920", "en", "[ADDRESS]\n[ADDRESS]"),
+            ("Hauptstraße 5,\n    33602", "de", "[ADDRESS],\n    [ADDRESS]"),
+            ("Hauptstraße 5\u{1f600}, 10115", "de", "[ADDRESS]\u{1f600}, 10115"),
+        ] {
+            let langs = vec![lang.to_string()];
+            let r = scrub_text(text, Some(&langs), true).unwrap();
+            assert_eq!(r.text, expected, "{text}");
+        }
+    }
+
+    #[test]
     fn de_postcode_rejects_an_arbitrary_capitalized_word() {
         // German nouns are always capitalized, so a city allowlist is required.
         let langs = vec!["de".to_string()];

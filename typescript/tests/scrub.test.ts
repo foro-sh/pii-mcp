@@ -1110,6 +1110,16 @@ describe("scrubText", () => {
     expect(scrubText(text, { languages: [lang] }).text).toBe(expected);
   });
 
+  it.each([
+    ["Order 48213, 12 Main Street", "en", "Order 48213, [ADDRESS]"],
+    ["12 Main Street (48213 views)", "en", "[ADDRESS] (48213 views)"],
+    ["12 Main Street\n80920", "en", "[ADDRESS]\n[ADDRESS]"],
+    ["Hauptstraße 5,\n    33602", "de", "[ADDRESS],\n    [ADDRESS]"],
+    ["Hauptstraße 5\u{1f600}, 10115", "de", "[ADDRESS]\u{1f600}, 10115"],
+  ])("only counts an address hint before the postcode (%s)", (text, lang, expected) => {
+    expect(scrubText(text, { languages: [lang] }).text).toBe(expected);
+  });
+
   it.each([["ZIP: 80920"], ["zip code 80920"], ["postal code: 80920"]])(
     "masks a US ZIP with a label (%s)",
     (value) => {
