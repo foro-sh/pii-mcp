@@ -1999,16 +1999,10 @@ fn scrub_street_en(text: &str) -> (Option<String>, u32) {
     scrub_street(text, &street_res()[2])
 }
 
-/// Shared with the DE postcode and US ZIP patterns, mirroring Python
-/// `_POSTCODE_LABEL`: bare 5-digit numbers are too common (order refs,
-/// counts) to mask without context. A DE postcode or US ZIP is only masked
-/// next to one of three hints: a PLZ/ZIP/postcode label, a city/state the
-/// postcode normally sits beside, or an `[ADDRESS]` placeholder the street
-/// detector already left nearby. One alternation per detector keeps this to
-/// a single scan; the three hints are told apart from the matched text
-/// alone (label text never starts with a digit, the state form's third
-/// character is always a separator), so one `accept` callback gates every
-/// branch.
+/// The label hint shared by the DE postcode and US ZIP patterns, with its
+/// separator: up to three spaces, an optional colon or dash, and up to three
+/// more. The bound keeps the backtracking Python and JS engines linear on a
+/// long whitespace run; case folds in ASCII only, as in Python and JS.
 fn postcode_label() -> String {
     let sp = r"[\x20\t\u{a0}\u{202f}]";
     format!(
@@ -2050,9 +2044,12 @@ fn de_postcode_re() -> &'static Regex {
 
 /// Where an accepted DE postcode hit ends; `start` rejects it.
 ///
-/// A label hit and a known-city hit are masked whole. A city not on the
-/// list still leaves the five digits to the address hint, so
-/// `Hauptstraße 5, 33602 Gütersloh` masks `33602` but keeps the city.
+/// One alternation per detector keeps postcode hints to a single scan, and
+/// the branch is read off the matched text: a label hit starts with a
+/// letter, a city hit runs past the five digits. A label hit and a
+/// known-city hit are masked whole. A city not on the list still leaves the
+/// five digits to the address hint, so `Hauptstraße 5, 33602 Gütersloh`
+/// masks `33602` but keeps the city.
 fn de_postcode_end(text: &str, start: usize, end: usize) -> usize {
     let value = &text[start..end];
     if !value.starts_with(|c: char| c.is_ascii_digit()) {
@@ -2124,6 +2121,12 @@ fn us_state_after_city(text: &str, start: usize) -> bool {
         })
 }
 
+/// Accept a US ZIP hit by the hint its branch matched.
+///
+/// The branch is read off the matched text: a bare hit starts with a digit,
+/// the state form has a separator third. The state code must be a US
+/// state, DC or inhabited territory, so an arbitrary two-letter token glued
+/// to a number is no hint; a label hit needs nothing more.
 fn us_zip_accept(text: &str, value: &str, start: usize) -> bool {
     let first = value.chars().next().unwrap();
     if first.is_ascii_digit() {

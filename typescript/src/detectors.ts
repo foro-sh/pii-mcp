@@ -1485,19 +1485,12 @@ export const streetNlDetector = streetDetector(STREET_NL_RE);
 export const streetDeDetector = streetDetector(STREET_DE_RE, deStreetValid);
 export const streetEnDetector = streetDetector(STREET_EN_RE);
 
-// Bare 5-digit numbers are too common (order refs, counts) to mask on their
-// own. A DE postcode or US ZIP is only masked next to one of three hints: a
-// PLZ/ZIP/postcode label, a city/state the postcode normally sits beside, or
-// an ``[ADDRESS]`` placeholder the street detector already left nearby. One
-// alternation per detector keeps this to a single scan; the three hints are
-// told apart from the matched text alone (label text never starts with a
-// digit, the state form's third character is always a separator), so one
-// ``acceptEnd`` callback gates every branch.
-//
-// JS has no inline case-insensitive group (Python ``(?i:...)``), and a
-// pattern-wide ``i`` flag would also case-fold ``STREET_UP``/``STREET_LOW``
-// and the state form's ``[A-Z]{2}``, so the label words are spelled out
-// letter-by-letter as ``[xX]`` instead.
+/**
+ * ASCII case-insensitive pattern for ``word``, spelled ``[xX]`` per letter.
+ * JS has no inline case-insensitive group like Python ``(?i:...)``, and a
+ * pattern-wide ``i`` flag would also fold ``STREET_UP``/``STREET_LOW`` and
+ * the state form's ``[A-Z]{2}``.
+ */
 function caseInsensitiveLiteral(word: string): string {
   return word.replace(/[a-zA-Z]/g, (c) => `[${c.toLowerCase()}${c.toUpperCase()}]`);
 }
@@ -1576,9 +1569,12 @@ function dePostcodeRangeOk(digits: string): boolean {
 /**
  * Where an accepted DE postcode hit ends; ``start`` rejects it.
  *
- * A label hit and a known-city hit are masked whole. A city not on the list
- * still leaves the five digits to the address hint, so
- * ``Hauptstraße 5, 33602 Gütersloh`` masks ``33602`` but keeps the city.
+ * One alternation per detector keeps postcode hints to a single scan, and the
+ * branch is read off the matched text: a label hit starts with a letter, a
+ * city hit runs past the five digits. A label hit and a known-city hit are
+ * masked whole. A city not on the list still leaves the five digits to the
+ * address hint, so ``Hauptstraße 5, 33602 Gütersloh`` masks ``33602`` but
+ * keeps the city.
  */
 function dePostcodeEnd(text: string, start: number, end: number): number {
   const value = text.slice(start, end);
@@ -1600,8 +1596,6 @@ function scrubDePostcode(text: string): { text: string; count: number } {
 
 export const dePostcodeDetector: Detector = { type: "address", scrub: scrubDePostcode };
 
-// US states, DC and the inhabited territories; mirrors the UK/DE allowlists
-// so an arbitrary two-letter token glued to a number does not pass as a hint.
 const US_STATE_ABBR = new Set(
   (
     "AL AK AZ AR CA CO CT DE FL GA HI ID IL IN IA KS KY LA ME MD MA MI MN MS " +
@@ -1643,6 +1637,14 @@ function usStateAfterCity(text: string, start: number): boolean {
   return i < start && i >= 2 && text[i - 1] === "," && STREET_LETTER_RE.test(text[i - 2] ?? "");
 }
 
+/**
+ * Accept a US ZIP hit by the hint its branch matched.
+ *
+ * The branch is read off the matched text: a bare hit starts with a digit,
+ * the state form has a separator third. The state code must be a US state,
+ * DC or inhabited territory, so an arbitrary two-letter token glued to a
+ * number is no hint; a label hit needs nothing more.
+ */
 function usZipAccept(text: string, start: number, end: number): number {
   const value = text.slice(start, end);
   const accept = (() => {

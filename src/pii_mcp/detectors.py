@@ -96,6 +96,8 @@ Patterns:
   German nouns are always capitalized), or an ``[ADDRESS]`` placeholder just
   before it, across commas, spaces or line breaks (``Hauptstraße 5,
   33602``; same hint used for US ZIPs). Digits and word boundaries are ASCII.
+  The label separator is bounded (up to three spaces, an optional colon or
+  dash, up to three more) so the backtracking scan stays linear.
   01000-99998 (nothing starting ``00``, not ``99999``): looser than the
   lowest assigned code, 01067, since a leak costs more than a masked number.
 - US ZIP (``address``): 5-digit or ZIP+4 (``80920-1406``), hinted the same way
@@ -1410,14 +1412,6 @@ street_de_detector = Detector(
 )
 street_en_detector = Detector(type="address", scrub=_scrub_street(STREET_EN_RE))
 
-# Bare 5-digit numbers are too common (order refs, counts) to mask on their
-# own. A DE postcode or US ZIP is only masked next to one of three hints: a
-# PLZ/ZIP/postcode label, a city/state the postcode normally sits beside, or
-# an ``[ADDRESS]`` placeholder the street detector already left nearby. One
-# alternation per detector keeps this to a single scan over ``text``; the
-# three hints are told apart from the matched text alone (label text never
-# starts with a digit, the state form's third character is always a
-# separator), so one ``context_ok`` callback can gate every branch.
 _POSTCODE_SPACE = rf"[{_STREET_SEP_CHARS}]"
 _POSTCODE_LABEL = (
     rf"(?i:plz|postleitzahl|postal{_POSTCODE_SPACE}?code|postcode|zip(?:{_POSTCODE_SPACE}?code)?)"
@@ -1491,9 +1485,12 @@ def _de_postcode_range_ok(digits: str) -> bool:
 def _de_postcode_end(text: str, start: int, end: int) -> int:
     """Where an accepted DE postcode hit ends; ``start`` rejects it.
 
-    A label hit and a known-city hit are masked whole. A city not on the
-    list still leaves the five digits to the address hint, so
-    ``Hauptstraße 5, 33602 Gütersloh`` masks ``33602`` but keeps the city.
+    One alternation per detector keeps postcode hints to a single scan, and
+    the branch is read off the matched text: a label hit starts with a
+    letter, a city hit runs past the five digits. A label hit and a
+    known-city hit are masked whole. A city not on the list still leaves the
+    five digits to the address hint, so ``Hauptstraße 5, 33602 Gütersloh``
+    masks ``33602`` but keeps the city.
     """
     value = text[start:end]
     if not value[0].isdigit():
@@ -1511,8 +1508,6 @@ def _scrub_de_postcode(text: str) -> tuple[str, int]:
 
 de_postcode_detector = Detector(type="address", scrub=_scrub_de_postcode)
 
-# US states, DC and the inhabited territories; mirrors the UK/DE allowlists so
-# an arbitrary two-letter token glued to a number does not pass as a hint.
 _US_STATE_ABBR = frozenset(
     """
     AL AK AZ AR CA CO CT DE FL GA HI ID IL IN IA KS KY LA ME MD MA MI MN MS
@@ -1554,6 +1549,13 @@ def _us_state_after_city(text: str, start: int) -> bool:
 
 
 def _us_zip_accept(text: str, start: int, end: int) -> bool:
+    """Accept a US ZIP hit by the hint its branch matched.
+
+    The branch is read off the matched text: a bare hit starts with a digit,
+    the state form has a separator third. The state code must be a US
+    state, DC or inhabited territory, so an arbitrary two-letter token glued
+    to a number is no hint; a label hit needs nothing more.
+    """
     value = text[start:end]
     if value[0].isdigit():
         return _postcode_after_address(text, start)
