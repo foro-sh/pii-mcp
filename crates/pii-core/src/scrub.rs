@@ -1138,8 +1138,21 @@ mod tests {
     #[test]
     fn us_zip_rejects_an_unknown_two_letter_prefix() {
         let langs = vec!["en".to_string()];
-        let r = scrub_text("batch XX 80920", Some(&langs), true).unwrap();
+        let r = scrub_text("Springfield, XX 80920", Some(&langs), true).unwrap();
+        assert_eq!(r.text, "Springfield, XX 80920");
         assert_eq!(r.counts["address"], 0);
+    }
+
+    #[test]
+    fn us_zip_disabled_without_en() {
+        let off = vec!["nl".to_string(), "de".to_string()];
+        let r = scrub_text("Springfield, CA 80920", Some(&off), true).unwrap();
+        assert_eq!(r.text, "Springfield, CA 80920");
+        assert_eq!(r.counts["address"], 0);
+        let on = vec!["en".to_string()];
+        let r = scrub_text("Springfield, CA 80920", Some(&on), true).unwrap();
+        assert_eq!(r.text, "Springfield, [ADDRESS]");
+        assert_eq!(r.counts["address"], 1);
     }
 
     #[test]

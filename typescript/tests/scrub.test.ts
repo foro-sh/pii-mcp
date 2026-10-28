@@ -1259,7 +1259,8 @@ describe("scrubText", () => {
   });
 
   it("rejects an unknown two-letter prefix before a US ZIP", () => {
-    const result = scrubText("batch XX 80920", { languages: ["en"] });
+    const result = scrubText("Springfield, XX 80920", { languages: ["en"] });
+    expect(result.text).toBe("Springfield, XX 80920");
     expect(result.counts.address).toBe(0);
   });
 
@@ -1276,9 +1277,12 @@ describe("scrubText", () => {
   });
 
   it("disables the US ZIP detector without the en pack", () => {
-    const result = scrubText("CO 80920", { languages: ["nl", "de"] });
-    expect(result.text).toBe("CO 80920");
-    expect(result.counts.address).toBe(0);
+    const off = scrubText("Springfield, CA 80920", { languages: ["nl", "de"] });
+    expect(off.text).toBe("Springfield, CA 80920");
+    expect(off.counts.address).toBe(0);
+    const on = scrubText("Springfield, CA 80920", { languages: ["en"] });
+    expect(on.text).toBe("Springfield, [ADDRESS]");
+    expect(on.counts.address).toBe(1);
   });
 
   it("does not let a distant state-code hit legitimize a bare number", () => {

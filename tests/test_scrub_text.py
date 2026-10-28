@@ -1320,7 +1320,8 @@ class TestUsZip:
         assert scrub_text(text, languages=languages)["text"] == expected
 
     def test_rejects_an_unknown_two_letter_prefix(self) -> None:
-        result = scrub_text("batch XX 80920", languages=["en"])
+        result = scrub_text("Springfield, XX 80920", languages=["en"])
+        assert result["text"] == "Springfield, XX 80920"
         assert result["counts"]["address"] == 0
 
     def test_masks_near_a_street_hit(self) -> None:
@@ -1335,9 +1336,12 @@ class TestUsZip:
 
     def test_disabled_without_en(self) -> None:
         """The label hint is shared across packs; the state-code hint is en-only."""
-        result = scrub_text("CO 80920", languages=["nl", "de"])
-        assert result["text"] == "CO 80920"
+        result = scrub_text("Springfield, CA 80920", languages=["nl", "de"])
+        assert result["text"] == "Springfield, CA 80920"
         assert result["counts"]["address"] == 0
+        result = scrub_text("Springfield, CA 80920", languages=["en"])
+        assert result["text"] == "Springfield, [ADDRESS]"
+        assert result["counts"]["address"] == 1
 
 
 class TestNlLicensePlate:
