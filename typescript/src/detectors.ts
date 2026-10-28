@@ -134,8 +134,11 @@
  *   unquoted, to the end of the line (trailing sentence punctuation stays
  *   outside the mask; a comma does not end it, so
  *   ``Straat: Kerkstraat, 12`` stays one value — see ``kvValueSpan``).
- *   ``name`` and ``state`` are ambiguous (``name: "build-cache"``,
- *   ``state: "active"``) and are gated: the value must look like one or more
+ *   There is no bare ``state`` key: in tool output it is a job/resource
+ *   status (``State: Running``, ``"state": "ACTIVE"``) far more often than a
+ *   US state, and those statuses pass any capitalization gate;
+ *   ``bundesland`` / ``provincie`` stay. ``name`` is ambiguous
+ *   (``name: "build-cache"``) and is gated: the value must look like one or more
  *   capitalized words (Dutch/German particles — ``van``, ``der``, ``von``,
  *   … — stay lowercase). ``scrubPayloadJs`` applies the same dictionary
  *   structurally, by object key, in ``scrubWalk``.
@@ -1579,15 +1582,10 @@ const ADDRESS_KEYS: readonly string[] = [
   "stad",
   "plaats",
   "ort",
-  "state",
   "bundesland",
   "provincie",
 ];
-// Bare ``name`` doubles as a resource/build-artifact field (``name: "build-
-// cache"``) and ``state`` as a job/resource status (``state: "active"``), far
-// more often than either means a person or a US state in tool output; every
-// other key above is specific enough to skip the value gate.
-const AMBIGUOUS_KEYS = new Set(["name", "state"]);
+const AMBIGUOUS_KEYS = new Set(["name"]);
 
 function splitKeyWords(key: string): string[] {
   return key.split(/[\s_-]+/).filter((word) => word.length > 0);
@@ -1613,7 +1611,7 @@ const ADDRESS_KEY_IDS = new Set(ADDRESS_KEYS.map(normalizeKey));
 
 /**
  * ``[category, ambiguous]`` for a recognized person/address field name,
- * ``null`` otherwise. ``ambiguous`` marks a key (``name``, ``state``) whose
+ * ``null`` otherwise. ``ambiguous`` marks a key (``name``) whose
  * value needs ``looksLikeName`` before it is masked.
  */
 export function keyFieldCategory(key: string): ["person" | "address", boolean] | null {

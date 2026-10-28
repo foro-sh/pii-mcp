@@ -1220,7 +1220,7 @@ describe("key-aware masking", () => {
     ['"city": "Rotterdam"', '"city": "[ADDRESS]"'],
     ["stad: Utrecht", "stad: [ADDRESS]"],
     ["zip=90210", "zip=[ADDRESS]"],
-    ["state: California", "state: [ADDRESS]"],
+    ["Bundesland: Nordrhein-Westfalen", "Bundesland: [ADDRESS]"],
   ])("masks an address after a recognized key: %s", (text, expected) => {
     const result = scrubText(text, { languages: ["en", "nl", "de"] });
     expect(result.text).toBe(expected);
@@ -1245,6 +1245,10 @@ describe("key-aware masking", () => {
     "street_view: true",
     "state: active",
     "state: running",
+    "State: Running",
+    "Last State: Terminated",
+    '"state": "ACTIVE"',
+    "state: California",
     "username: ada",
   ])("does not mask an ambiguous or compound key: %s", (text) => {
     const result = scrubText(text, { languages: ["en", "nl", "de"] });

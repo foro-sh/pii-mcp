@@ -1069,7 +1069,7 @@ mod tests {
             (r#""city": "Rotterdam""#, r#""city": "[ADDRESS]""#),
             ("stad: Utrecht", "stad: [ADDRESS]"),
             ("zip=90210", "zip=[ADDRESS]"),
-            ("state: California", "state: [ADDRESS]"),
+            ("Bundesland: Nordrhein-Westfalen", "Bundesland: [ADDRESS]"),
         ] {
             let r = scrub_text_langs(text, &langs, true).unwrap();
             assert_eq!(r.text, expected, "{text:?}");
@@ -1102,6 +1102,10 @@ mod tests {
             "street_view: true",
             "state: active",
             "state: running",
+            "State: Running",
+            "Last State: Terminated",
+            r#""state": "ACTIVE""#,
+            "state: California",
             "username: ada",
         ] {
             let r = scrub_text_langs(text, &langs, true).unwrap();

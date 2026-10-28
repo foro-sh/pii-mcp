@@ -138,11 +138,14 @@ Patterns:
   line (trailing sentence punctuation stays outside the mask; a comma does
   not end it, so ``Straat: Kerkstraat, 12`` stays one value — see
   ``_kv_value_span``). ``name``
-  (resource/build names, ``name: "build-cache"``) and ``state`` (job/resource
-  status, ``state: "active"``) are ambiguous and gated: the value must look
-  like one or more capitalized words (Dutch/German particles — ``van``,
+  (resource/build names, ``name: "build-cache"``) is ambiguous and gated: the
+  value must look like one or more capitalized words (Dutch/German particles — ``van``,
   ``der``, ``von``, … — stay lowercase). ``scrub_payload`` applies the same
-  dictionary structurally, by dict key, in ``_scrub_walk``.
+  dictionary structurally, by dict key, in ``_scrub_walk``. There is no bare
+  ``state`` key: in tool output it is a job/resource status far more often
+  than a US state (``State: Running``, ``"state": "ACTIVE"``), and those
+  Title Case / all-caps statuses pass any capitalization gate; the regional
+  ``bundesland`` / ``provincie`` keys stay.
 
 ``UNIVERSAL_DETECTORS`` (key-aware person/address, email, IBAN, credit card,
 BIC, MAC, IMEI, IP, location) always run; locale detectors are selected by
@@ -1505,15 +1508,10 @@ _ADDRESS_KEYS: tuple[str, ...] = (
     "stad",
     "plaats",
     "ort",
-    "state",
     "bundesland",
     "provincie",
 )
-# Bare ``name`` doubles as a resource/build-artifact field (``name: "build-
-# cache"``) and ``state`` as a job/resource status (``state: "active"``), far
-# more often than either means a person or a US state in tool output; every
-# other key above is specific enough to skip the value gate.
-_AMBIGUOUS_KEYS = frozenset({"name", "state"})
+_AMBIGUOUS_KEYS = frozenset({"name"})
 
 _KEY_SEP_RE = re.compile(r"[\s_-]+")
 _KEY_TRAILING_DIGITS_RE = re.compile(r"\d+$")

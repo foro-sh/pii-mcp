@@ -1131,7 +1131,7 @@ class TestKeyAwareMasking:
             ('"city": "Rotterdam"', '"city": "[ADDRESS]"'),
             ("stad: Utrecht", "stad: [ADDRESS]"),
             ("zip=90210", "zip=[ADDRESS]"),
-            ("state: California", "state: [ADDRESS]"),
+            ("Bundesland: Nordrhein-Westfalen", "Bundesland: [ADDRESS]"),
         ],
     )
     def test_masks_address_after_a_recognized_key(self, text: str, expected: str) -> None:
@@ -1157,6 +1157,10 @@ class TestKeyAwareMasking:
             "street_view: true",
             "state: active",
             "state: running",
+            "State: Running",
+            "Last State: Terminated",
+            '"state": "ACTIVE"',
+            "state: California",
             "username: ada",
         ],
     )

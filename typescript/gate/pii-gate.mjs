@@ -1061,11 +1061,10 @@ var ADDRESS_KEYS = [
   "stad",
   "plaats",
   "ort",
-  "state",
   "bundesland",
   "provincie"
 ];
-var AMBIGUOUS_KEYS = /* @__PURE__ */ new Set(["name", "state"]);
+var AMBIGUOUS_KEYS = /* @__PURE__ */ new Set(["name"]);
 function splitKeyWords(key) {
   return key.split(/[\s_-]+/).filter((word) => word.length > 0);
 }

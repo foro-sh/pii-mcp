@@ -28,9 +28,12 @@
 //! `plaats`, …) is masked whole, with no format check. A key normalizes
 //! case, `_`/`-`/space separators and a trailing numeric suffix
 //! (`LastName1`) before an exact match, so a compound key (`city_count`,
-//! `street_view`, `username`) is left alone. `name` and `state` are
-//! ambiguous (`name: "build-cache"`, `state: "active"`) and are gated on the
-//! value looking like one or more capitalized words. See `scrub_key_value`.
+//! `street_view`, `username`) is left alone. `name` is ambiguous
+//! (`name: "build-cache"`) and is gated on the value looking like one or more
+//! capitalized words. See `scrub_key_value`. There is no bare `state` key: in
+//! tool output it is a job/resource status (`State: Running`,
+//! `"state": "ACTIVE"`) far more often than a US state, and those statuses
+//! pass any capitalization gate; `bundesland` / `provincie` stay.
 
 use crate::checksum::{
     bsn_valid_grouped, de_passport_valid, iban_valid, imei_valid, is_group_sep,
@@ -2173,15 +2176,10 @@ const ADDRESS_KEYS: &[&str] = &[
     "stad",
     "plaats",
     "ort",
-    "state",
     "bundesland",
     "provincie",
 ];
-// Bare `name` doubles as a resource/build-artifact field (`name: "build-
-// cache"`) and `state` as a job/resource status (`state: "active"`), far
-// more often than either means a person or a US state in tool output; every
-// other key above is specific enough to skip the value gate.
-const AMBIGUOUS_KEYS: &[&str] = &["name", "state"];
+const AMBIGUOUS_KEYS: &[&str] = &["name"];
 
 fn split_key_words(key: &str) -> Vec<&str> {
     key.split(|c: char| c.is_whitespace() || c == '_' || c == '-')
@@ -2215,7 +2213,7 @@ fn address_key_ids() -> &'static [String] {
 }
 
 /// `(category, ambiguous)` for a recognized person/address field name,
-/// `None` otherwise. `ambiguous` marks a key (`name`, `state`) whose value
+/// `None` otherwise. `ambiguous` marks a key (`name`) whose value
 /// needs `looks_like_name` before it is masked.
 pub fn key_field_category(key: &str) -> Option<(PiiCategory, bool)> {
     let key_id = normalize_key(key);

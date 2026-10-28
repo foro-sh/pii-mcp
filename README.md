@@ -79,7 +79,10 @@ field name (`name`, `first_name`, `vorname`, `naam`, …) is masked; there is
 no pattern for a bare name on its own. Prose name NER is out of band — this
 package does not ship an in-process NER model. Decimal/DMS `location`
 coordinates stay here; free-text place names do not, except when key-aware
-masking catches one after a `city`/`stadt`/`plaats` field.
+masking catches one after a `city`/`stadt`/`plaats` field. There is no bare
+`state` field: in tool output it is a job or resource status (`State:
+Running`, `"state": "ACTIVE"`) far more often than a US state, so only the
+regional `bundesland` / `provincie` fields are key-aware.
 
 ### Using with foro / Presidio
 

@@ -634,6 +634,7 @@ CLEAN: list[tuple[str, Callable[[R], str]]] = [
     # compound key that only looks like a recognized one.
     ("key_name_hard_negative", lambda r: f'name: "{r.choice(["build-cache", "staging", "default"])}"'),
     ("key_state_hard_negative", lambda r: f"state: {r.choice(['active', 'running', 'completed', 'pending'])}"),
+    ("key_state_status_hard_negative", lambda r: r.choice(["State: Running", "Last State: Terminated", '"state": "ACTIVE"', "State: Waiting"])),
     ("key_city_count_hard_negative", lambda r: f"city_count: {r.randint(1, 99)}"),
     ("key_street_view_hard_negative", lambda r: f"street_view: {r.choice(['true', 'false'])}"),
     ("key_username_hard_negative", lambda r: f"username: {r.choice(['ada', 'grabbe', 'jvandijk'])}"),
