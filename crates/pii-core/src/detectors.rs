@@ -2042,7 +2042,7 @@ fn de_postcode_re() -> &'static Regex {
         let sep = format!("[{}]{{1,3}}", "\\x20\\t\\u{a0}\\u{202f}");
         let label = postcode_label();
         Regex::new(&format!(
-            r"(?-u:\b){label}[0-9]{{5}}(?-u:\b)|(?-u:\b)[0-9]{{5}}{sep}[{STREET_UP}][{STREET_LOW}]+(?-u:\b)|(?-u:\b)[0-9]{{5}}(?-u:\b)"
+            r"(?-u:\b){label}[0-9]{{5}}(?-u:\b)|(?-u:\b)[0-9]{{5}}{sep}[{STREET_UP}](?:[{STREET_LOW}]+|[{STREET_UP}]+)(?-u:\b)|(?-u:\b)[0-9]{{5}}(?-u:\b)"
         ))
         .unwrap()
     })

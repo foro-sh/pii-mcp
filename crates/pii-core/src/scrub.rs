@@ -906,6 +906,20 @@ mod tests {
     }
 
     #[test]
+    fn de_postcode_city_in_title_case_or_all_caps() {
+        let langs = vec!["de".to_string()];
+        for (text, expected) in [
+            ("10115 BERLIN", "[ADDRESS]"),
+            ("50667 KÖLN", "[ADDRESS]"),
+            ("12345 DINGE", "12345 DINGE"),
+            ("Wir haben 10000 Essen ausgegeben", "Wir haben [ADDRESS] ausgegeben"),
+        ] {
+            let r = scrub_text(text, Some(&langs), true).unwrap();
+            assert_eq!(r.text, expected, "{text}");
+        }
+    }
+
+    #[test]
     fn de_postcode_rejects_an_arbitrary_capitalized_word() {
         // German nouns are always capitalized, so a city allowlist is required.
         let langs = vec!["de".to_string()];

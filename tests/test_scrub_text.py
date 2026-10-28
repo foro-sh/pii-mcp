@@ -1048,6 +1048,19 @@ class TestDePostcode:
         assert result["text"] == "[ADDRESS]"
         assert result["counts"]["address"] == 1
 
+    @pytest.mark.parametrize(
+        ("text", "expected"),
+        [
+            ("10115 BERLIN", "[ADDRESS]"),
+            ("50667 KÖLN", "[ADDRESS]"),
+            ("12345 DINGE", "12345 DINGE"),
+            ("Wir haben 10000 Essen ausgegeben", "Wir haben [ADDRESS] ausgegeben"),
+        ],
+    )
+    def test_city_case(self, text: str, expected: str) -> None:
+        """All-caps cities count; ``Essen`` stays a city even as a noun."""
+        assert scrub_text(text, languages=["de"])["text"] == expected
+
     def test_does_not_mask_an_arbitrary_capitalized_word(self) -> None:
         """German nouns are always capitalized, so a city allowlist is required."""
         result = scrub_text("12345 Dinge erledigt", languages=["de"])

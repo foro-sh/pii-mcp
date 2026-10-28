@@ -1046,6 +1046,15 @@ describe("scrubText", () => {
     expect(result.counts.address).toBe(1);
   });
 
+  it.each([
+    ["10115 BERLIN", "[ADDRESS]"],
+    ["50667 KÖLN", "[ADDRESS]"],
+    ["12345 DINGE", "12345 DINGE"],
+    ["Wir haben 10000 Essen ausgegeben", "Wir haben [ADDRESS] ausgegeben"],
+  ])("matches a DE city in title case or all caps (%s)", (text, expected) => {
+    expect(scrubText(text, { languages: ["de"] }).text).toBe(expected);
+  });
+
   it("does not mask an arbitrary capitalized word after a DE postcode", () => {
     // German nouns are always capitalized, so a city allowlist is required.
     const result = scrubText("12345 Dinge erledigt", { languages: ["de"] });

@@ -1532,9 +1532,6 @@ function postcodeAfterAddress(text: string, start: number, window = 12): boolean
   return text.endsWith("[ADDRESS]", i);
 }
 
-// Major German cities, mirroring the UK postcode-area allowlist: any
-// capitalized word would also match ordinary German nouns (always
-// capitalized), so a small allowlist is required, not just a bare pattern.
 const DE_CITIES = new Set(
   (
     "Berlin Hamburg München Munich Köln Cologne Frankfurt Stuttgart Düsseldorf " +
@@ -1546,9 +1543,24 @@ const DE_CITIES = new Set(
   ).split(" "),
 );
 
+const DE_CITIES_UPPER = new Set([...DE_CITIES].map((city) => city.toUpperCase()));
+
+/**
+ * True for an allowlisted city in title case or all caps (``10115 BERLIN``).
+ *
+ * German nouns are always capitalized, so a bare capitalized word after five
+ * digits would also match ordinary nouns (``12345 Dinge``); only major cities
+ * count. ``Essen`` (meals) and ``Halle`` (hall) are common nouns too, so
+ * ``10000 Essen ausgegeben`` masks; they stay because they are major cities
+ * and a leaked postcode costs more than a masked count.
+ */
+function deCityKnown(word: string): boolean {
+  return DE_CITIES.has(word) || DE_CITIES_UPPER.has(word);
+}
+
 const DE_POSTCODE_RE = new RegExp(
   String.raw`\b${POSTCODE_LABEL}\d{5}\b` +
-    `|\\b\\d{5}${STREET_SEP}[${STREET_UP}][${STREET_LOW}]+\\b` +
+    `|\\b\\d{5}${STREET_SEP}[${STREET_UP}](?:[${STREET_LOW}]+|[${STREET_UP}]+)\\b` +
     String.raw`|\b\d{5}\b`,
   "g",
 );
@@ -1572,7 +1584,7 @@ function dePostcodeEnd(text: string, start: number, end: number): number {
   if (!dePostcodeRangeOk(value.slice(0, 5))) {
     return start;
   }
-  if (value.length > 5 && DE_CITIES.has(value.slice(5).trim())) {
+  if (value.length > 5 && deCityKnown(value.slice(5).trim())) {
     return end;
   }
   return postcodeAfterAddress(text, start) ? start + 5 : start;

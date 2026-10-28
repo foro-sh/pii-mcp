@@ -469,9 +469,6 @@ pub fn de_postcode_range_ok(digits: &str) -> bool {
     !digits.starts_with("00") && digits != "99999"
 }
 
-/// Major German cities, mirroring `UK_POSTCODE_AREAS`: any capitalized word
-/// would also match ordinary German nouns (always capitalized), so a small
-/// allowlist is required, not just a bare pattern.
 const DE_CITIES: &str = "\
 Berlin Hamburg München Munich Köln Cologne Frankfurt Stuttgart Düsseldorf \
 Dortmund Essen Leipzig Bremen Dresden Hannover Nürnberg Duisburg Bochum \
@@ -480,8 +477,17 @@ Mönchengladbach Gelsenkirchen Aachen Braunschweig Kiel Chemnitz Halle \
 Magdeburg Freiburg Krefeld Mainz Lübeck Erfurt Oberhausen Rostock Kassel \
 Potsdam Saarbrücken Heidelberg";
 
-pub fn de_city_known(city: &str) -> bool {
-    DE_CITIES.split_ascii_whitespace().any(|c| c == city)
+/// True for an allowlisted city in title case or all caps (`10115 BERLIN`).
+///
+/// German nouns are always capitalized, so a bare capitalized word after five
+/// digits would also match ordinary nouns (`12345 Dinge`); only major cities
+/// count. `Essen` (meals) and `Halle` (hall) are common nouns too, so
+/// `10000 Essen ausgegeben` masks; they stay because they are major cities
+/// and a leaked postcode costs more than a masked count.
+pub fn de_city_known(word: &str) -> bool {
+    DE_CITIES
+        .split_ascii_whitespace()
+        .any(|c| c == word || c.chars().flat_map(char::to_uppercase).eq(word.chars()))
 }
 
 /// US states, DC and the inhabited territories; mirrors `UK_POSTCODE_AREAS` so

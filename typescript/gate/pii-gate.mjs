@@ -1027,8 +1027,12 @@ function postcodeAfterAddress(text, start, window = 12) {
 var DE_CITIES = new Set(
   "Berlin Hamburg M\xFCnchen Munich K\xF6ln Cologne Frankfurt Stuttgart D\xFCsseldorf Dortmund Essen Leipzig Bremen Dresden Hannover N\xFCrnberg Duisburg Bochum Wuppertal Bielefeld Bonn M\xFCnster Mannheim Karlsruhe Augsburg Wiesbaden M\xF6nchengladbach Gelsenkirchen Aachen Braunschweig Kiel Chemnitz Halle Magdeburg Freiburg Krefeld Mainz L\xFCbeck Erfurt Oberhausen Rostock Kassel Potsdam Saarbr\xFCcken Heidelberg".split(" ")
 );
+var DE_CITIES_UPPER = new Set([...DE_CITIES].map((city) => city.toUpperCase()));
+function deCityKnown(word) {
+  return DE_CITIES.has(word) || DE_CITIES_UPPER.has(word);
+}
 var DE_POSTCODE_RE = new RegExp(
-  String.raw`\b${POSTCODE_LABEL}\d{5}\b` + `|\\b\\d{5}${STREET_SEP}[${STREET_UP}][${STREET_LOW}]+\\b` + String.raw`|\b\d{5}\b`,
+  String.raw`\b${POSTCODE_LABEL}\d{5}\b` + `|\\b\\d{5}${STREET_SEP}[${STREET_UP}](?:[${STREET_LOW}]+|[${STREET_UP}]+)\\b` + String.raw`|\b\d{5}\b`,
   "g"
 );
 function dePostcodeRangeOk(digits) {
@@ -1042,7 +1046,7 @@ function dePostcodeEnd(text, start, end) {
   if (!dePostcodeRangeOk(value.slice(0, 5))) {
     return start;
   }
-  if (value.length > 5 && DE_CITIES.has(value.slice(5).trim())) {
+  if (value.length > 5 && deCityKnown(value.slice(5).trim())) {
     return end;
   }
   return postcodeAfterAddress(text, start) ? start + 5 : start;

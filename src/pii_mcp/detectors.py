@@ -1444,9 +1444,6 @@ def _postcode_after_address(text: str, start: int, window: int = 12) -> bool:
     return text.endswith("[ADDRESS]", 0, i)
 
 
-# Major German cities, mirroring the UK postcode-area allowlist: any
-# capitalized word would also match ordinary German nouns (always
-# capitalized), so a small allowlist is required, not just a bare pattern.
 _DE_CITIES = frozenset(
     """
     Berlin Hamburg München Munich Köln Cologne Frankfurt Stuttgart
@@ -1457,10 +1454,24 @@ _DE_CITIES = frozenset(
     Oberhausen Rostock Kassel Potsdam Saarbrücken Heidelberg
     """.split()
 )
+_DE_CITIES_UPPER = frozenset(city.upper() for city in _DE_CITIES)
+
+
+def _de_city_known(word: str) -> bool:
+    """True for an allowlisted city in title case or all caps (``10115 BERLIN``).
+
+    German nouns are always capitalized, so a bare capitalized word after five
+    digits would also match ordinary nouns (``12345 Dinge``); only major cities
+    count. ``Essen`` (meals) and ``Halle`` (hall) are common nouns too, so
+    ``10000 Essen ausgegeben`` masks; they stay because they are major cities
+    and a leaked postcode costs more than a masked count.
+    """
+    return word in _DE_CITIES or word in _DE_CITIES_UPPER
+
 
 DE_POSTCODE_RE = re.compile(
     rf"\b{_POSTCODE_LABEL}\d{{5}}\b"
-    rf"|\b\d{{5}}{_STREET_SEP}[{_STREET_UP}][{_STREET_LOW}]+\b"
+    rf"|\b\d{{5}}{_STREET_SEP}[{_STREET_UP}](?:[{_STREET_LOW}]+|[{_STREET_UP}]+)\b"
     rf"|\b\d{{5}}\b",
     re.ASCII,
 )
@@ -1483,7 +1494,7 @@ def _de_postcode_end(text: str, start: int, end: int) -> int:
         return end if _de_postcode_range_ok(value[-5:]) else start
     if not _de_postcode_range_ok(value[:5]):
         return start
-    if len(value) > 5 and value[5:].strip() in _DE_CITIES:
+    if len(value) > 5 and _de_city_known(value[5:].strip()):
         return end
     return start + 5 if _postcode_after_address(text, start) else start
 
