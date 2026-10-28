@@ -1193,22 +1193,38 @@ class TestKeyAwareMasking:
         assert result["text"] == expected
         assert result["counts"]["person"] == 1
 
-    def test_glued_digit_suffix_key_can_collide_with_nl_passport_shape(self) -> None:
-        """Known gap (see ``_kv_value_span``): the key text itself is left in
-        place, so a camelCase key with no separator before its digit suffix
-        can coincidentally pass the format-only NL passport check. The value
-        is still masked either way — no leak, just an odd label on the key."""
-        result = scrub_text('"LastName1": "Müller"', languages=["nl"])
-        assert result["text"] == '"[PASSPORT]": "[PERSON]"'
-
-    @pytest.mark.parametrize("text", ["name: 李明", "name: محمد", "name: Ⓙan"])
-    def test_name_gate_needs_an_uppercase_letter(self, text: str) -> None:
-        """Caseless scripts and symbol "letters" never pass the ``name`` gate,
-        the same on every backend."""
+    @pytest.mark.parametrize(
+        ("text", "expected"),
+        [
+            ('"LastName1": "Müller"', '"LastName1": "[PERSON]"'),
+            ("NACHNAME: Eckerlin", "NACHNAME: [PERSON]"),
+            ('"POSTCODE": "33613"', '"POSTCODE": "[ADDRESS]"'),
+        ],
+    )
+    def test_field_key_is_not_a_bic_or_passport(self, text: str, expected: str) -> None:
         result = scrub_text(text, languages=["en", "nl", "de"])
-        assert result["text"] == text
-        assert result["counts"]["person"] == 0
+        assert result["text"] == expected
+        assert result["counts"]["bic"] == 0
+        assert result["counts"]["passport"] == 0
 
+    @pytest.mark.parametrize(
+        ("text", "expected"),
+        [
+            ("IP Address: 192.168.1.1", "IP Address: [IP]"),
+            ("Email Address: ada@example.com", "Email Address: [EMAIL]"),
+            ('"name": "ada@example.com"', '"name": "[EMAIL]"'),
+            ("address = 0x7ffd5e8c", "address = 0x7ffd5e8c"),
+            ("from address = 0x7ffd5e8c accepted", "from address = 0x7ffd5e8c accepted"),
+            ("Memory Address: 0x7ffd5e8c", "Memory Address: 0x7ffd5e8c"),
+            ("zip = zipfile.ZipFile(path)", "zip = zipfile.ZipFile(path)"),
+            ("Host Name: Server", "Host Name: Server"),
+        ],
+    )
+    def test_network_and_code_values_are_not_addresses(self, text: str, expected: str) -> None:
+        result = scrub_text(text, languages=["en", "nl", "de"])
+        assert result["text"] == expected
+        assert result["counts"]["address"] == 0
+        assert result["counts"]["person"] == 0
 
 class TestKeyAwareParsing:
     """How the key-aware pass reads a key and where its value ends."""

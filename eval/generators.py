@@ -651,6 +651,9 @@ CLEAN: list[tuple[str, Callable[[R], str]]] = [
     ("key_city_count_hard_negative", lambda r: f"city_count: {r.randint(1, 99)}"),
     ("key_street_view_hard_negative", lambda r: f"street_view: {r.choice(['true', 'false'])}"),
     ("key_username_hard_negative", lambda r: f"username: {r.choice(['ada', 'grabbe', 'jvandijk'])}"),
+    ("key_hex_address_hard_negative", lambda r: r.choice(["address = 0x7ffd5e8c", "Memory Address: 0x7ffd5e8c", "Wallet Address: 0x71C7656EC7ab88b098defB751B7401B5f6d8976F"])),
+    ("key_code_zip_hard_negative", lambda r: r.choice(["zip = zipfile.ZipFile(path)", '{"zip": null}'])),
+    ("key_resource_name_hard_negative", lambda r: r.choice(["Host Name: Server", "File Name: Report", "name: build-cache, owner: Ops"])),
 ]
 
 # Clean text that looks like PII to any pattern matcher (bare 9-digit ids vs

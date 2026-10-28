@@ -151,6 +151,19 @@
  *   sentence punctuation left outside; so a line holding several bare pairs
  *   (``first_name=Jan last_name=Jansen``) is masked as one value.
  *
+ *   Order and claims. The pass runs after the other universal detectors (email,
+ *   IBAN, card, BIC, MAC, IMEI, IP, location) and before the locale packs, so
+ *   an email, IP or MAC under an address-like key keeps its own label: a value
+ *   that is already one placeholder (``IP Address: [IP]``) is left alone. A
+ *   prefix word from a short deny list (``ip``, ``email``, ``mac``, ``memory``,
+ *   ``wallet``, ``host``, ``file``, …) turns the key into something else
+ *   (``Memory Address``, ``Host Name``), a value led by a hex literal
+ *   (``address = 0x7ffd5e8c``) is never masked, and a postcode key needs a
+ *   value with an ASCII digit and no ``(`` (``zip = zipfile.ZipFile(path)``).
+ *   BIC and NL passport candidates that are themselves a field name used as a
+ *   key (``NACHNAME:``, ``"LastName1":``) are not masked, so the key stays
+ *   readable to this pass.
+ *
  *   ``name`` (resource/build names, ``name: "build-cache"``) is ambiguous and
  *   gated: the part of the value before the first ``,`` or ``;`` must look like
  *   one or more capitalized words (Dutch/German particles — ``van``, ``der``,
@@ -162,8 +175,8 @@
  *   Every candidate resumes the scan at or past the text it read, so the pass
  *   is linear in the input.
  *
- * ``UNIVERSAL_DETECTORS`` (key-aware person/address, email, IBAN, credit
- * card, BIC, MAC, IMEI, IP, location) always run; locale detectors are
+ * ``UNIVERSAL_DETECTORS`` (email, IBAN, credit card, BIC, MAC, IMEI, IP,
+ * location, then key-aware person/address) always run; locale detectors are
  * selected by ``languages=`` in the scrub layer.
  */
 
@@ -663,8 +676,14 @@ function bicValid(value: string): boolean {
   return ISO_3166_1_ALPHA2.has(value.slice(4, 6));
 }
 
+/**
+ * A recognized field name used as a key (``NACHNAME:``, ``"POSTCODE":``) is
+ * not a BIC, so the key-aware pass that runs later still sees it.
+ */
 function scrubBic(text: string): { text: string; count: number } {
-  return replaceMatches(text, BIC_RE, "[BIC]", bicValid);
+  return replaceMatches(text, BIC_RE, "[BIC]", undefined, false, (t, s, e) =>
+    bicValid(t.slice(s, e)) && notFieldKey(t, s, e) ? e : s,
+  );
 }
 
 export const bicDetector: Detector = { type: "bic", scrub: scrubBic };
@@ -1255,8 +1274,11 @@ function nlPassportValid(value: string): boolean {
   return !compact.includes("O");
 }
 
+/** A recognized field name used as a key (``"LastName1":``) is not a passport number. */
 function scrubNlPassport(text: string): { text: string; count: number } {
-  return replaceMatches(text, NL_PASSPORT_RE, "[PASSPORT]", nlPassportValid);
+  return replaceMatches(text, NL_PASSPORT_RE, "[PASSPORT]", undefined, false, (t, s, e) =>
+    nlPassportValid(t.slice(s, e)) && notFieldKey(t, s, e) ? e : s,
+  );
 }
 
 export const nlPassportDetector: Detector = {
@@ -1577,6 +1599,7 @@ const PERSON_KEYS: readonly string[] = [
 ];
 const ADDRESS_KEYS: readonly string[] = [
   "street",
+  "street name",
   "straße",
   "strasse",
   "straat",
@@ -1590,12 +1613,6 @@ const ADDRESS_KEYS: readonly string[] = [
   "hausnummer",
   "gebäude",
   "gebaeude",
-  "postcode",
-  "postal code",
-  "zip code",
-  "postleitzahl",
-  "plz",
-  "zip",
   "city",
   "stadt",
   "stad",
@@ -1606,7 +1623,29 @@ const ADDRESS_KEYS: readonly string[] = [
   "bundesland",
   "provincie",
 ];
+const POSTCODE_KEYS: readonly string[] = [
+  "postcode",
+  "postal code",
+  "zip code",
+  "postleitzahl",
+  "plz",
+  "zip",
+];
 const AMBIGUOUS_KEYS = new Set(["name"]);
+const KEY_PREFIX_DENY = new Set([
+  "app", "application", "base", "bind", "bitcoin", "branch", "broadcast", "btc", "bucket",
+  "build", "class", "cluster", "column", "command", "company", "container", "contract",
+  "database", "db", "device", "dns", "domain", "email", "env", "environment", "eth",
+  "ethereum", "event", "field", "file", "font", "function", "gateway", "group", "hardware",
+  "host", "image", "index", "instance", "ip", "ipv4", "ipv6", "job", "key", "label", "link",
+  "listen", "local", "mac", "machine", "mail", "mem", "memory", "method", "model", "module",
+  "multicast", "network", "node", "org", "organization", "package", "param", "parameter",
+  "peer", "pipeline", "plugin", "pod", "printer", "product", "project", "property", "proxy",
+  "queue", "region", "release", "remote", "repo", "repository", "resource", "return", "role",
+  "schema", "script", "secret", "server", "service", "site", "stack", "stage", "table", "tag",
+  "task", "team", "template", "tool", "topic", "type", "url", "var", "variable", "volume",
+  "wallet", "web", "workflow", "workspace", "zone",
+]);
 const KEY_MAX_WORDS = 4;
 const KEY_LOWER: Readonly<Record<string, string>> = { Ä: "ä", Ö: "ö", Ü: "ü", ẞ: "ß" };
 
@@ -1617,6 +1656,7 @@ const KEY_LOWER: Readonly<Record<string, string>> = { Ä: "ä", Ö: "ö", Ü: "�
 export interface KeyField {
   readonly category: "person" | "address";
   readonly gated: boolean;
+  readonly postcode: boolean;
 }
 
 function keyId(words: readonly string[]): string {
@@ -1624,12 +1664,17 @@ function keyId(words: readonly string[]): string {
 }
 
 const KEY_FIELDS: ReadonlyMap<string, KeyField> = new Map<string, KeyField>([
-  ...ADDRESS_KEYS.map(
-    (key): [string, KeyField] => [keyId(key.split(" ")), { category: "address", gated: false }],
-  ),
+  ...ADDRESS_KEYS.map((key): [string, KeyField] => [
+    keyId(key.split(" ")),
+    { category: "address", gated: false, postcode: false },
+  ]),
+  ...POSTCODE_KEYS.map((key): [string, KeyField] => [
+    keyId(key.split(" ")),
+    { category: "address", gated: false, postcode: true },
+  ]),
   ...PERSON_KEYS.map((key): [string, KeyField] => {
     const id = keyId(key.split(" "));
-    return [id, { category: "person", gated: AMBIGUOUS_KEYS.has(id) }];
+    return [id, { category: "person", gated: AMBIGUOUS_KEYS.has(id), postcode: false }];
   }),
 ]);
 
@@ -1653,19 +1698,48 @@ function isAsciiDigitCode(code: number): boolean {
 /**
  * Field for the longest recognized suffix of ``words`` (up to three), so
  * ``Customer First Name`` is ``first name`` and ``Customer Name`` is
- * ``name``. Both passes build ``words`` the same way (see
- * ``payloadKeyWords`` and ``textKeyWords``).
+ * ``name``. The word in front of the suffix must not be in
+ * ``KEY_PREFIX_DENY``: ``IP Address``, ``Email Address``, ``Host Name`` and
+ * ``File Name`` name a network address or a resource, not a person or a
+ * place. Both passes build ``words`` the same way (see ``payloadKeyWords``
+ * and ``textKeyWords``).
  */
 function matchKeyWords(words: readonly string[]): KeyField | null {
+  const n = words.length;
   for (const size of [3, 2, 1]) {
-    if (size <= words.length) {
-      const field = KEY_FIELDS.get(keyId(words.slice(words.length - size)));
+    if (size <= n) {
+      const field = KEY_FIELDS.get(keyId(words.slice(n - size)));
       if (field !== undefined) {
+        if (size < n && KEY_PREFIX_DENY.has(keyId(words.slice(n - size - 1, n - size)))) {
+          return null;
+        }
         return field;
       }
     }
   }
   return null;
+}
+
+/**
+ * False when ``text.slice(start, end)`` is a recognized field name used as a
+ * key: followed by an optional (escaped) closing quote, spaces or tabs, and
+ * ``:`` or ``=``.
+ */
+function notFieldKey(text: string, start: number, end: number): boolean {
+  if (keyField(text.slice(start, end)) === null) {
+    return true;
+  }
+  let i = end;
+  if (text[i] === "\\") {
+    i += 1;
+  }
+  if (text[i] === '"' || text[i] === "'") {
+    i += 1;
+  }
+  while (text[i] === " " || text[i] === "\t") {
+    i += 1;
+  }
+  return !(text[i] === ":" || text[i] === "=");
 }
 
 function payloadKeyWords(key: string): string[] {
@@ -1760,14 +1834,32 @@ function gateSpan(value: string): string {
 }
 
 /**
- * Whether a string value under ``field`` is masked: it must hold something
- * besides ``White_Space`` and, for the gated ``name`` key, pass
- * ``looksLikeName`` on its first ``,``/``;``-separated part
- * (``name: build-cache, owner: Ops`` stays clean). Shared by the text pass
- * (quoted values) and ``scrubPayloadJs``.
+ * Value checks shared by every value shape, apart from the ``name`` gate. A
+ * value that an earlier detector already replaced whole
+ * (``IP Address: [IP]``) keeps that label; a value led by a hex literal
+ * (``address = 0x7ffd5e8c``) is a memory address; a postcode needs a digit
+ * and no call parentheses (``zip = zipfile.ZipFile(path)``).
+ */
+function fieldValueAllowed(field: KeyField, value: string): boolean {
+  if (
+    NAME_WS_ONLY_RE.test(value) ||
+    /^\[[A-Z_]+\]$/.test(value) ||
+    /^0[xX][0-9A-Fa-f]+(?![0-9A-Za-z_])/.test(value)
+  ) {
+    return false;
+  }
+  return !field.postcode || (/[0-9]/.test(value) && !value.includes("("));
+}
+
+/**
+ * Whether a string value under ``field`` is masked: it must pass
+ * ``fieldValueAllowed`` and, for the gated ``name`` key, ``looksLikeName`` on
+ * its first ``,``/``;``-separated part (``name: build-cache, owner: Ops``
+ * stays clean). Shared by the text pass (quoted values) and
+ * ``scrubPayloadJs``.
  */
 export function fieldValueMasked(field: KeyField, value: string): boolean {
-  if (NAME_WS_ONLY_RE.test(value)) {
+  if (!fieldValueAllowed(field, value)) {
     return false;
   }
   return !field.gated || looksLikeName(gateSpan(value));
@@ -1949,7 +2041,8 @@ function keyValueSpan(
   } else {
     end = trimBareValueEnd(text, pos, findAny(text, pos, "\r\n"));
   }
-  const masked = end > pos && !UNQUOTED_LITERALS.has(text.slice(pos, end));
+  const value = text.slice(pos, end);
+  const masked = !UNQUOTED_LITERALS.has(value) && fieldValueAllowed(field, value);
   return [pos, end, end, masked];
 }
 
@@ -2017,8 +2110,6 @@ export const keyValueAddressDetector: Detector = {
 };
 
 export const UNIVERSAL_DETECTORS: readonly Detector[] = [
-  keyValuePersonDetector,
-  keyValueAddressDetector,
   emailDetector,
   ibanDetector,
   creditCardDetector,
@@ -2027,4 +2118,6 @@ export const UNIVERSAL_DETECTORS: readonly Detector[] = [
   imeiDetector,
   ipDetector,
   locationDetector,
+  keyValuePersonDetector,
+  keyValueAddressDetector,
 ];

@@ -269,3 +269,20 @@ def test_payload_keys_match_like_text_keys() -> None:
         "zip\x1c": "33613",
         "zip﻿": "33613",
     }
+
+
+def test_payload_network_and_code_values_are_not_addresses() -> None:
+    payload = {
+        "ip_address": "10.0.0.1",
+        "email_address": "ada@example.com",
+        "address": "0x7ffd5e8c",
+        "zip": "zipfile.ZipFile(path)",
+    }
+    result = scrub_payload(payload, languages=["en"])
+    assert result["payload"] == {
+        "ip_address": "[IP]",
+        "email_address": "[EMAIL]",
+        "address": "0x7ffd5e8c",
+        "zip": "zipfile.ZipFile(path)",
+    }
+    assert result["counts"]["address"] == 0

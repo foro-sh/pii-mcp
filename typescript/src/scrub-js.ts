@@ -1,13 +1,13 @@
 /**
  * Language packs and scrub walk for pattern-based detectors.
  *
- * Universal detectors (key-aware person/address, email, IBAN, credit card,
- * BIC, MAC, IMEI, IP, location) always run. Locale packs add national IDs /
- * phone shapes / NL and UK postcodes / kentekens / VAT IDs / passport
- * numbers. Counts always include every ``PiiType`` key (0 when unused).
- * ``person`` is pattern-free: it only fires when a value sits right after a
- * recognized field name (issue #52). ``address`` counts street + house
- * number hits, NL / UK postcodes, and key-aware street/postcode/place hits.
+ * Universal detectors (email, IBAN, credit card, BIC, MAC, IMEI, IP, location,
+ * then key-aware person/address) always run. Locale packs add national IDs /
+ * phone shapes / NL and UK postcodes / kentekens / VAT IDs / passport numbers.
+ * Counts always include every ``PiiType`` key (0 when unused). ``person`` is
+ * pattern-free: it only fires when a value sits right after a recognized field
+ * name (issue #52). ``address`` counts street + house number hits, NL / UK
+ * postcodes, and key-aware street/postcode/place hits.
  *
  * ``scrubWalk`` applies the same field-name dictionary structurally: an
  * object value is masked whole, by its key, before recursing (see

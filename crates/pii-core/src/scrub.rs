@@ -1,10 +1,10 @@
 //! Language packs and scrub walk for pattern-based detectors.
 //!
-//! Universal detectors (key-aware person/address, email, IBAN, credit card,
-//! BIC, MAC, IMEI, IP, location) always run. Locale packs add national IDs /
-//! phones / street addresses / NL and UK postcodes. Counts always include
-//! every [`PiiType`] key (0 when unused). `person` is pattern-free: it only
-//! fires when a value sits right after a recognized field name (issue #52);
+//! Universal detectors (email, IBAN, credit card, BIC, MAC, IMEI, IP, location,
+//! then key-aware person/address) always run. Locale packs add national IDs /
+//! phones / street addresses / NL and UK postcodes. Counts always include every
+//! [`PiiType`] key (0 when unused). `person` is pattern-free: it only fires
+//! when a value sits right after a recognized field name (issue #52);
 //! in-process NER is out of scope for this crate.
 //!
 //! `scrub_walk` applies the same field-name dictionary structurally: a dict
@@ -1141,15 +1141,67 @@ mod tests {
     }
 
     #[test]
-    fn glued_digit_suffix_key_can_collide_with_nl_passport_shape() {
-        // Known gap (see `kv_value_span`): the key text itself is left in
-        // place, so a camelCase key with no separator before its digit
-        // suffix can coincidentally pass the format-only NL passport check.
-        // The value is still masked either way — no leak, just an odd label
-        // on the key.
-        let nl = [LanguageCode::Nl];
-        let r = scrub_text_langs(r#""LastName1": "Müller""#, &nl, true).unwrap();
-        assert_eq!(r.text, r#""[PASSPORT]": "[PERSON]""#);
+    fn field_key_is_not_a_bic_or_passport() {
+        let langs = [LanguageCode::En, LanguageCode::Nl, LanguageCode::De];
+        for (text, expected) in [
+            (r#""LastName1": "Müller""#, r#""LastName1": "[PERSON]""#),
+            ("NACHNAME: Eckerlin", "NACHNAME: [PERSON]"),
+            (r#""POSTCODE": "33613""#, r#""POSTCODE": "[ADDRESS]""#),
+        ] {
+            let r = scrub_text_langs(text, &langs, true).unwrap();
+            assert_eq!(r.text, expected, "{text:?}");
+            assert_eq!(r.counts["bic"], 0, "{text:?}");
+            assert_eq!(r.counts["passport"], 0, "{text:?}");
+        }
+    }
+
+    #[test]
+    fn network_and_code_values_are_not_addresses() {
+        let langs = [LanguageCode::En, LanguageCode::Nl, LanguageCode::De];
+        for (text, expected) in [
+            ("IP Address: 192.168.1.1", "IP Address: [IP]"),
+            ("Email Address: ada@example.com", "Email Address: [EMAIL]"),
+            (r#""name": "ada@example.com""#, r#""name": "[EMAIL]""#),
+            ("address = 0x7ffd5e8c", "address = 0x7ffd5e8c"),
+            (
+                "from address = 0x7ffd5e8c accepted",
+                "from address = 0x7ffd5e8c accepted",
+            ),
+            ("Memory Address: 0x7ffd5e8c", "Memory Address: 0x7ffd5e8c"),
+            ("zip = zipfile.ZipFile(path)", "zip = zipfile.ZipFile(path)"),
+            ("Host Name: Server", "Host Name: Server"),
+        ] {
+            let r = scrub_text_langs(text, &langs, true).unwrap();
+            assert_eq!(r.text, expected, "{text:?}");
+            assert_eq!(r.counts["address"], 0, "{text:?}");
+            assert_eq!(r.counts["person"], 0, "{text:?}");
+        }
+    }
+
+    #[cfg(feature = "payload")]
+    #[test]
+    fn payload_network_and_code_values_are_not_addresses() {
+        let langs = vec!["en".to_string()];
+        let r = scrub_payload(
+            serde_json::json!({
+                "ip_address": "10.0.0.1",
+                "email_address": "ada@example.com",
+                "address": "0x7ffd5e8c",
+                "zip": "zipfile.ZipFile(path)",
+            }),
+            Some(&langs),
+        )
+        .unwrap();
+        assert_eq!(
+            r.payload,
+            serde_json::json!({
+                "ip_address": "[IP]",
+                "email_address": "[EMAIL]",
+                "address": "0x7ffd5e8c",
+                "zip": "zipfile.ZipFile(path)",
+            })
+        );
+        assert_eq!(r.counts["address"], 0);
     }
 
     #[cfg(feature = "payload")]

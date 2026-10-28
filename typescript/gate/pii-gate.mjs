@@ -369,7 +369,14 @@ function bicValid(value) {
   return ISO_3166_1_ALPHA2.has(value.slice(4, 6));
 }
 function scrubBic(text) {
-  return replaceMatches(text, BIC_RE, "[BIC]", bicValid);
+  return replaceMatches(
+    text,
+    BIC_RE,
+    "[BIC]",
+    void 0,
+    false,
+    (t, s, e) => bicValid(t.slice(s, e)) && notFieldKey(t, s, e) ? e : s
+  );
 }
 var bicDetector = { type: "bic", scrub: scrubBic };
 var MAC_RES = [
@@ -802,7 +809,14 @@ function nlPassportValid(value) {
   return !compact.includes("O");
 }
 function scrubNlPassport(text) {
-  return replaceMatches(text, NL_PASSPORT_RE, "[PASSPORT]", nlPassportValid);
+  return replaceMatches(
+    text,
+    NL_PASSPORT_RE,
+    "[PASSPORT]",
+    void 0,
+    false,
+    (t, s, e) => nlPassportValid(t.slice(s, e)) && notFieldKey(t, s, e) ? e : s
+  );
 }
 var nlPassportDetector = {
   type: "passport",
@@ -1044,6 +1058,7 @@ var PERSON_KEYS = [
 ];
 var ADDRESS_KEYS = [
   "street",
+  "street name",
   "stra\xDFe",
   "strasse",
   "straat",
@@ -1057,12 +1072,6 @@ var ADDRESS_KEYS = [
   "hausnummer",
   "geb\xE4ude",
   "gebaeude",
-  "postcode",
-  "postal code",
-  "zip code",
-  "postleitzahl",
-  "plz",
-  "zip",
   "city",
   "stadt",
   "stad",
@@ -1073,19 +1082,141 @@ var ADDRESS_KEYS = [
   "bundesland",
   "provincie"
 ];
+var POSTCODE_KEYS = [
+  "postcode",
+  "postal code",
+  "zip code",
+  "postleitzahl",
+  "plz",
+  "zip"
+];
 var AMBIGUOUS_KEYS = /* @__PURE__ */ new Set(["name"]);
+var KEY_PREFIX_DENY = /* @__PURE__ */ new Set([
+  "app",
+  "application",
+  "base",
+  "bind",
+  "bitcoin",
+  "branch",
+  "broadcast",
+  "btc",
+  "bucket",
+  "build",
+  "class",
+  "cluster",
+  "column",
+  "command",
+  "company",
+  "container",
+  "contract",
+  "database",
+  "db",
+  "device",
+  "dns",
+  "domain",
+  "email",
+  "env",
+  "environment",
+  "eth",
+  "ethereum",
+  "event",
+  "field",
+  "file",
+  "font",
+  "function",
+  "gateway",
+  "group",
+  "hardware",
+  "host",
+  "image",
+  "index",
+  "instance",
+  "ip",
+  "ipv4",
+  "ipv6",
+  "job",
+  "key",
+  "label",
+  "link",
+  "listen",
+  "local",
+  "mac",
+  "machine",
+  "mail",
+  "mem",
+  "memory",
+  "method",
+  "model",
+  "module",
+  "multicast",
+  "network",
+  "node",
+  "org",
+  "organization",
+  "package",
+  "param",
+  "parameter",
+  "peer",
+  "pipeline",
+  "plugin",
+  "pod",
+  "printer",
+  "product",
+  "project",
+  "property",
+  "proxy",
+  "queue",
+  "region",
+  "release",
+  "remote",
+  "repo",
+  "repository",
+  "resource",
+  "return",
+  "role",
+  "schema",
+  "script",
+  "secret",
+  "server",
+  "service",
+  "site",
+  "stack",
+  "stage",
+  "table",
+  "tag",
+  "task",
+  "team",
+  "template",
+  "tool",
+  "topic",
+  "type",
+  "url",
+  "var",
+  "variable",
+  "volume",
+  "wallet",
+  "web",
+  "workflow",
+  "workspace",
+  "zone"
+]);
 var KEY_MAX_WORDS = 4;
 var KEY_LOWER = { \u00C4: "\xE4", \u00D6: "\xF6", \u00DC: "\xFC", "\u1E9E": "\xDF" };
 function keyId(words) {
   return words.join("").replace(/[A-ZÄÖÜẞ]/g, (c) => KEY_LOWER[c] ?? c.toLowerCase());
 }
 var KEY_FIELDS = new Map([
-  ...ADDRESS_KEYS.map(
-    (key) => [keyId(key.split(" ")), { category: "address", gated: false }]
-  ),
+  ...ADDRESS_KEYS.map((key) => [
+    keyId(key.split(" ")),
+    { category: "address", gated: false, postcode: false }
+  ]),
+  ...POSTCODE_KEYS.map((key) => [
+    keyId(key.split(" ")),
+    { category: "address", gated: false, postcode: true }
+  ]),
   ...PERSON_KEYS.map((key) => {
     const id = keyId(key.split(" "));
-    return [id, { category: "person", gated: AMBIGUOUS_KEYS.has(id) }];
+    return [id, { category: "person", gated: AMBIGUOUS_KEYS.has(id), postcode: false }];
   })
 ]);
 function isKeyWordCode(code) {
@@ -1098,15 +1229,35 @@ function isAsciiDigitCode(code) {
   return code >= 48 && code <= 57;
 }
 function matchKeyWords(words) {
+  const n = words.length;
   for (const size of [3, 2, 1]) {
-    if (size <= words.length) {
-      const field = KEY_FIELDS.get(keyId(words.slice(words.length - size)));
+    if (size <= n) {
+      const field = KEY_FIELDS.get(keyId(words.slice(n - size)));
       if (field !== void 0) {
+        if (size < n && KEY_PREFIX_DENY.has(keyId(words.slice(n - size - 1, n - size)))) {
+          return null;
+        }
         return field;
       }
     }
   }
   return null;
+}
+function notFieldKey(text, start, end) {
+  if (keyField(text.slice(start, end)) === null) {
+    return true;
+  }
+  let i = end;
+  if (text[i] === "\\") {
+    i += 1;
+  }
+  if (text[i] === '"' || text[i] === "'") {
+    i += 1;
+  }
+  while (text[i] === " " || text[i] === "	") {
+    i += 1;
+  }
+  return !(text[i] === ":" || text[i] === "=");
 }
 function payloadKeyWords(key) {
   let start = key.length;
@@ -1170,8 +1321,14 @@ function gateSpan(value) {
   const stop = value.search(/[,;]/);
   return stop === -1 ? value : value.slice(0, stop);
 }
+function fieldValueAllowed(field, value) {
+  if (NAME_WS_ONLY_RE.test(value) || /^\[[A-Z_]+\]$/.test(value) || /^0[xX][0-9A-Fa-f]+(?![0-9A-Za-z_])/.test(value)) {
+    return false;
+  }
+  return !field.postcode || /[0-9]/.test(value) && !value.includes("(");
+}
 function fieldValueMasked(field, value) {
-  if (NAME_WS_ONLY_RE.test(value)) {
+  if (!fieldValueAllowed(field, value)) {
     return false;
   }
   return !field.gated || looksLikeName(gateSpan(value));
@@ -1320,7 +1477,8 @@ function keyValueSpan(text, from, field, keyQuoted) {
   } else {
     end = trimBareValueEnd(text, pos, findAny(text, pos, "\r\n"));
   }
-  const masked = end > pos && !UNQUOTED_LITERALS.has(text.slice(pos, end));
+  const value = text.slice(pos, end);
+  const masked = !UNQUOTED_LITERALS.has(value) && fieldValueAllowed(field, value);
   return [pos, end, end, masked];
 }
 function scrubKeyValues(text, category, placeholder) {
@@ -1373,8 +1531,6 @@ var keyValueAddressDetector = {
   scrub: scrubKeyValueAddress
 };
 var UNIVERSAL_DETECTORS = [
-  keyValuePersonDetector,
-  keyValueAddressDetector,
   emailDetector,
   ibanDetector,
   creditCardDetector,
@@ -1382,7 +1538,9 @@ var UNIVERSAL_DETECTORS = [
   macDetector,
   imeiDetector,
   ipDetector,
-  locationDetector
+  locationDetector,
+  keyValuePersonDetector,
+  keyValueAddressDetector
 ];
 
 // src/types.ts

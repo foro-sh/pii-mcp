@@ -55,6 +55,18 @@
 //! sentence punctuation left outside; so a line holding several bare pairs
 //! (`first_name=Jan last_name=Jansen`) is masked as one value.
 //!
+//! Order and claims. The pass runs after the other universal detectors (email,
+//! IBAN, card, BIC, MAC, IMEI, IP, location) and before the locale packs, so an
+//! email, IP or MAC under an address-like key keeps its own label: a value that
+//! is already one placeholder (`IP Address: [IP]`) is left alone. A prefix word
+//! from a short deny list (`ip`, `email`, `mac`, `memory`, `wallet`, `host`,
+//! `file`, …) turns the key into something else (`Memory Address`, `Host
+//! Name`), a value led by a hex literal (`address = 0x7ffd5e8c`) is never
+//! masked, and a postcode key needs a value with an ASCII digit and no `(`
+//! (`zip = zipfile.ZipFile(path)`). BIC and NL passport candidates that are
+//! themselves a field name used as a key (`NACHNAME:`, `"LastName1":`) are not
+//! masked, so the key stays readable to this pass.
+//!
 //! `name` (resource/build names, `name: "build-cache"`) is ambiguous and
 //! gated: the part of the value before the first `,` or `;` must look like
 //! one or more capitalized words (Dutch/German particles — `van`, `der`,
@@ -744,8 +756,16 @@ fn bic_valid(value: &str) -> bool {
     ISO_3166_1_ALPHA2.binary_search(&&value[4..6]).is_ok()
 }
 
+/// A recognized field name used as a key (`NACHNAME:`, `"POSTCODE":`) is
+/// not a BIC, so the key-aware pass that runs later still sees it.
 fn scrub_bic(text: &str) -> (Option<String>, u32) {
-    replace_matches(text, bic_re(), "[BIC]", |v, _, _| bic_valid(v), false)
+    replace_matches(
+        text,
+        bic_re(),
+        "[BIC]",
+        |v, s, e| bic_valid(v) && not_field_key(text, s, e),
+        false,
+    )
 }
 
 fn mac_colon_re() -> &'static Regex {
@@ -2108,12 +2128,14 @@ fn nl_passport_re() -> &'static Regex {
     RE.get_or_init(|| Regex::new(r"(?i)\b[A-Z]{2}[0-9A-Z]{6}\d\b").unwrap())
 }
 
+/// A recognized field name used as a key (`"LastName1":`) is not a passport
+/// number.
 fn scrub_nl_passport(text: &str) -> (Option<String>, u32) {
     replace_matches(
         text,
         nl_passport_re(),
         "[PASSPORT]",
-        |v, _, _| nl_passport_valid(v),
+        |v, s, e| nl_passport_valid(v) && not_field_key(text, s, e),
         false,
     )
 }
@@ -2184,6 +2206,7 @@ const PERSON_KEYS: &[&str] = &[
 ];
 const ADDRESS_KEYS: &[&str] = &[
     "street",
+    "street name",
     "straße",
     "strasse",
     "straat",
@@ -2197,12 +2220,6 @@ const ADDRESS_KEYS: &[&str] = &[
     "hausnummer",
     "gebäude",
     "gebaeude",
-    "postcode",
-    "postal code",
-    "zip code",
-    "postleitzahl",
-    "plz",
-    "zip",
     "city",
     "stadt",
     "stad",
@@ -2213,7 +2230,30 @@ const ADDRESS_KEYS: &[&str] = &[
     "bundesland",
     "provincie",
 ];
+const POSTCODE_KEYS: &[&str] = &[
+    "postcode",
+    "postal code",
+    "zip code",
+    "postleitzahl",
+    "plz",
+    "zip",
+];
 const AMBIGUOUS_KEYS: &[&str] = &["name"];
+#[rustfmt::skip]
+const KEY_PREFIX_DENY: &[&str] = &[
+    "app", "application", "base", "bind", "bitcoin", "branch", "broadcast", "btc", "bucket",
+    "build", "class", "cluster", "column", "command", "company", "container", "contract",
+    "database", "db", "device", "dns", "domain", "email", "env", "environment", "eth",
+    "ethereum", "event", "field", "file", "font", "function", "gateway", "group", "hardware",
+    "host", "image", "index", "instance", "ip", "ipv4", "ipv6", "job", "key", "label", "link",
+    "listen", "local", "mac", "machine", "mail", "mem", "memory", "method", "model", "module",
+    "multicast", "network", "node", "org", "organization", "package", "param", "parameter",
+    "peer", "pipeline", "plugin", "pod", "printer", "product", "project", "property", "proxy",
+    "queue", "region", "release", "remote", "repo", "repository", "resource", "return", "role",
+    "schema", "script", "secret", "server", "service", "site", "stack", "stage", "table", "tag",
+    "task", "team", "template", "tool", "topic", "type", "url", "var", "variable", "volume",
+    "wallet", "web", "workflow", "workspace", "zone",
+];
 const KEY_MAX_WORDS: usize = 4;
 
 /// A recognized field name: the category its value is masked as, and
@@ -2222,6 +2262,7 @@ const KEY_MAX_WORDS: usize = 4;
 pub struct KeyField {
     pub category: PiiCategory,
     pub gated: bool,
+    pub postcode: bool,
 }
 
 fn key_lower(c: char) -> char {
@@ -2252,6 +2293,16 @@ fn key_fields() -> &'static HashMap<String, KeyField> {
             let field = KeyField {
                 category: PiiCategory::Address,
                 gated: false,
+                postcode: false,
+            };
+            map.insert(key_id(&words), field);
+        }
+        for key in POSTCODE_KEYS {
+            let words: Vec<&str> = key.split(' ').collect();
+            let field = KeyField {
+                category: PiiCategory::Address,
+                gated: false,
+                postcode: true,
             };
             map.insert(key_id(&words), field);
         }
@@ -2261,6 +2312,7 @@ fn key_fields() -> &'static HashMap<String, KeyField> {
             let field = KeyField {
                 category: PiiCategory::Person,
                 gated: AMBIGUOUS_KEYS.contains(&id.as_str()),
+                postcode: false,
             };
             map.insert(id, field);
         }
@@ -2277,13 +2329,21 @@ fn is_key_sep_byte(b: u8) -> bool {
 }
 
 /// Field for the longest recognized suffix of `words` (up to three), so
-/// `Customer First Name` is `first name` and `Customer Name` is `name`.
-/// Both passes build `words` the same way (see `payload_key_words` and
-/// `text_key_words`).
+/// `Customer First Name` is `first name` and `Customer Name` is `name`. The
+/// word in front of the suffix must not be in `KEY_PREFIX_DENY`:
+/// `IP Address`, `Email Address`, `Host Name` and `File Name` name a network
+/// address or a resource, not a person or a place. Both passes build `words`
+/// the same way (see `payload_key_words` and `text_key_words`).
 fn match_key_words(words: &[&str]) -> Option<KeyField> {
+    let n = words.len();
     for size in [3usize, 2, 1] {
-        if size <= words.len() {
-            if let Some(field) = key_fields().get(&key_id(&words[words.len() - size..])) {
+        if size <= n {
+            if let Some(field) = key_fields().get(&key_id(&words[n - size..])) {
+                if size < n
+                    && KEY_PREFIX_DENY.contains(&key_id(&words[n - size - 1..n - size]).as_str())
+                {
+                    return None;
+                }
                 return Some(*field);
             }
         }
@@ -2291,7 +2351,27 @@ fn match_key_words(words: &[&str]) -> Option<KeyField> {
     None
 }
 
-#[cfg(feature = "payload")]
+/// False when `text[start..end]` is a recognized field name used as a key:
+/// followed by an optional (escaped) closing quote, spaces or tabs, and `:`
+/// or `=`.
+fn not_field_key(text: &str, start: usize, end: usize) -> bool {
+    if key_field(&text[start..end]).is_none() {
+        return true;
+    }
+    let b = text.as_bytes();
+    let mut i = end;
+    if i < b.len() && b[i] == b'\\' {
+        i += 1;
+    }
+    if i < b.len() && matches!(b[i], b'"' | b'\'') {
+        i += 1;
+    }
+    while i < b.len() && matches!(b[i], b' ' | b'\t') {
+        i += 1;
+    }
+    !(i < b.len() && matches!(b[i], b':' | b'='))
+}
+
 fn payload_key_words(key: &str) -> Vec<&str> {
     let bytes = key.as_bytes();
     let mut start = bytes.len();
@@ -2320,7 +2400,6 @@ fn payload_key_words(key: &str) -> Vec<&str> {
 /// Used by `scrub_payload`'s walk; the text pass reads the same words off
 /// the text before a `:`/`=` and applies the same match, so
 /// `{"Customer Name": …}` and `Customer Name: …` agree.
-#[cfg(feature = "payload")]
 pub fn key_field(key: &str) -> Option<KeyField> {
     match_key_words(&payload_key_words(key))
 }
@@ -2383,13 +2462,49 @@ fn gate_span(value: &str) -> &str {
     }
 }
 
-/// Whether a string value under `field` is masked: it must hold something
-/// besides `White_Space` and, for the gated `name` key, pass
-/// `looks_like_name` on its first `,`/`;`-separated part
-/// (`name: build-cache, owner: Ops` stays clean). Shared by the text pass
-/// (quoted values) and `scrub_payload`.
+fn is_placeholder(value: &str) -> bool {
+    let b = value.as_bytes();
+    b.len() >= 3
+        && b[0] == b'['
+        && b[b.len() - 1] == b']'
+        && b[1..b.len() - 1]
+            .iter()
+            .all(|&c| c.is_ascii_uppercase() || c == b'_')
+}
+
+fn starts_with_hex_literal(value: &str) -> bool {
+    let b = value.as_bytes();
+    if b.len() < 3 || b[0] != b'0' || !(b[1] == b'x' || b[1] == b'X') {
+        return false;
+    }
+    let digits = b[2..].iter().take_while(|c| c.is_ascii_hexdigit()).count();
+    digits > 0
+        && b.get(2 + digits)
+            .is_none_or(|&c| !(c.is_ascii_alphanumeric() || c == b'_'))
+}
+
+/// Value checks shared by every value shape, apart from the `name` gate. A
+/// value that an earlier detector already replaced whole (`IP Address: [IP]`)
+/// keeps that label; a value led by a hex literal (`address = 0x7ffd5e8c`)
+/// is a memory address; a postcode needs a digit and no call parentheses
+/// (`zip = zipfile.ZipFile(path)`).
+fn field_value_allowed(field: KeyField, value: &str) -> bool {
+    if value.chars().all(char::is_whitespace)
+        || is_placeholder(value)
+        || starts_with_hex_literal(value)
+    {
+        return false;
+    }
+    !field.postcode || (value.bytes().any(|c| c.is_ascii_digit()) && !value.contains('('))
+}
+
+/// Whether a string value under `field` is masked: it must pass
+/// `field_value_allowed` and, for the gated `name` key, `looks_like_name`
+/// on its first `,`/`;`-separated part (`name: build-cache, owner: Ops`
+/// stays clean). Shared by the text pass (quoted values) and
+/// `scrub_payload`.
 pub fn field_value_masked(field: KeyField, value: &str) -> bool {
-    if value.chars().all(char::is_whitespace) {
+    if !field_value_allowed(field, value) {
         return false;
     }
     !field.gated || looks_like_name(gate_span(value))
@@ -2574,7 +2689,8 @@ fn key_value_span(
     } else {
         trim_bare_value_end(b, pos, find_any(b, pos, b"\r\n"))
     };
-    let masked = end > pos && !UNQUOTED_LITERALS.contains(&&text[pos..end]);
+    let value = &text[pos..end];
+    let masked = !UNQUOTED_LITERALS.contains(&value) && field_value_allowed(field, value);
     (pos, end, end, masked)
 }
 
@@ -2631,14 +2747,6 @@ fn scrub_key_value_address(text: &str) -> (Option<String>, u32) {
 
 const UNIVERSAL: &[Detector] = &[
     Detector {
-        category: PiiCategory::Person,
-        scrub: scrub_key_value_person,
-    },
-    Detector {
-        category: PiiCategory::Address,
-        scrub: scrub_key_value_address,
-    },
-    Detector {
         category: PiiCategory::Email,
         scrub: scrub_email,
     },
@@ -2669,6 +2777,14 @@ const UNIVERSAL: &[Detector] = &[
     Detector {
         category: PiiCategory::Location,
         scrub: scrub_location,
+    },
+    Detector {
+        category: PiiCategory::Person,
+        scrub: scrub_key_value_person,
+    },
+    Detector {
+        category: PiiCategory::Address,
+        scrub: scrub_key_value_address,
     },
 ];
 

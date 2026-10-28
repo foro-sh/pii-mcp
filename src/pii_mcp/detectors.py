@@ -156,6 +156,19 @@ Patterns:
   sentence punctuation left outside; so a line holding several bare pairs
   (``first_name=Jan last_name=Jansen``) is masked as one value.
 
+  Order and claims. The pass runs after the other universal detectors (email,
+  IBAN, card, BIC, MAC, IMEI, IP, location) and before the locale packs, so an
+  email, IP or MAC under an address-like key keeps its own label: a value that
+  is already one placeholder (``IP Address: [IP]``) is left alone. A prefix
+  word from a short deny list (``ip``, ``email``, ``mac``, ``memory``,
+  ``wallet``, ``host``, ``file``, …) turns the key into something else
+  (``Memory Address``, ``Host Name``), a value led by a hex literal (``address
+  = 0x7ffd5e8c``) is never masked, and a postcode key needs a value with an
+  ASCII digit and no ``(`` (``zip = zipfile.ZipFile(path)``). BIC and NL
+  passport candidates that are themselves a field name used as a key
+  (``NACHNAME:``, ``"LastName1":``) are not masked, so the key stays readable
+  to this pass.
+
   ``name`` (resource/build names, ``name: "build-cache"``) is ambiguous and
   gated: the part of the value before the first ``,`` or ``;`` must look like
   one or more capitalized words (Dutch/German particles — ``van``, ``der``,
@@ -167,9 +180,9 @@ Patterns:
   Every candidate resumes the scan at or past the text it read, so the pass
   is linear in the input.
 
-``UNIVERSAL_DETECTORS`` (key-aware person/address, email, IBAN, credit card,
-BIC, MAC, IMEI, IP, location) always run; locale detectors are selected by
-``languages=`` in the scrub layer.
+``UNIVERSAL_DETECTORS`` (email, IBAN, credit card, BIC, MAC, IMEI, IP,
+location, then key-aware person/address) always run; locale detectors are
+selected by ``languages=`` in the scrub layer.
 """
 
 from __future__ import annotations
@@ -602,7 +615,9 @@ def _bic_valid(value: str) -> bool:
 
 
 def _scrub_bic(text: str) -> tuple[str, int]:
-    return _replace_matches(text, BIC_RE, "[BIC]", _bic_valid)
+    """A recognized field name used as a key (``NACHNAME:``, ``"POSTCODE":``)
+    is not a BIC, so the key-aware pass that runs later still sees it."""
+    return _replace_matches(text, BIC_RE, "[BIC]", _bic_valid, _not_field_key)
 
 
 bic_detector = Detector(type="bic", scrub=_scrub_bic)
@@ -1190,7 +1205,11 @@ def _nl_passport_valid(value: str) -> bool:
 
 
 def _scrub_nl_passport(text: str) -> tuple[str, int]:
-    return _replace_matches(text, NL_PASSPORT_RE, "[PASSPORT]", _nl_passport_valid)
+    """A recognized field name used as a key (``"LastName1":``) is not a
+    passport number."""
+    return _replace_matches(
+        text, NL_PASSPORT_RE, "[PASSPORT]", _nl_passport_valid, _not_field_key
+    )
 
 
 nl_passport_detector = Detector(type="passport", scrub=_scrub_nl_passport)
@@ -1504,6 +1523,7 @@ _PERSON_KEYS: tuple[str, ...] = (
 )
 _ADDRESS_KEYS: tuple[str, ...] = (
     "street",
+    "street name",
     "straße",
     "strasse",
     "straat",
@@ -1517,12 +1537,6 @@ _ADDRESS_KEYS: tuple[str, ...] = (
     "hausnummer",
     "gebäude",
     "gebaeude",
-    "postcode",
-    "postal code",
-    "zip code",
-    "postleitzahl",
-    "plz",
-    "zip",
     "city",
     "stadt",
     "stad",
@@ -1533,7 +1547,32 @@ _ADDRESS_KEYS: tuple[str, ...] = (
     "bundesland",
     "provincie",
 )
+_POSTCODE_KEYS: tuple[str, ...] = (
+    "postcode",
+    "postal code",
+    "zip code",
+    "postleitzahl",
+    "plz",
+    "zip",
+)
 _AMBIGUOUS_KEYS = frozenset({"name"})
+_KEY_PREFIX_DENY = frozenset(
+    {
+        "app", "application", "base", "bind", "bitcoin", "branch", "broadcast", "btc",
+        "bucket", "build", "class", "cluster", "column", "command", "company", "container",
+        "contract", "database", "db", "device", "dns", "domain", "email", "env",
+        "environment", "eth", "ethereum", "event", "field", "file", "font", "function",
+        "gateway", "group", "hardware", "host", "image", "index", "instance", "ip", "ipv4",
+        "ipv6", "job", "key", "label", "link", "listen", "local", "mac", "machine", "mail",
+        "mem", "memory", "method", "model", "module", "multicast", "network", "node", "org",
+        "organization", "package", "param", "parameter", "peer", "pipeline", "plugin", "pod",
+        "printer", "product", "project", "property", "proxy", "queue", "region", "release",
+        "remote", "repo", "repository", "resource", "return", "role", "schema", "script",
+        "secret", "server", "service", "site", "stack", "stage", "table", "tag", "task",
+        "team", "template", "tool", "topic", "type", "url", "var", "variable", "volume",
+        "wallet", "web", "workflow", "workspace", "zone",
+    }
+)
 _KEY_SEPARATORS = " \t_-"
 _KEY_DIGITS = "0123456789"
 _KEY_LOWER = str.maketrans("ABCDEFGHIJKLMNOPQRSTUVWXYZÄÖÜẞ", "abcdefghijklmnopqrstuvwxyzäöüß")
@@ -1549,6 +1588,7 @@ class KeyField:
 
     category: KeyCategory
     gated: bool
+    postcode: bool = False
 
 
 def _key_id(words: Sequence[str]) -> str:
@@ -1557,6 +1597,7 @@ def _key_id(words: Sequence[str]) -> str:
 
 _KEY_FIELDS: dict[str, KeyField] = {
     **{_key_id(key.split()): KeyField("address", False) for key in _ADDRESS_KEYS},
+    **{_key_id(key.split()): KeyField("address", False, True) for key in _POSTCODE_KEYS},
     **{
         _key_id(key.split()): KeyField("person", _key_id(key.split()) in _AMBIGUOUS_KEYS)
         for key in _PERSON_KEYS
@@ -1571,14 +1612,31 @@ def _is_key_word_char(char: str) -> bool:
 def _match_key_words(words: Sequence[str]) -> KeyField | None:
     """Field for the longest recognized suffix of ``words`` (up to three),
     so ``Customer First Name`` is ``first name`` and ``Customer Name`` is
-    ``name``. Both passes build ``words`` the same way (see
+    ``name``. The word in front of the suffix must not be in
+    ``_KEY_PREFIX_DENY``: ``IP Address``, ``Email Address``, ``Host Name``
+    and ``File Name`` name a network address or a resource, not a person or
+    a place. Both passes build ``words`` the same way (see
     ``_payload_key_words`` and ``_text_key_words``)."""
     for size in (3, 2, 1):
         if size <= len(words):
             field = _KEY_FIELDS.get(_key_id(words[-size:]))
             if field is not None:
+                if size < len(words) and _key_id(words[-size - 1 : -size]) in _KEY_PREFIX_DENY:
+                    return None
                 return field
     return None
+
+
+def _not_field_key(text: str, start: int, end: int) -> bool:
+    """False when ``text[start:end]`` is a recognized field name used as a
+    key: followed by an optional (escaped) closing quote, spaces or tabs, and
+    ``:`` or ``=``."""
+    if key_field(text[start:end]) is None:
+        return True
+    return _FIELD_KEY_TAIL_RE.match(text, end) is None
+
+
+_FIELD_KEY_TAIL_RE = re.compile(r"\\?[\"']?[ \t]*[:=]")
 
 
 def _payload_key_words(key: str) -> list[str]:
@@ -1664,13 +1722,33 @@ def _gate_span(value: str) -> str:
     return value[:end]
 
 
-def field_value_masked(field: KeyField, value: str) -> bool:
-    """Whether a string value under ``field`` is masked: it must be non-empty
-    and, for the gated ``name`` key, pass ``looks_like_name`` on its first
-    ``,``/``;``-separated part (``name: build-cache, owner: Ops`` stays
-    clean). A blank value (only ``White_Space``) is left alone. Shared by
-    the text pass (quoted values) and ``scrub_payload``."""
+_PLACEHOLDER_RE = re.compile(r"\[[A-Z_]+\]")
+_HEX_LITERAL_RE = re.compile(r"0[xX][0-9A-Fa-f]+(?![0-9A-Za-z_])")
+_ASCII_DIGIT_RE = re.compile(r"[0-9]")
+
+
+def _field_value_allowed(field: KeyField, value: str) -> bool:
+    """Value checks shared by every value shape, apart from the ``name``
+    gate. A value that an earlier detector already replaced whole
+    (``IP Address: [IP]``) keeps that label; a value led by a hex literal
+    (``address = 0x7ffd5e8c``) is a memory address; a postcode needs a digit
+    and no call parentheses (``zip = zipfile.ZipFile(path)``)."""
     if not value or _NAME_WS_RE.fullmatch(value):
+        return False
+    if _PLACEHOLDER_RE.fullmatch(value) or _HEX_LITERAL_RE.match(value):
+        return False
+    return not field.postcode or (
+        _ASCII_DIGIT_RE.search(value) is not None and "(" not in value
+    )
+
+
+def field_value_masked(field: KeyField, value: str) -> bool:
+    """Whether a string value under ``field`` is masked: it must pass
+    ``_field_value_allowed`` and, for the gated ``name`` key,
+    ``looks_like_name`` on its first ``,``/``;``-separated part
+    (``name: build-cache, owner: Ops`` stays clean). Shared by the text pass
+    (quoted values) and ``scrub_payload``."""
+    if not _field_value_allowed(field, value):
         return False
     return not field.gated or looks_like_name(_gate_span(value))
 
@@ -1804,7 +1882,8 @@ def _key_value_span(
             end -= 1
     else:
         end = _trim_bare_value_end(text, pos, _find(_LINE_END_RE, text, pos))
-    masked = end > pos and text[pos:end] not in _UNQUOTED_LITERALS
+    value = text[pos:end]
+    masked = value not in _UNQUOTED_LITERALS and _field_value_allowed(field, value)
     return pos, end, end, masked
 
 
@@ -1851,8 +1930,6 @@ key_value_person_detector = Detector(type="person", scrub=_scrub_key_value_perso
 key_value_address_detector = Detector(type="address", scrub=_scrub_key_value_address)
 
 UNIVERSAL_DETECTORS: tuple[Detector, ...] = (
-    key_value_person_detector,
-    key_value_address_detector,
     email_detector,
     iban_detector,
     credit_card_detector,
@@ -1861,4 +1938,6 @@ UNIVERSAL_DETECTORS: tuple[Detector, ...] = (
     imei_detector,
     ip_detector,
     location_detector,
+    key_value_person_detector,
+    key_value_address_detector,
 )

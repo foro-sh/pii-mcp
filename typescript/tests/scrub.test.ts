@@ -1279,13 +1279,50 @@ describe("key-aware masking", () => {
     },
   );
 
-  it("a glued digit-suffix key can collide with the NL passport shape", () => {
-    // Known gap: the key text itself is left in place, so a camelCase key
-    // with no separator before its digit suffix can coincidentally pass the
-    // format-only NL passport check. The value is still masked either way —
-    // no leak, just an odd label on the key.
-    const result = scrubText('"LastName1": "Müller"', { languages: ["nl"] });
-    expect(result.text).toBe('"[PASSPORT]": "[PERSON]"');
+  it.each([
+    ['"LastName1": "Müller"', '"LastName1": "[PERSON]"'],
+    ["NACHNAME: Eckerlin", "NACHNAME: [PERSON]"],
+    ['"POSTCODE": "33613"', '"POSTCODE": "[ADDRESS]"'],
+  ])("does not read a field key as a BIC or passport: %s", (text, expected) => {
+    const result = scrubText(text, { languages: ["en", "nl", "de"] });
+    expect(result.text).toBe(expected);
+    expect(result.counts.bic).toBe(0);
+    expect(result.counts.passport).toBe(0);
+  });
+
+  it.each([
+    ["IP Address: 192.168.1.1", "IP Address: [IP]"],
+    ["Email Address: ada@example.com", "Email Address: [EMAIL]"],
+    ['"name": "ada@example.com"', '"name": "[EMAIL]"'],
+    ["address = 0x7ffd5e8c", "address = 0x7ffd5e8c"],
+    ["from address = 0x7ffd5e8c accepted", "from address = 0x7ffd5e8c accepted"],
+    ["Memory Address: 0x7ffd5e8c", "Memory Address: 0x7ffd5e8c"],
+    ["zip = zipfile.ZipFile(path)", "zip = zipfile.ZipFile(path)"],
+    ["Host Name: Server", "Host Name: Server"],
+  ])("does not read a network or code value as an address: %s", (text, expected) => {
+    const result = scrubText(text, { languages: ["en", "nl", "de"] });
+    expect(result.text).toBe(expected);
+    expect(result.counts.address).toBe(0);
+    expect(result.counts.person).toBe(0);
+  });
+
+  it("does not read network or code payload values as addresses", () => {
+    const result = scrubPayload(
+      {
+        ip_address: "10.0.0.1",
+        email_address: "ada@example.com",
+        address: "0x7ffd5e8c",
+        zip: "zipfile.ZipFile(path)",
+      },
+      { languages: ["en"] },
+    );
+    expect(result.payload).toEqual({
+      ip_address: "[IP]",
+      email_address: "[EMAIL]",
+      address: "0x7ffd5e8c",
+      zip: "zipfile.ZipFile(path)",
+    });
+    expect(result.counts.address).toBe(0);
   });
 });
 
