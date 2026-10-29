@@ -39,9 +39,18 @@ CI / local tests fail if the committed artifact drifts from sources.
 | `emptyPiiCounts()` / `totalPiiCount()` / `mergeCounts()` | helpers | Same shape as the main package. |
 | `DEFAULT_LANGUAGES` | const | `["en", "nl"]`. |
 | `normalizeLanguages(languages)` | function | Unknown codes throw. |
+| `normalizeTypes(types)` | function | Unknown types throw; `null` means every type. |
 
 `options.languages` defaults to `DEFAULT_LANGUAGES` when omitted/`null`. Pass
 `[]` for universal detectors only (no locale phone/ID packs).
+
+`options.types` limits masking to the listed `PII_TYPES` (omitted/`null`:
+all of them; `[]`: none). `options.allow` lists values that are never masked,
+compared case-insensitively to the whole detected value; it never exempts a
+`secret`. A hit left unmasked by either option is not counted, but its text is
+still shielded from later detectors, so turning `phone` off does not let the
+BSN detector mask a phone number's digits. With neither option set, output is
+unchanged.
 
 There is no `ner` option on the gate surface. Person-name NER stays Tier 2
 (Presidio on platform-internal paths).

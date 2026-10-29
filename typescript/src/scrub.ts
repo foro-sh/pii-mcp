@@ -12,6 +12,7 @@ import { loadNative, type NativeCounts } from "./native.js";
 import {
   scrubPayloadJs,
   scrubTextJs,
+  type MaskOptions,
 } from "./scrub-js.js";
 import {
   MAX_DEPTH,
@@ -31,8 +32,10 @@ export {
   emptyPiiCounts,
   mergeCounts,
   normalizeLanguages,
+  normalizeTypes,
   totalPiiCount,
   type LanguageCode,
+  type MaskOptions,
   type PiiCounts,
   type PiiType,
   type ScrubReport,
@@ -43,7 +46,7 @@ export type ScrubPayloadResult = { payload: unknown } & ScrubReport;
 
 export type ScrubOptions = {
   languages?: readonly string[] | null | undefined;
-};
+} & MaskOptions;
 
 const NER_REMOVED =
   "ner was removed from pii-mcp; use Presidio or another out-of-process NER " +
@@ -70,7 +73,7 @@ function raiseNativeError(err: unknown): never {
   if (msg.startsWith("PiiScrubError:")) {
     throw new PiiScrubError(msg.slice("PiiScrubError:".length));
   }
-  if (msg.startsWith("unknown language")) {
+  if (msg.startsWith("unknown language") || msg.startsWith("unknown type")) {
     throw new Error(msg);
   }
   throw err instanceof Error ? err : new Error(msg);
@@ -133,6 +136,18 @@ function assertPlainJson(value: unknown, depth = 0): unknown {
   );
 }
 
+/** Trailing napi arguments, left off when unset so the call is unchanged without options. */
+function nativeMaskArgs(
+  options: MaskOptions | undefined,
+): [] | [string[] | null, string[] | null] {
+  const types = options?.types;
+  const allow = options?.allow;
+  if ((types === undefined || types === null) && (allow === undefined || allow === null)) {
+    return [];
+  }
+  return [types == null ? null : [...types], allow == null ? null : [...allow]];
+}
+
 /** Return true when the optional Rust napi addon will handle scrub calls. */
 export function usingNative(): boolean {
   return resolveBackend() === "native";
@@ -161,7 +176,7 @@ export function scrubText(
         options?.languages === undefined || options.languages === null
           ? null
           : [...options.languages];
-      const result = native.scrubText(text, languages);
+      const result = native.scrubText(text, languages, ...nativeMaskArgs(options));
       return {
         text: result.text,
         found: result.found,
@@ -173,6 +188,8 @@ export function scrubText(
   }
   return scrubTextJs(text, {
     languages: options?.languages,
+    types: options?.types,
+    allow: options?.allow,
     checkSize: true,
   });
 }
@@ -201,7 +218,7 @@ export function scrubPayload(
           ? null
           : [...options.languages];
       const plain = assertPlainJson(payload);
-      const result = native.scrubPayload(plain, languages);
+      const result = native.scrubPayload(plain, languages, ...nativeMaskArgs(options));
       return {
         payload: result.payload,
         found: result.found,
@@ -211,5 +228,9 @@ export function scrubPayload(
       raiseNativeError(err);
     }
   }
-  return scrubPayloadJs(payload, { languages: options?.languages });
+  return scrubPayloadJs(payload, {
+    languages: options?.languages,
+    types: options?.types,
+    allow: options?.allow,
+  });
 }

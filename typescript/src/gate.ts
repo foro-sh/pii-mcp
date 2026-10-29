@@ -18,10 +18,12 @@ import {
   emptyPiiCounts,
   mergeCounts,
   normalizeLanguages,
+  normalizeTypes,
   scrubPayloadJs,
   scrubTextJs,
   totalPiiCount,
   type LanguageCode,
+  type MaskOptions,
   type PiiCounts,
   type PiiType,
   type ScrubReport,
@@ -32,7 +34,7 @@ export type ScrubPayloadResult = { payload: unknown } & ScrubReport;
 
 export type GateScrubOptions = {
   languages?: readonly string[] | null | undefined;
-};
+} & MaskOptions;
 
 const NER_REMOVED =
   "ner was removed from pii-mcp; use Presidio or another out-of-process NER " +
@@ -57,6 +59,8 @@ export function scrubText(
   rejectRemovedNer(options);
   return scrubTextJs(text, {
     languages: options.languages,
+    types: options.types,
+    allow: options.allow,
     checkSize: true,
   });
 }
@@ -73,7 +77,11 @@ export function scrubPayload(
   options: GateScrubOptions = {},
 ): ScrubPayloadResult {
   rejectRemovedNer(options);
-  return scrubPayloadJs(payload, { languages: options.languages });
+  return scrubPayloadJs(payload, {
+    languages: options.languages,
+    types: options.types,
+    allow: options.allow,
+  });
 }
 
 export {
@@ -85,8 +93,10 @@ export {
   emptyPiiCounts,
   mergeCounts,
   normalizeLanguages,
+  normalizeTypes,
   totalPiiCount,
   type LanguageCode,
+  type MaskOptions,
   type PiiCounts,
   type PiiType,
   type ScrubReport,

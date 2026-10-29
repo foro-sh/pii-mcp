@@ -6,6 +6,123 @@
  */
 // src/detectors.ts
 import { isIP } from "node:net";
+
+// src/types.ts
+var PII_TYPES = [
+  "email",
+  "iban",
+  "credit_card",
+  "bic",
+  "mac",
+  "imei",
+  "ip",
+  "location",
+  "bsn",
+  "ssn",
+  "tax_id",
+  "vat_id",
+  "passport",
+  "phone",
+  "person",
+  "address",
+  "license_plate",
+  "secret"
+];
+var DEFAULT_LANGUAGES = ["en", "nl"];
+var MAX_SCRUB_BYTES = 32 * 1024 * 1024;
+var MAX_DEPTH = 200;
+var PiiScrubError = class extends Error {
+  statusCode = 500;
+  constructor(message) {
+    super(message);
+    this.name = "PiiScrubError";
+  }
+};
+function emptyPiiCounts() {
+  const counts = {};
+  for (const t of PII_TYPES) {
+    counts[t] = 0;
+  }
+  return counts;
+}
+function totalPiiCount(counts) {
+  let total = 0;
+  for (const t of PII_TYPES) {
+    total += counts[t];
+  }
+  return total;
+}
+function mergeCounts(parts) {
+  const merged = emptyPiiCounts();
+  for (const part of parts) {
+    for (const t of PII_TYPES) {
+      merged[t] += part[t];
+    }
+  }
+  return merged;
+}
+
+// src/detectors.ts
+var SENTINEL_FIRST = 57344;
+var SENTINEL_RANGE = 63743 - SENTINEL_FIRST + 1;
+var maskContext = null;
+function withMaskPolicy(input, types, allow, fn) {
+  maskContext = { input, types, allow, sentinel: null, kept: [] };
+  try {
+    const out = fn();
+    const { sentinel, kept } = maskContext;
+    return sentinel === null ? out : restoreKept(out, sentinel, kept);
+  } finally {
+    maskContext = null;
+  }
+}
+function restoreKept(text, sentinel, kept) {
+  let out = "";
+  for (let i = 0; i < text.length; i += 1) {
+    if (text[i] === sentinel && i + 2 < text.length) {
+      const hi = text.charCodeAt(i + 1) - SENTINEL_FIRST;
+      const lo = text.charCodeAt(i + 2) - SENTINEL_FIRST;
+      const index = hi * SENTINEL_RANGE + lo;
+      if (hi >= 0 && hi < SENTINEL_RANGE && lo >= 0 && lo < SENTINEL_RANGE && index < kept.length) {
+        out += kept[index];
+        i += 2;
+        continue;
+      }
+    }
+    out += text[i];
+  }
+  return out;
+}
+function freeSentinel(input) {
+  for (let code = SENTINEL_FIRST; code < SENTINEL_FIRST + SENTINEL_RANGE; code += 1) {
+    const ch = String.fromCharCode(code);
+    if (!input.includes(ch)) {
+      return ch;
+    }
+  }
+  throw new PiiScrubError("no unused private-use character to protect a value with");
+}
+function mask(placeholder, value) {
+  const ctx = maskContext;
+  if (ctx === null) {
+    return { text: placeholder, masked: true };
+  }
+  const type = placeholder.slice(1, -1).toLowerCase();
+  const protect = ctx.types !== null && !ctx.types.has(type) || type !== "secret" && ctx.allow.has(value.toLowerCase());
+  if (!protect) {
+    return { text: placeholder, masked: true };
+  }
+  if (ctx.kept.length >= SENTINEL_RANGE * SENTINEL_RANGE) {
+    throw new PiiScrubError("too many protected values in one string");
+  }
+  ctx.sentinel ??= freeSentinel(ctx.input);
+  const index = ctx.kept.length;
+  ctx.kept.push(value);
+  return {
+    text: ctx.sentinel + String.fromCharCode(SENTINEL_FIRST + Math.floor(index / SENTINEL_RANGE)) + String.fromCharCode(SENTINEL_FIRST + index % SENTINEL_RANGE),
+    masked: false
+  };
+}
 function cloneRegExp(pattern) {
   return new RegExp(pattern.source, pattern.flags);
 }
@@ -23,10 +140,11 @@ function replaceMatches(text, pattern, placeholder, isValid, retry = false, acce
         }
         continue;
       }
-      out2 += text.slice(last, m.index) + placeholder;
+      const r = mask(placeholder, text.slice(m.index, end));
+      out2 += text.slice(last, m.index) + r.text;
       last = end;
       re.lastIndex = last;
-      count += 1;
+      if (r.masked) count += 1;
     }
     return { text: out2 + text.slice(last), count };
   }
@@ -38,9 +156,10 @@ function replaceMatches(text, pattern, placeholder, isValid, retry = false, acce
         re.lastIndex = m.index + 1;
         continue;
       }
-      out2 += text.slice(last, m.index) + placeholder;
+      const r = mask(placeholder, m[0]);
+      out2 += text.slice(last, m.index) + r.text;
       last = re.lastIndex;
-      count += 1;
+      if (r.masked) count += 1;
     }
     return { text: out2 + text.slice(last), count };
   }
@@ -48,8 +167,9 @@ function replaceMatches(text, pattern, placeholder, isValid, retry = false, acce
     if (isValid !== void 0 && !isValid(value)) {
       return value;
     }
-    count += 1;
-    return placeholder;
+    const r = mask(placeholder, value);
+    if (r.masked) count += 1;
+    return r.text;
   });
   return { text: out, count };
 }
@@ -169,13 +289,14 @@ function scrubEmail(text) {
         end = shortened;
       }
     }
+    const r = mask("[EMAIL]", text.slice(start, end));
     parts.push(text.slice(last, start));
-    parts.push("[EMAIL]");
+    parts.push(r.text);
     last = end;
     pos = end;
-    count += 1;
+    if (r.masked) count += 1;
   }
-  if (count === 0) {
+  if (last === 0) {
     return { text, count: 0 };
   }
   parts.push(text.slice(last));
@@ -1068,9 +1189,10 @@ function scrubSecret(text) {
     const cred = m[1] ?? "";
     if (!bearerCredentialValid(cred)) continue;
     const credStart = m.index + m[0].length - cred.length;
-    out += src.slice(last, credStart) + "[SECRET]";
+    const r = mask("[SECRET]", cred);
+    out += src.slice(last, credStart) + r.text;
     last = m.index + m[0].length;
-    count += 1;
+    if (r.masked) count += 1;
   }
   if (last === 0) return { text: src, count };
   return { text: out + src.slice(last), count };
@@ -1087,61 +1209,6 @@ var UNIVERSAL_DETECTORS = [
   ipDetector,
   locationDetector
 ];
-
-// src/types.ts
-var PII_TYPES = [
-  "email",
-  "iban",
-  "credit_card",
-  "bic",
-  "mac",
-  "imei",
-  "ip",
-  "location",
-  "bsn",
-  "ssn",
-  "tax_id",
-  "vat_id",
-  "passport",
-  "phone",
-  "person",
-  "address",
-  "license_plate",
-  "secret"
-];
-var DEFAULT_LANGUAGES = ["en", "nl"];
-var MAX_SCRUB_BYTES = 32 * 1024 * 1024;
-var MAX_DEPTH = 200;
-var PiiScrubError = class extends Error {
-  statusCode = 500;
-  constructor(message) {
-    super(message);
-    this.name = "PiiScrubError";
-  }
-};
-function emptyPiiCounts() {
-  const counts = {};
-  for (const t of PII_TYPES) {
-    counts[t] = 0;
-  }
-  return counts;
-}
-function totalPiiCount(counts) {
-  let total = 0;
-  for (const t of PII_TYPES) {
-    total += counts[t];
-  }
-  return total;
-}
-function mergeCounts(parts) {
-  const merged = emptyPiiCounts();
-  for (const part of parts) {
-    for (const t of PII_TYPES) {
-      merged[t] += part[t];
-    }
-  }
-  return merged;
-}
 
 // src/scrub-js.ts
 var KNOWN_LANGUAGES = /* @__PURE__ */ new Set(["en", "nl", "de"]);
@@ -1164,6 +1231,22 @@ function normalizeLanguages(languages) {
       seen.add(code);
       out.push(code);
     }
+  }
+  return out;
+}
+var KNOWN_TYPES = new Set(PII_TYPES);
+function normalizeTypes(types) {
+  if (types === void 0 || types === null) {
+    return null;
+  }
+  const out = /* @__PURE__ */ new Set();
+  for (const raw of types) {
+    const type = raw.toLowerCase();
+    if (!KNOWN_TYPES.has(type)) {
+      const supported = [...KNOWN_TYPES].sort().map((t) => `'${t}'`).join(", ");
+      throw new Error(`unknown type '${raw}'; supported: [${supported}]`);
+    }
+    out.add(type);
   }
   return out;
 }
@@ -1259,33 +1342,40 @@ function scrubTextJs(text, options = {}) {
     );
   }
   const counts = emptyPiiCounts();
-  let out = text;
-  for (const detector of detectorsFor(options.languages)) {
-    const result = detector.scrub(out);
-    out = result.text;
-    counts[detector.type] += result.count;
-  }
+  const detectors = detectorsFor(options.languages);
+  const run = () => {
+    let out2 = text;
+    for (const detector of detectors) {
+      const result = detector.scrub(out2);
+      out2 = result.text;
+      counts[detector.type] += result.count;
+    }
+    return out2;
+  };
+  const types = normalizeTypes(options.types);
+  const allow = new Set((options.allow ?? []).map((value) => value.toLowerCase()));
+  const out = types === null && allow.size === 0 ? run() : withMaskPolicy(text, types, allow, run);
   return { text: out, found: totalPiiCount(counts) > 0, counts };
 }
-function scrubWalk(value, counts, depth, languages) {
+function scrubWalk(value, counts, depth, options) {
   if (depth > MAX_DEPTH) {
     throw new PiiScrubError(`payload nests past the ${MAX_DEPTH}-level scrub limit`);
   }
   if (typeof value === "string") {
-    const result = scrubTextJs(value, { languages, checkSize: false });
+    const result = scrubTextJs(value, { ...options, checkSize: false });
     for (const t of PII_TYPES) {
       counts[t] += result.counts[t];
     }
     return result.text;
   }
   if (Array.isArray(value)) {
-    return value.map((item) => scrubWalk(item, counts, depth + 1, languages));
+    return value.map((item) => scrubWalk(item, counts, depth + 1, options));
   }
   if (isPlainObject(value)) {
     const out = {};
     const skip = binaryKey(value);
     for (const [key, item] of Object.entries(value)) {
-      out[key] = key === skip ? item : scrubWalk(item, counts, depth + 1, languages);
+      out[key] = key === skip ? item : scrubWalk(item, counts, depth + 1, options);
     }
     return out;
   }
@@ -1303,7 +1393,8 @@ function scrubPayloadJs(payload, options = {}) {
     );
   }
   const counts = emptyPiiCounts();
-  const scrubbed = scrubWalk(payload, counts, 0, options.languages);
+  normalizeTypes(options.types);
+  const scrubbed = scrubWalk(payload, counts, 0, options);
   return {
     payload: scrubbed,
     found: totalPiiCount(counts) > 0,
@@ -1323,12 +1414,18 @@ function scrubText(text, options = {}) {
   rejectRemovedNer(options);
   return scrubTextJs(text, {
     languages: options.languages,
+    types: options.types,
+    allow: options.allow,
     checkSize: true
   });
 }
 function scrubPayload(payload, options = {}) {
   rejectRemovedNer(options);
-  return scrubPayloadJs(payload, { languages: options.languages });
+  return scrubPayloadJs(payload, {
+    languages: options.languages,
+    types: options.types,
+    allow: options.allow
+  });
 }
 export {
   DEFAULT_LANGUAGES,
@@ -1339,6 +1436,7 @@ export {
   emptyPiiCounts,
   mergeCounts,
   normalizeLanguages,
+  normalizeTypes,
   scrubPayload,
   scrubText,
   totalPiiCount

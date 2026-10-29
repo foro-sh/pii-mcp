@@ -16,6 +16,7 @@ export {
   emptyPiiCounts,
   mergeCounts,
   normalizeLanguages,
+  normalizeTypes,
   scrubPayload,
   scrubText,
   totalPiiCount,

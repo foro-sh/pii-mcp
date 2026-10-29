@@ -128,6 +128,8 @@
 
 import { isIP } from "node:net";
 
+import { PiiScrubError } from "./types.js";
+
 export type PiiCategory =
   | "email"
   | "iban"
@@ -150,6 +152,102 @@ export type PiiCategory =
 export interface Detector {
   readonly type: PiiCategory;
   scrub(text: string): { text: string; count: number };
+}
+
+const SENTINEL_FIRST = 0xe000;
+const SENTINEL_RANGE = 0xf8ff - SENTINEL_FIRST + 1;
+
+interface MaskContext {
+  input: string;
+  types: ReadonlySet<string> | null;
+  allow: ReadonlySet<string>;
+  sentinel: string | null;
+  kept: string[];
+}
+
+let maskContext: MaskContext | null = null;
+
+/**
+ * Run ``fn`` with a mask policy, then put protected spans back.
+ *
+ * A match whose type is not in ``types``, or whose lower-cased value is in
+ * ``allow`` (never for ``secret``), is *protected*: it is swapped for a
+ * three-code-point private-use token instead of its placeholder, so later
+ * detectors cannot match into it, and restored once every detector has run.
+ * The token's lead code point is the first one in U+E000..U+F8FF absent from
+ * ``input``, chosen at the first protected match, so restoring never touches
+ * private-use text the caller sent.
+ */
+export function withMaskPolicy(
+  input: string,
+  types: ReadonlySet<string> | null,
+  allow: ReadonlySet<string>,
+  fn: () => string,
+): string {
+  maskContext = { input, types, allow, sentinel: null, kept: [] };
+  try {
+    const out = fn();
+    const { sentinel, kept } = maskContext;
+    return sentinel === null ? out : restoreKept(out, sentinel, kept);
+  } finally {
+    maskContext = null;
+  }
+}
+
+function restoreKept(text: string, sentinel: string, kept: readonly string[]): string {
+  let out = "";
+  for (let i = 0; i < text.length; i += 1) {
+    if (text[i] === sentinel && i + 2 < text.length) {
+      const hi = text.charCodeAt(i + 1) - SENTINEL_FIRST;
+      const lo = text.charCodeAt(i + 2) - SENTINEL_FIRST;
+      const index = hi * SENTINEL_RANGE + lo;
+      if (hi >= 0 && hi < SENTINEL_RANGE && lo >= 0 && lo < SENTINEL_RANGE && index < kept.length) {
+        out += kept[index];
+        i += 2;
+        continue;
+      }
+    }
+    out += text[i];
+  }
+  return out;
+}
+
+function freeSentinel(input: string): string {
+  for (let code = SENTINEL_FIRST; code < SENTINEL_FIRST + SENTINEL_RANGE; code += 1) {
+    const ch = String.fromCharCode(code);
+    if (!input.includes(ch)) {
+      return ch;
+    }
+  }
+  throw new PiiScrubError("no unused private-use character to protect a value with");
+}
+
+/** Return what replaces a detected ``value``: its ``placeholder`` (``masked``) or a protect token. */
+function mask(placeholder: string, value: string): { text: string; masked: boolean } {
+  const ctx = maskContext;
+  if (ctx === null) {
+    return { text: placeholder, masked: true };
+  }
+  const type = placeholder.slice(1, -1).toLowerCase();
+  const protect =
+    (ctx.types !== null && !ctx.types.has(type)) ||
+    (type !== "secret" && ctx.allow.has(value.toLowerCase()));
+  if (!protect) {
+    return { text: placeholder, masked: true };
+  }
+  if (ctx.kept.length >= SENTINEL_RANGE * SENTINEL_RANGE) {
+    throw new PiiScrubError("too many protected values in one string");
+  }
+  ctx.sentinel ??= freeSentinel(ctx.input);
+  const index = ctx.kept.length;
+  ctx.kept.push(value);
+  return {
+    text:
+      ctx.sentinel +
+      String.fromCharCode(SENTINEL_FIRST + Math.floor(index / SENTINEL_RANGE)) +
+      String.fromCharCode(SENTINEL_FIRST + (index % SENTINEL_RANGE)),
+    masked: false,
+  };
 }
 
 function cloneRegExp(pattern: RegExp): RegExp {
@@ -181,10 +279,11 @@ function replaceMatches(
         }
         continue;
       }
-      out += text.slice(last, m.index) + placeholder;
+      const r = mask(placeholder, text.slice(m.index, end));
+      out += text.slice(last, m.index) + r.text;
       last = end;
       re.lastIndex = last;
-      count += 1;
+      if (r.masked) count += 1;
     }
     return { text: out + text.slice(last), count };
   }
@@ -198,9 +297,10 @@ function replaceMatches(
         re.lastIndex = m.index + 1;
         continue;
       }
-      out += text.slice(last, m.index) + placeholder;
+      const r = mask(placeholder, m[0]);
+      out += text.slice(last, m.index) + r.text;
       last = re.lastIndex;
-      count += 1;
+      if (r.masked) count += 1;
     }
     return { text: out + text.slice(last), count };
   }
@@ -208,8 +308,9 @@ function replaceMatches(
     if (isValid !== undefined && !isValid(value)) {
       return value;
     }
-    count += 1;
-    return placeholder;
+    const r = mask(placeholder, value);
+    if (r.masked) count += 1;
+    return r.text;
   });
   return { text: out, count };
 }
@@ -374,13 +475,14 @@ function scrubEmail(text: string): { text: string; count: number } {
         end = shortened;
       }
     }
+    const r = mask("[EMAIL]", text.slice(start, end));
     parts.push(text.slice(last, start));
-    parts.push("[EMAIL]");
+    parts.push(r.text);
     last = end;
     pos = end;
-    count += 1;
+    if (r.masked) count += 1;
   }
-  if (count === 0) {
+  if (last === 0) {
     return { text, count: 0 };
   }
   parts.push(text.slice(last));
@@ -1566,9 +1668,10 @@ function scrubSecret(text: string): { text: string; count: number } {
     const cred = m[1] ?? "";
     if (!bearerCredentialValid(cred)) continue;
     const credStart = m.index + m[0].length - cred.length;
-    out += src.slice(last, credStart) + "[SECRET]";
+    const r = mask("[SECRET]", cred);
+    out += src.slice(last, credStart) + r.text;
     last = m.index + m[0].length;
-    count += 1;
+    if (r.masked) count += 1;
   }
   if (last === 0) return { text: src, count };
   return { text: out + src.slice(last), count };
