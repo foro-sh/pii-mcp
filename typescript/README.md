@@ -69,6 +69,8 @@ import { scrubText, scrubPayload, usingNative } from "pii-mcp";
 
 scrubText("mail ada@example.com");
 scrubPayload({ email: "ada@example.com" }, { languages: ["en"] });
+scrubText("ada@example.com, 123456782", { types: ["bsn"] }); // email left as is
+scrubText("support@foro.sh", { allow: ["support@foro.sh"] }); // never masked
 usingNative(); // true when the napi addon is active
 ```
 

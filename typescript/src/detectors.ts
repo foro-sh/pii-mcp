@@ -118,12 +118,17 @@
  *   hex-glue guard). All phone forms also accept nbsp, thin / narrow nbsp, and
  *   unicode dashes between groups.
  * - BSN spaced/dotted/hyphenated ``111-222-333`` groups.
+ * - Secrets (``secret``, runs first): vendor-prefixed keys and JWTs bounded by
+ *   non-``[A-Za-z0-9_-]``, plus the credential after ``Bearer`` (any case)
+ *   when it is 16+ chars with a digit or a non-initial uppercase letter.
  *
- * ``UNIVERSAL_DETECTORS`` (email, IBAN, credit card, BIC, MAC, IMEI, IP, location)
+ * ``UNIVERSAL_DETECTORS`` (secret, email, IBAN, credit card, BIC, MAC, IMEI, IP, location)
  * always run; locale detectors are selected by ``languages=`` in the scrub layer.
  */
 
 import { isIP } from "node:net";
+
+import { PiiScrubError } from "./types.js";
 
 export type PiiCategory =
   | "email"
@@ -141,11 +146,108 @@ export type PiiCategory =
   | "passport"
   | "phone"
   | "address"
-  | "license_plate";
+  | "license_plate"
+  | "secret";
 
 export interface Detector {
   readonly type: PiiCategory;
   scrub(text: string): { text: string; count: number };
+}
+
+const SENTINEL_FIRST = 0xe000;
+const SENTINEL_RANGE = 0xf8ff - SENTINEL_FIRST + 1;
+
+interface MaskContext {
+  input: string;
+  types: ReadonlySet<string> | null;
+  allow: ReadonlySet<string>;
+  sentinel: string | null;
+  kept: string[];
+}
+
+let maskContext: MaskContext | null = null;
+
+/**
+ * Run ``fn`` with a mask policy, then put protected spans back.
+ *
+ * A match whose type is not in ``types``, or whose lower-cased value is in
+ * ``allow`` (never for ``secret``), is *protected*: it is swapped for a
+ * three-code-point private-use token instead of its placeholder, so later
+ * detectors cannot match into it, and restored once every detector has run.
+ * The token's lead code point is the first one in U+E000..U+F8FF absent from
+ * ``input``, chosen at the first protected match, so restoring never touches
+ * private-use text the caller sent.
+ */
+export function withMaskPolicy(
+  input: string,
+  types: ReadonlySet<string> | null,
+  allow: ReadonlySet<string>,
+  fn: () => string,
+): string {
+  maskContext = { input, types, allow, sentinel: null, kept: [] };
+  try {
+    const out = fn();
+    const { sentinel, kept } = maskContext;
+    return sentinel === null ? out : restoreKept(out, sentinel, kept);
+  } finally {
+    maskContext = null;
+  }
+}
+
+function restoreKept(text: string, sentinel: string, kept: readonly string[]): string {
+  let out = "";
+  for (let i = 0; i < text.length; i += 1) {
+    if (text[i] === sentinel && i + 2 < text.length) {
+      const hi = text.charCodeAt(i + 1) - SENTINEL_FIRST;
+      const lo = text.charCodeAt(i + 2) - SENTINEL_FIRST;
+      const index = hi * SENTINEL_RANGE + lo;
+      if (hi >= 0 && hi < SENTINEL_RANGE && lo >= 0 && lo < SENTINEL_RANGE && index < kept.length) {
+        out += kept[index];
+        i += 2;
+        continue;
+      }
+    }
+    out += text[i];
+  }
+  return out;
+}
+
+function freeSentinel(input: string): string {
+  for (let code = SENTINEL_FIRST; code < SENTINEL_FIRST + SENTINEL_RANGE; code += 1) {
+    const ch = String.fromCharCode(code);
+    if (!input.includes(ch)) {
+      return ch;
+    }
+  }
+  throw new PiiScrubError("no unused private-use character to protect a value with");
+}
+
+/** Return what replaces a detected ``value``: its ``placeholder`` (``masked``) or a protect token. */
+function mask(placeholder: string, value: string): { text: string; masked: boolean } {
+  const ctx = maskContext;
+  if (ctx === null) {
+    return { text: placeholder, masked: true };
+  }
+  const type = placeholder.slice(1, -1).toLowerCase();
+  const protect =
+    (ctx.types !== null && !ctx.types.has(type)) ||
+    (type !== "secret" && ctx.allow.has(value.toLowerCase()));
+  if (!protect) {
+    return { text: placeholder, masked: true };
+  }
+  if (ctx.kept.length >= SENTINEL_RANGE * SENTINEL_RANGE) {
+    throw new PiiScrubError("too many protected values in one string");
+  }
+  ctx.sentinel ??= freeSentinel(ctx.input);
+  const index = ctx.kept.length;
+  ctx.kept.push(value);
+  return {
+    text:
+      ctx.sentinel +
+      String.fromCharCode(SENTINEL_FIRST + Math.floor(index / SENTINEL_RANGE)) +
+      String.fromCharCode(SENTINEL_FIRST + (index % SENTINEL_RANGE)),
+    masked: false,
+  };
 }
 
 function cloneRegExp(pattern: RegExp): RegExp {
@@ -177,10 +279,11 @@ function replaceMatches(
         }
         continue;
       }
-      out += text.slice(last, m.index) + placeholder;
+      const r = mask(placeholder, text.slice(m.index, end));
+      out += text.slice(last, m.index) + r.text;
       last = end;
       re.lastIndex = last;
-      count += 1;
+      if (r.masked) count += 1;
     }
     return { text: out + text.slice(last), count };
   }
@@ -194,9 +297,10 @@ function replaceMatches(
         re.lastIndex = m.index + 1;
         continue;
       }
-      out += text.slice(last, m.index) + placeholder;
+      const r = mask(placeholder, m[0]);
+      out += text.slice(last, m.index) + r.text;
       last = re.lastIndex;
-      count += 1;
+      if (r.masked) count += 1;
     }
     return { text: out + text.slice(last), count };
   }
@@ -204,8 +308,9 @@ function replaceMatches(
     if (isValid !== undefined && !isValid(value)) {
       return value;
     }
-    count += 1;
-    return placeholder;
+    const r = mask(placeholder, value);
+    if (r.masked) count += 1;
+    return r.text;
   });
   return { text: out, count };
 }
@@ -370,13 +475,14 @@ function scrubEmail(text: string): { text: string; count: number } {
         end = shortened;
       }
     }
+    const r = mask("[EMAIL]", text.slice(start, end));
     parts.push(text.slice(last, start));
-    parts.push("[EMAIL]");
+    parts.push(r.text);
     last = end;
     pos = end;
-    count += 1;
+    if (r.masked) count += 1;
   }
-  if (count === 0) {
+  if (last === 0) {
     return { text, count: 0 };
   }
   parts.push(text.slice(last));
@@ -1515,7 +1621,66 @@ export const nlLicensePlateDetector: Detector = {
   scrub: scrubNlLicensePlate,
 };
 
+const SECRET_PREFIX_RE = new RegExp(
+  [
+    "sk-[A-Za-z0-9_-]{20,}",
+    "gh[pousr]_[A-Za-z0-9]{36,}",
+    "github_pat_[A-Za-z0-9_]{22,}",
+    "(?:AKIA|ASIA)[0-9A-Z]{16}",
+    "xox[abposr]-[A-Za-z0-9-]{10,}",
+    "[rs]k_(?:live|test)_[A-Za-z0-9]{16,}",
+    "AIza[0-9A-Za-z_-]{35}",
+    "foro_(?:pat|oat|ing|ort)_[A-Za-z0-9_-]{20,}",
+    "eyJ[A-Za-z0-9_-]{10,}\\.eyJ[A-Za-z0-9_-]{10,}\\.[A-Za-z0-9_-]{10,}",
+  ].join("|"),
+  "g",
+);
+const BEARER_RE = /[Bb][Ee][Aa][Rr][Ee][Rr][ \t]+([A-Za-z0-9._~+/-]{16,}=*)/g;
+const SECRET_EDGE_RE = /[A-Za-z0-9_-]/;
+
+function secretBoundaryOk(text: string, start: number, end: number): boolean {
+  return (
+    !(start > 0 && SECRET_EDGE_RE.test(text.charAt(start - 1))) &&
+    !(end < text.length && SECRET_EDGE_RE.test(text.charAt(end)))
+  );
+}
+
+function bearerCredentialValid(value: string): boolean {
+  return /\d/.test(value) || /[A-Z]/.test(value.slice(1));
+}
+
+function scrubSecret(text: string): { text: string; count: number } {
+  const prefixed = replaceMatches(
+    text,
+    SECRET_PREFIX_RE,
+    "[SECRET]",
+    undefined,
+    false,
+    (t, s, e) => (secretBoundaryOk(t, s, e) ? e : s),
+  );
+  const src = prefixed.text;
+  let count = prefixed.count;
+  let out = "";
+  let last = 0;
+  const re = cloneRegExp(BEARER_RE);
+  for (let m = re.exec(src); m !== null; m = re.exec(src)) {
+    if (m.index > 0 && SECRET_EDGE_RE.test(src.charAt(m.index - 1))) continue;
+    const cred = m[1] ?? "";
+    if (!bearerCredentialValid(cred)) continue;
+    const credStart = m.index + m[0].length - cred.length;
+    const r = mask("[SECRET]", cred);
+    out += src.slice(last, credStart) + r.text;
+    last = m.index + m[0].length;
+    if (r.masked) count += 1;
+  }
+  if (last === 0) return { text: src, count };
+  return { text: out + src.slice(last), count };
+}
+
+export const secretDetector: Detector = { type: "secret", scrub: scrubSecret };
+
 export const UNIVERSAL_DETECTORS: readonly Detector[] = [
+  secretDetector,
   emailDetector,
   ibanDetector,
   creditCardDetector,

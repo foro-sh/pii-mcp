@@ -1,6 +1,6 @@
 """Language packs and scrub walk for pattern-based detectors.
 
-Universal detectors (email, IBAN, credit card, BIC, MAC, IMEI, IP, location)
+Universal detectors (secret, email, IBAN, credit card, BIC, MAC, IMEI, IP, location)
 always run. Locale packs add national IDs / phone shapes / NL and UK postcodes /
 kentekens / VAT IDs / passport numbers. Counts always include every
 ``PiiType`` key (0 when unused). ``person`` stays 0 until key-aware masking
@@ -42,8 +42,10 @@ from dataclasses import dataclass
 from typing import Any, Literal, TypedDict
 
 from pii_mcp.detectors import (
+    SCRUB_OPTIONS,
     UNIVERSAL_DETECTORS,
     Detector,
+    ScrubOptions,
     bsn_detector,
     de_passport_detector,
     de_vat_detector,
@@ -84,6 +86,7 @@ PiiType = Literal[
     "person",
     "address",
     "license_plate",
+    "secret",
 ]
 
 PII_TYPES: tuple[PiiType, ...] = (
@@ -104,6 +107,7 @@ PII_TYPES: tuple[PiiType, ...] = (
     "person",
     "address",
     "license_plate",
+    "secret",
 )
 
 PiiCounts = dict[PiiType, int]
@@ -208,6 +212,28 @@ def _normalize_languages(languages: Sequence[str] | None) -> tuple[LanguageCode,
     return tuple(out)
 
 
+def _normalize_types(types: Sequence[str] | None) -> frozenset[str] | None:
+    if types is None:
+        return None
+    out: set[str] = set()
+    for raw in types:
+        kind = raw.lower()
+        if kind not in PII_TYPES:
+            raise ValueError(f"unknown type {raw!r}; supported: {sorted(PII_TYPES)}")
+        out.add(kind)
+    return frozenset(out)
+
+
+def _native_kwargs(
+    languages: Sequence[str] | None,
+    types: Sequence[str] | None,
+    allow: Sequence[str] | None,
+) -> dict[str, list[str]]:
+    """Only the options that are set, so an older native module without ``types`` / ``allow`` still works."""
+    given = {"languages": languages, "types": types, "allow": allow}
+    return {k: list(v) for k, v in given.items() if v is not None}
+
+
 def _detectors_for(languages: Sequence[str] | None) -> tuple[Detector, ...]:
     """Build ordered detector list for ``languages`` (see module docstring)."""
     langs = _normalize_languages(languages)
@@ -288,9 +314,17 @@ def scrub_text(
     text: str,
     *,
     languages: Sequence[str] | None = None,
+    types: Sequence[str] | None = None,
+    allow: Sequence[str] | None = None,
     _check_size: bool = True,
 ) -> ScrubTextResult:
     """Mask pattern-detectable PII in a string. Returns ``{text, found, counts}``.
+
+    ``types`` limits masking to those ``PiiType`` names (case-insensitive;
+    ``None`` = all, empty = none; unknown names raise ``ValueError``).
+    ``allow`` lists literal values never masked, compared case-insensitively
+    to the whole detected span; it never exempts a ``secret``. A value left
+    unmasked by either option still shields its span from later detectors.
 
     Raises ``PiiScrubError`` when ``_check_size`` and input exceeds
     ``MAX_SCRUB_BYTES``.
@@ -301,10 +335,8 @@ def scrub_text(
     if _resolve_backend() == "native" and _check_size:
         assert _native_mod is not None
         try:
-            if languages is None:
-                return dict(_native_mod.scrub_text(text))
             return dict(
-                _native_mod.scrub_text(text, languages=list(languages))
+                _native_mod.scrub_text(text, **_native_kwargs(languages, types, allow))
             )
         except Exception as exc:  # noqa: BLE001 — remap native errors
             _raise_native_error(exc)
@@ -315,11 +347,23 @@ def scrub_text(
             f"scrub input exceeds the {MAX_SCRUB_BYTES}-byte size cap"
         )
 
+    type_set = _normalize_types(types)
+    options = (
+        ScrubOptions(text, type_set, frozenset(v.lower() for v in allow or ()))
+        if type_set is not None or allow
+        else None
+    )
     counts = empty_pii_counts()
     out = text
-    for detector in _detectors_for(languages):
-        out, n = detector.scrub(out)
-        counts[detector.type] += n
+    token = SCRUB_OPTIONS.set(options)
+    try:
+        for detector in _detectors_for(languages):
+            out, n = detector.scrub(out)
+            counts[detector.type] += n
+    finally:
+        SCRUB_OPTIONS.reset(token)
+    if options is not None:
+        out = options.restore(out)
     return {"text": out, "found": total_pii_count(counts) > 0, "counts": counts}
 
 
@@ -328,24 +372,28 @@ def _scrub_walk(
     counts: PiiCounts,
     depth: int,
     languages: Sequence[str] | None,
+    types: Sequence[str] | None,
+    allow: Sequence[str] | None,
 ) -> Any:
     """Recurse JSON-like values; string leaves are scrubbed (size already checked)."""
     if depth > MAX_DEPTH:
         raise PiiScrubError(f"payload nests past the {MAX_DEPTH}-level scrub limit")
     if isinstance(value, str):
-        result = scrub_text(value, languages=languages, _check_size=False)
+        result = scrub_text(
+            value, languages=languages, types=types, allow=allow, _check_size=False
+        )
         for t in PII_TYPES:
             counts[t] += result["counts"][t]
         return result["text"]
     if isinstance(value, list):
-        return [_scrub_walk(item, counts, depth + 1, languages) for item in value]
+        return [_scrub_walk(item, counts, depth + 1, languages, types, allow) for item in value]
     if isinstance(value, dict):
         skip = _binary_key(value)
         return {
             key: (
                 item
                 if key == skip
-                else _scrub_walk(item, counts, depth + 1, languages)
+                else _scrub_walk(item, counts, depth + 1, languages, types, allow)
             )
             for key, item in value.items()
         }
@@ -360,21 +408,24 @@ def scrub_payload(
     payload: Any,
     *,
     languages: Sequence[str] | None = None,
+    types: Sequence[str] | None = None,
+    allow: Sequence[str] | None = None,
 ) -> ScrubPayloadResult:
     """Walk a JSON-like payload and mask string leaves. Fails closed on errors.
 
     MCP binary fields (``data`` on image/audio blocks, ``blob`` on resource
     contents) are left unchanged; see the module docstring. Size is enforced
     on scrubbed string leaves before the walk. Non-plain objects and
-    oversize input raise ``PiiScrubError``.
+    oversize input raise ``PiiScrubError``. ``types`` / ``allow`` apply to
+    every string leaf as in ``scrub_text``.
     """
     if _resolve_backend() == "native":
         assert _native_mod is not None
         try:
-            if languages is None:
-                return dict(_native_mod.scrub_payload(payload))
             return dict(
-                _native_mod.scrub_payload(payload, languages=list(languages))
+                _native_mod.scrub_payload(
+                    payload, **_native_kwargs(languages, types, allow)
+                )
             )
         except Exception as exc:  # noqa: BLE001 — remap native errors
             _raise_native_error(exc)
@@ -384,8 +435,9 @@ def scrub_payload(
         raise PiiScrubError(
             f"scrub input exceeds the {MAX_SCRUB_BYTES}-byte size cap"
         )
+    _normalize_types(types)
     counts = empty_pii_counts()
-    scrubbed = _scrub_walk(payload, counts, 0, languages)
+    scrubbed = _scrub_walk(payload, counts, 0, languages, types, allow)
     return {
         "payload": scrubbed,
         "found": total_pii_count(counts) > 0,

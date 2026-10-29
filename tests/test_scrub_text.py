@@ -1077,6 +1077,7 @@ class TestMultiple:
             "person": 0,
             "address": 0,
             "license_plate": 0,
+            "secret": 0,
         }
 
     def test_detector_order_card_not_phone(self) -> None:
@@ -1084,6 +1085,73 @@ class TestMultiple:
         assert result["text"] == "card [CREDIT_CARD]"
         assert result["counts"]["phone"] == 0
         assert result["counts"]["bsn"] == 0
+
+
+class TestSecret:
+    """Fake keys are built by concatenation so no literal trips push scanners."""
+
+    @pytest.mark.parametrize(
+        "key",
+        [
+            "sk-ant-api03-" + "A1b2" * 10,
+            "sk-proj-" + "x9" * 12,
+            "ghp_" + "a" * 36,
+            "gho_" + "Z" * 40,
+            "github_pat_" + "B" * 22,
+            "AKIA" + "ABCDEFGHIJ234567",
+            "ASIA" + "Q" * 16,
+            "xoxb-" + "123456789012-abc",
+            "sk_" + "live_" + "4" * 24,
+            "rk_" + "test_" + "z" * 16,
+            "AIza" + "S" * 35,
+            "foro_pat_" + "Ab3" * 15,
+            "foro_ort_" + "_-x" * 10,
+            "eyJ" + "hbGciOiJI" * 2 + ".eyJ" + "zdWIiOiIx" * 2 + "." + "d" * 43,
+        ],
+    )
+    def test_masks_prefixed_key(self, key: str) -> None:
+        result = scrub_text(f"token={key} next")
+        assert result["text"] == "token=[SECRET] next"
+        assert result["counts"]["secret"] == 1
+
+    def test_masks_bearer_credential_keeps_scheme(self) -> None:
+        result = scrub_text("Authorization: Bearer abc123def456ghi789jkl012")
+        assert result["text"] == "Authorization: Bearer [SECRET]"
+        assert result["counts"]["secret"] == 1
+
+    def test_bearer_any_case_and_padding(self) -> None:
+        result = scrub_text("authorization: BEARER AbCdEfGhIjKlMnOpQr==")
+        assert result["text"] == "authorization: BEARER [SECRET]"
+
+    def test_bearer_prefixed_key_counted_once(self) -> None:
+        result = scrub_text("Bearer " + "sk-" + "k" * 30)
+        assert result["text"] == "Bearer [SECRET]"
+        assert result["counts"]["secret"] == 1
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "the bearer responsibilities apply",
+            "Bearer abc123",
+            "risk-" + "a" * 30,
+            "task_" + "live_" + "4" * 24,
+            "xsk-" + "a" * 25,
+            "AKIA" + "ABCDEFGHIJ2345678",
+            "ghp_" + "a" * 35,
+            "foro_cl_" + "a" * 30,
+            "Tbearer abc123def456ghi789jkl012",
+            "Bearer \u212abc123def456ghi789jkl",
+        ],
+    )
+    def test_leaves_lookalikes(self, text: str) -> None:
+        result = scrub_text(text)
+        assert result["text"] == text
+        assert result["counts"]["secret"] == 0
+
+    def test_runs_before_phone_and_ids(self) -> None:
+        key = "sk-" + "0612345678" * 3
+        result = scrub_text(f"{key} and +31 6 12345678", languages=["en", "nl"])
+        assert result["text"] == "[SECRET] and [PHONE]"
 
 
 class TestSizeCap:

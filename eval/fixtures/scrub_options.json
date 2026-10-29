@@ -1,0 +1,193 @@
+[
+  {
+    "name": "no options keeps current behaviour",
+    "text": "a@b.com 123456782",
+    "options": {},
+    "expected": {
+      "text": "[EMAIL] [BSN]",
+      "counts": {
+        "email": 1,
+        "bsn": 1
+      }
+    }
+  },
+  {
+    "name": "types masks only the listed categories",
+    "text": "a@b.com 123456782",
+    "options": {
+      "types": [
+        "email"
+      ]
+    },
+    "expected": {
+      "text": "[EMAIL] 123456782",
+      "counts": {
+        "email": 1
+      }
+    }
+  },
+  {
+    "name": "a disabled category shields its span from later detectors",
+    "text": "123456782@example.com",
+    "options": {
+      "types": [
+        "bsn"
+      ]
+    },
+    "expected": {
+      "text": "123456782@example.com",
+      "counts": {}
+    }
+  },
+  {
+    "name": "empty types masks nothing",
+    "text": "a@b.com 123456782",
+    "options": {
+      "types": []
+    },
+    "expected": {
+      "text": "a@b.com 123456782",
+      "counts": {}
+    }
+  },
+  {
+    "name": "types is case-insensitive and ignores duplicates",
+    "text": "a@b.com 123456782",
+    "options": {
+      "types": [
+        "EMAIL",
+        "email"
+      ]
+    },
+    "expected": {
+      "text": "[EMAIL] 123456782",
+      "counts": {
+        "email": 1
+      }
+    }
+  },
+  {
+    "name": "allow matches a detected value case-insensitively",
+    "text": "support@foro.sh and jan@example.com",
+    "options": {
+      "allow": [
+        "Support@Foro.sh"
+      ]
+    },
+    "expected": {
+      "text": "support@foro.sh and [EMAIL]",
+      "counts": {
+        "email": 1
+      }
+    }
+  },
+  {
+    "name": "allow shields its span from later detectors",
+    "text": "123456782@example.com",
+    "options": {
+      "allow": [
+        "123456782@example.com"
+      ]
+    },
+    "expected": {
+      "text": "123456782@example.com",
+      "counts": {}
+    }
+  },
+  {
+    "name": "allow is an exact match, not a substring",
+    "text": "a@b.com",
+    "options": {
+      "allow": [
+        "a@b"
+      ]
+    },
+    "expected": {
+      "text": "[EMAIL]",
+      "counts": {
+        "email": 1
+      }
+    }
+  },
+  {
+    "name": "allow never exempts a secret",
+    "text": "token=foro_pat_Ab3Ab3Ab3Ab3Ab3Ab3Ab3Ab3Ab3Ab3Ab3Ab3Ab3Ab3Ab3 next",
+    "options": {
+      "allow": [
+        "foro_pat_Ab3Ab3Ab3Ab3Ab3Ab3Ab3Ab3Ab3Ab3Ab3Ab3Ab3Ab3Ab3"
+      ]
+    },
+    "expected": {
+      "text": "token=[SECRET] next",
+      "counts": {
+        "secret": 1
+      }
+    }
+  },
+  {
+    "name": "private-use characters in the input survive",
+    "text": " a@b.com ",
+    "options": {
+      "allow": [
+        "a@b.com"
+      ]
+    },
+    "expected": {
+      "text": " a@b.com ",
+      "counts": {}
+    }
+  },
+  {
+    "name": "types and allow combine",
+    "text": "a@b.com c@d.com 123456782",
+    "options": {
+      "types": [
+        "email"
+      ],
+      "allow": [
+        "c@d.com"
+      ]
+    },
+    "expected": {
+      "text": "[EMAIL] c@d.com 123456782",
+      "counts": {
+        "email": 1
+      }
+    }
+  },
+  {
+    "name": "unknown type is rejected",
+    "text": "a@b.com",
+    "options": {
+      "types": [
+        "nope"
+      ]
+    },
+    "error": "unknown type 'nope'"
+  },
+  {
+    "name": "payload applies options to every string leaf",
+    "payload": {
+      "a": "a@b.com",
+      "b": [
+        "123456782"
+      ]
+    },
+    "options": {
+      "types": [
+        "bsn"
+      ]
+    },
+    "expected": {
+      "payload": {
+        "a": "a@b.com",
+        "b": [
+          "[BSN]"
+        ]
+      },
+      "counts": {
+        "bsn": 1
+      }
+    }
+  }
+]
