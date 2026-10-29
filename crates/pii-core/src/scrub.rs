@@ -14,7 +14,9 @@
 
 use crate::detectors::{detectors_for, PiiCategory};
 use std::borrow::Cow;
-use std::collections::BTreeMap;
+use std::cell::RefCell;
+use std::collections::{BTreeMap, HashSet};
+use std::rc::Rc;
 use thiserror::Error;
 
 pub const MAX_SCRUB_BYTES: usize = 32 * 1024 * 1024;
@@ -126,6 +128,167 @@ pub fn normalize_languages(
     }
 }
 
+/// Per-call scrub options. `Default` is today's behaviour: default
+/// languages, every type, nothing allowed.
+///
+/// `types`: `None` masks every [`PII_TYPES`] entry, `Some(vec![])` masks
+/// nothing; names are lower-cased and de-duplicated. `allow`: literal values
+/// never masked, compared lower-cased and exactly against the detected span;
+/// never applies to `secret`. A type not in `types` or an allowed value is
+/// *protected*: left in place, not counted, and still shielded from every
+/// later detector.
+#[derive(Debug, Clone, Default)]
+pub struct ScrubOptions {
+    pub languages: Option<Vec<String>>,
+    pub types: Option<Vec<String>>,
+    pub allow: Vec<String>,
+}
+
+/// Normalized `types` / `allow`; `None` when neither option is set.
+#[derive(Debug)]
+struct Filter {
+    types: Option<Vec<&'static str>>,
+    allow: HashSet<String>,
+}
+
+fn normalize_filter(opts: &ScrubOptions) -> Result<Option<Rc<Filter>>, PiiScrubError> {
+    if opts.types.is_none() && opts.allow.is_empty() {
+        return Ok(None);
+    }
+    let types = match &opts.types {
+        None => None,
+        Some(list) => {
+            let mut out: Vec<&'static str> = Vec::new();
+            for raw in list {
+                let lower = raw.to_lowercase();
+                let Some(t) = PII_TYPES.iter().copied().find(|t| *t == lower) else {
+                    let mut supported = PII_TYPES.to_vec();
+                    supported.sort_unstable();
+                    let supported: Vec<String> =
+                        supported.iter().map(|t| format!("'{t}'")).collect();
+                    return Err(PiiScrubError::new(format!(
+                        "unknown type '{raw}'; supported: [{}]",
+                        supported.join(", ")
+                    )));
+                };
+                if !out.contains(&t) {
+                    out.push(t);
+                }
+            }
+            Some(out)
+        }
+    };
+    let allow = opts.allow.iter().map(|v| v.to_lowercase()).collect();
+    Ok(Some(Rc::new(Filter { types, allow })))
+}
+
+const PUA_START: u32 = 0xE000;
+const PUA_LEN: usize = 0xF8FF - 0xE000 + 1;
+
+fn pua_index(c: char) -> Option<usize> {
+    (c as u32)
+        .checked_sub(PUA_START)
+        .map(|i| i as usize)
+        .filter(|&i| i < PUA_LEN)
+}
+
+fn pua_char(i: usize) -> char {
+    char::from_u32(PUA_START + i as u32).expect("private-use code point")
+}
+
+/// State for one `scrub_text` call with options set. `sentinel` is the first
+/// private-use code point absent from the input (`None`: all are used, which
+/// errors only once something is protected).
+struct CallCtx {
+    filter: Rc<Filter>,
+    sentinel: Option<char>,
+    stash: Vec<String>,
+    failed: Option<&'static str>,
+}
+
+thread_local! {
+    static CTX: RefCell<Option<CallCtx>> = const { RefCell::new(None) };
+}
+
+/// Clears [`CTX`] on drop so no state outlives its call, even on a panic.
+struct CtxGuard;
+
+impl Drop for CtxGuard {
+    fn drop(&mut self) {
+        CTX.with(|c| c.borrow_mut().take());
+    }
+}
+
+/// Write `placeholder` for a detected `value`, or a protecting token.
+///
+/// Returns `(replacement, masked)`; callers count the hit only when
+/// `masked`. Outside a call with options this is `(placeholder, true)`. A
+/// protected value becomes `S + c1 + c2` (stash index `i` as
+/// `U+E000 + i / 6400`, `U+E000 + i % 6400`), restored after all detectors ran.
+pub(crate) fn emit<'a>(placeholder: &'a str, value: &str) -> (Cow<'a, str>, bool) {
+    CTX.with(|c| {
+        let mut slot = c.borrow_mut();
+        let Some(ctx) = slot.as_mut() else {
+            return (Cow::Borrowed(placeholder), true);
+        };
+        let kind = placeholder
+            .trim_start_matches('[')
+            .trim_end_matches(']')
+            .to_ascii_lowercase();
+        let disabled = ctx
+            .filter
+            .types
+            .as_ref()
+            .is_some_and(|t| !t.contains(&kind.as_str()));
+        let allowed = kind != "secret" && ctx.filter.allow.contains(&value.to_lowercase());
+        if !(disabled || allowed) {
+            return (Cow::Borrowed(placeholder), true);
+        }
+        let i = ctx.stash.len();
+        let Some(sentinel) = ctx.sentinel else {
+            ctx.failed = Some("no unused private-use character to protect a value with");
+            return (Cow::Borrowed(placeholder), true);
+        };
+        if i >= PUA_LEN * PUA_LEN {
+            ctx.failed = Some("too many protected values in one string");
+            return (Cow::Borrowed(placeholder), true);
+        }
+        ctx.stash.push(value.to_owned());
+        let token: String = [sentinel, pua_char(i / PUA_LEN), pua_char(i % PUA_LEN)]
+            .into_iter()
+            .collect();
+        (Cow::Owned(token), false)
+    })
+}
+
+fn free_sentinel(text: &str) -> Option<char> {
+    let mut used = vec![false; PUA_LEN];
+    for i in text.chars().filter_map(pua_index) {
+        used[i] = true;
+    }
+    used.iter().position(|u| !u).map(pua_char)
+}
+
+fn restore(text: &str, sentinel: char, stash: &[String]) -> String {
+    let chars: Vec<char> = text.chars().collect();
+    let mut out = String::with_capacity(text.len());
+    let mut k = 0;
+    while k < chars.len() {
+        if chars[k] == sentinel && k + 2 < chars.len() {
+            if let (Some(hi), Some(lo)) = (pua_index(chars[k + 1]), pua_index(chars[k + 2])) {
+                if let Some(orig) = stash.get(hi * PUA_LEN + lo) {
+                    out.push_str(orig);
+                    k += 3;
+                    continue;
+                }
+            }
+        }
+        out.push(chars[k]);
+        k += 1;
+    }
+    out
+}
+
 fn bump_count(counts: &mut PiiCounts, cat: PiiCategory, n: u32) {
     if n == 0 {
         return;
@@ -142,12 +305,45 @@ pub fn scrub_text_langs(
     langs: &[LanguageCode],
     check_size: bool,
 ) -> Result<ScrubResult, PiiScrubError> {
+    scrub_text_filtered(text, langs, None, check_size)
+}
+
+fn scrub_text_filtered(
+    text: &str,
+    langs: &[LanguageCode],
+    filter: Option<&Rc<Filter>>,
+    check_size: bool,
+) -> Result<ScrubResult, PiiScrubError> {
     if check_size && text.len() > MAX_SCRUB_BYTES {
         return Err(PiiScrubError::new(format!(
             "scrub input exceeds the {MAX_SCRUB_BYTES}-byte size cap"
         )));
     }
+    let Some(filter) = filter else {
+        return Ok(run_detectors(text, langs));
+    };
+    let sentinel = free_sentinel(text);
+    let _guard = CtxGuard;
+    CTX.with(|c| {
+        *c.borrow_mut() = Some(CallCtx {
+            filter: Rc::clone(filter),
+            sentinel,
+            stash: Vec::new(),
+            failed: None,
+        })
+    });
+    let mut result = run_detectors(text, langs);
+    let ctx = CTX.with(|c| c.borrow_mut().take()).expect("scrub context");
+    if let Some(msg) = ctx.failed {
+        return Err(PiiScrubError::new(msg));
+    }
+    if let (Some(s), false) = (ctx.sentinel, ctx.stash.is_empty()) {
+        result.text = restore(&result.text, s, &ctx.stash);
+    }
+    Ok(result)
+}
 
+fn run_detectors(text: &str, langs: &[LanguageCode]) -> ScrubResult {
     let mut counts = empty_pii_counts();
     let mut out: Cow<'_, str> = Cow::Borrowed(text);
     for detector in detectors_for(langs) {
@@ -157,11 +353,11 @@ pub fn scrub_text_langs(
             out = Cow::Owned(s);
         }
     }
-    Ok(ScrubResult {
+    ScrubResult {
         found: total_pii_count(&counts) > 0,
         text: out.into_owned(),
         counts,
-    })
+    }
 }
 
 /// Mask pattern-detectable PII in a string.
@@ -172,6 +368,17 @@ pub fn scrub_text(
 ) -> Result<ScrubResult, PiiScrubError> {
     let langs = normalize_languages(languages)?;
     scrub_text_langs(text, &langs, check_size)
+}
+
+/// Mask pattern-detectable PII in a string with [`ScrubOptions`].
+pub fn scrub_text_with(
+    text: &str,
+    opts: &ScrubOptions,
+    check_size: bool,
+) -> Result<ScrubResult, PiiScrubError> {
+    let langs = normalize_languages(opts.languages.as_deref())?;
+    let filter = normalize_filter(opts)?;
+    scrub_text_filtered(text, &langs, filter.as_ref(), check_size)
 }
 
 #[cfg(feature = "payload")]
@@ -234,6 +441,7 @@ mod payload {
         counts: &mut PiiCounts,
         depth: usize,
         langs: &[LanguageCode],
+        filter: Option<&Rc<Filter>>,
     ) -> Result<Value, PiiScrubError> {
         if depth > MAX_DEPTH {
             return Err(PiiScrubError::new(format!(
@@ -242,7 +450,7 @@ mod payload {
         }
         match value {
             Value::String(s) => {
-                let result = scrub_text_langs(&s, langs, false)?;
+                let result = scrub_text_filtered(&s, langs, filter, false)?;
                 for t in PII_TYPES {
                     if let Some(slot) = counts.get_mut(*t) {
                         *slot += result.counts.get(*t).copied().unwrap_or(0);
@@ -253,7 +461,7 @@ mod payload {
             Value::Array(items) => {
                 let mut out = Vec::with_capacity(items.len());
                 for item in items {
-                    out.push(scrub_walk(item, counts, depth + 1, langs)?);
+                    out.push(scrub_walk(item, counts, depth + 1, langs, filter)?);
                 }
                 Ok(Value::Array(out))
             }
@@ -264,7 +472,7 @@ mod payload {
                     if skip.as_deref() == Some(key.as_str()) {
                         out.insert(key, item);
                     } else {
-                        out.insert(key, scrub_walk(item, counts, depth + 1, langs)?);
+                        out.insert(key, scrub_walk(item, counts, depth + 1, langs, filter)?);
                     }
                 }
                 Ok(Value::Object(out))
@@ -286,14 +494,28 @@ mod payload {
         payload: Value,
         languages: Option<&[String]>,
     ) -> Result<PayloadScrubResult, PiiScrubError> {
+        let opts = ScrubOptions {
+            languages: languages.map(<[String]>::to_vec),
+            ..ScrubOptions::default()
+        };
+        scrub_payload_with(payload, &opts)
+    }
+
+    /// [`scrub_payload`] with [`ScrubOptions`]; each string leaf is scrubbed
+    /// on its own, as [`scrub_text_with`] would.
+    pub fn scrub_payload_with(
+        payload: Value,
+        opts: &ScrubOptions,
+    ) -> Result<PayloadScrubResult, PiiScrubError> {
         if payload_string_bytes(&payload, 0)? > MAX_SCRUB_BYTES {
             return Err(PiiScrubError::new(format!(
                 "scrub input exceeds the {MAX_SCRUB_BYTES}-byte size cap"
             )));
         }
-        let langs = normalize_languages(languages)?;
+        let langs = normalize_languages(opts.languages.as_deref())?;
+        let filter = normalize_filter(opts)?;
         let mut counts = empty_pii_counts();
-        let scrubbed = scrub_walk(payload, &mut counts, 0, &langs)?;
+        let scrubbed = scrub_walk(payload, &mut counts, 0, &langs, filter.as_ref())?;
         Ok(PayloadScrubResult {
             found: total_pii_count(&counts) > 0,
             payload: scrubbed,
@@ -303,7 +525,7 @@ mod payload {
 }
 
 #[cfg(feature = "payload")]
-pub use payload::{scrub_payload, PayloadScrubResult};
+pub use payload::{scrub_payload, scrub_payload_with, PayloadScrubResult};
 
 #[cfg(test)]
 mod tests {
@@ -886,6 +1108,57 @@ mod tests {
             let r = scrub_text(text, Some(&langs), true).unwrap();
             assert_eq!(r.text, expected, "{text:?}");
         }
+    }
+
+    #[cfg(feature = "payload")]
+    #[test]
+    fn shared_scrub_options_cases() {
+        use serde_json::Value;
+        let strs = |v: &Value| -> Vec<String> {
+            v.as_array().unwrap().iter().map(|s| s.as_str().unwrap().to_owned()).collect()
+        };
+        let cases: Vec<Value> =
+            serde_json::from_str(include_str!("../../../eval/fixtures/scrub_options.json")).unwrap();
+        assert!(!cases.is_empty());
+        for case in &cases {
+            let name = case["name"].as_str().unwrap();
+            let o = &case["options"];
+            let opts = ScrubOptions {
+                languages: None,
+                types: o.get("types").map(strs),
+                allow: o.get("allow").map(strs).unwrap_or_default(),
+            };
+            let outcome = match case.get("payload") {
+                Some(p) => scrub_payload_with(p.clone(), &opts).map(|r| (r.payload, r.counts)),
+                None => scrub_text_with(case["text"].as_str().unwrap(), &opts, true)
+                    .map(|r| (Value::String(r.text), r.counts)),
+            };
+            if let Some(err) = case.get("error") {
+                let msg = outcome.expect_err(name).to_string();
+                assert!(msg.contains(err.as_str().unwrap()), "{name}: {msg}");
+                continue;
+            }
+            let (got, counts) = outcome.expect(name);
+            let expected = &case["expected"];
+            assert_eq!(got, *expected.get("payload").unwrap_or(&expected["text"]), "{name}");
+            for t in PII_TYPES {
+                let want = expected["counts"].get(*t).and_then(Value::as_u64).unwrap_or(0);
+                assert_eq!(u64::from(counts[*t]), want, "{name}: {t}");
+            }
+        }
+    }
+
+    #[test]
+    fn protect_errors_only_without_a_free_sentinel() {
+        let all: String = (0..PUA_LEN).map(pua_char).collect();
+        let allow = ScrubOptions { allow: vec!["a@b.com".into()], ..Default::default() };
+        let r = scrub_text_with(&format!("{all} c@d.com"), &allow, true).unwrap();
+        assert!(r.text.ends_with(" [EMAIL]"));
+        assert!(scrub_text_with(&format!("{all} a@b.com"), &allow, true).is_err());
+        assert_eq!(
+            scrub_text_with("x a@b.com", &ScrubOptions::default(), true).unwrap().text,
+            "x [EMAIL]"
+        );
     }
 
     #[test]
