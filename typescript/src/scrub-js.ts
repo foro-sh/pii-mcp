@@ -54,6 +54,7 @@ import {
   streetNlDetector,
   taxIdDetector,
   ukPostcodeDetector,
+  withMaskPolicy,
   type Detector,
 } from "./detectors.js";
 import {
@@ -109,6 +110,27 @@ export function normalizeLanguages(
       seen.add(code);
       out.push(code as LanguageCode);
     }
+  }
+  return out;
+}
+
+const KNOWN_TYPES = new Set<string>(PII_TYPES);
+
+/** ``null`` means every type; otherwise the lower-cased, de-duplicated set to mask. */
+export function normalizeTypes(
+  types: readonly string[] | null | undefined,
+): ReadonlySet<PiiType> | null {
+  if (types === undefined || types === null) {
+    return null;
+  }
+  const out = new Set<PiiType>();
+  for (const raw of types) {
+    const type = raw.toLowerCase();
+    if (!KNOWN_TYPES.has(type)) {
+      const supported = [...KNOWN_TYPES].sort().map((t) => `'${t}'`).join(", ");
+      throw new Error(`unknown type '${raw}'; supported: [${supported}]`);
+    }
+    out.add(type as PiiType);
   }
   return out;
 }
@@ -219,12 +241,23 @@ function isJsonScalar(value: unknown): value is null | boolean | number {
   return value === null || typeof value === "boolean" || typeof value === "number";
 }
 
-export interface ScrubTextJsOptions {
+/**
+ * ``types`` limits masking to those categories (default: all). ``allow`` lists
+ * values that are never masked, compared case-insensitively to the whole
+ * detected value; it never exempts a ``secret``. Unmasked hits are not counted
+ * but still shield their text from later detectors.
+ */
+export interface MaskOptions {
+  types?: readonly string[] | null | undefined;
+  allow?: readonly string[] | null | undefined;
+}
+
+export interface ScrubTextJsOptions extends MaskOptions {
   languages?: readonly string[] | null | undefined;
   checkSize?: boolean;
 }
 
-export interface ScrubPayloadJsOptions {
+export interface ScrubPayloadJsOptions extends MaskOptions {
   languages?: readonly string[] | null | undefined;
 }
 
@@ -244,12 +277,20 @@ export function scrubTextJs(
   }
 
   const counts = emptyPiiCounts();
-  let out = text;
-  for (const detector of detectorsFor(options.languages)) {
-    const result = detector.scrub(out);
-    out = result.text;
-    counts[detector.type] += result.count;
-  }
+  const detectors = detectorsFor(options.languages);
+  const run = (): string => {
+    let out = text;
+    for (const detector of detectors) {
+      const result = detector.scrub(out);
+      out = result.text;
+      counts[detector.type] += result.count;
+    }
+    return out;
+  };
+  const types = normalizeTypes(options.types);
+  const allow = new Set((options.allow ?? []).map((value) => value.toLowerCase()));
+  const out =
+    types === null && allow.size === 0 ? run() : withMaskPolicy(text, types, allow, run);
   return { text: out, found: totalPiiCount(counts) > 0, counts };
 }
 
@@ -257,27 +298,27 @@ function scrubWalk(
   value: unknown,
   counts: PiiCounts,
   depth: number,
-  languages: readonly string[] | null | undefined,
+  options: ScrubPayloadJsOptions,
 ): unknown {
   if (depth > MAX_DEPTH) {
     throw new PiiScrubError(`payload nests past the ${MAX_DEPTH}-level scrub limit`);
   }
   if (typeof value === "string") {
-    const result = scrubTextJs(value, { languages, checkSize: false });
+    const result = scrubTextJs(value, { ...options, checkSize: false });
     for (const t of PII_TYPES) {
       counts[t] += result.counts[t];
     }
     return result.text;
   }
   if (Array.isArray(value)) {
-    return value.map((item) => scrubWalk(item, counts, depth + 1, languages));
+    return value.map((item) => scrubWalk(item, counts, depth + 1, options));
   }
   if (isPlainObject(value)) {
     const out: Record<string, unknown> = {};
     const skip = binaryKey(value);
     for (const [key, item] of Object.entries(value)) {
       out[key] =
-        key === skip ? item : scrubWalk(item, counts, depth + 1, languages);
+        key === skip ? item : scrubWalk(item, counts, depth + 1, options);
     }
     return out;
   }
@@ -299,7 +340,8 @@ export function scrubPayloadJs(
     );
   }
   const counts = emptyPiiCounts();
-  const scrubbed = scrubWalk(payload, counts, 0, options.languages);
+  normalizeTypes(options.types);
+  const scrubbed = scrubWalk(payload, counts, 0, options);
   return {
     payload: scrubbed,
     found: totalPiiCount(counts) > 0,

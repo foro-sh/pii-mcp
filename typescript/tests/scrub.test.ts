@@ -1108,6 +1108,72 @@ describe("scrubText", () => {
   });
 });
 
+describe("secret", () => {
+  // Fake keys are concatenated so no literal trips push scanners.
+  it.each([
+    "sk-ant-api03-" + "A1b2".repeat(10),
+    "sk-proj-" + "x9".repeat(12),
+    "ghp_" + "a".repeat(36),
+    "gho_" + "Z".repeat(40),
+    "github_pat_" + "B".repeat(22),
+    "AKIA" + "ABCDEFGHIJ234567",
+    "ASIA" + "Q".repeat(16),
+    "xoxb-" + "123456789012-abc",
+    "sk_" + "live_" + "4".repeat(24),
+    "rk_" + "test_" + "z".repeat(16),
+    "AIza" + "S".repeat(35),
+    "foro_pat_" + "Ab3".repeat(15),
+    "foro_ort_" + "_-x".repeat(10),
+    "eyJ" + "hbGciOiJI".repeat(2) + ".eyJ" + "zdWIiOiIx".repeat(2) + "." + "d".repeat(43),
+  ])("masks prefixed key %#", (key) => {
+    const result = scrubText(`token=${key} next`);
+    expect(result.text).toBe("token=[SECRET] next");
+    expect(result.counts.secret).toBe(1);
+  });
+
+  it("masks the bearer credential and keeps the scheme", () => {
+    const result = scrubText("Authorization: Bearer abc123def456ghi789jkl012");
+    expect(result.text).toBe("Authorization: Bearer [SECRET]");
+    expect(result.counts.secret).toBe(1);
+  });
+
+  it("matches bearer in any case with padding", () => {
+    expect(scrubText("authorization: BEARER AbCdEfGhIjKlMnOpQr==").text).toBe(
+      "authorization: BEARER [SECRET]",
+    );
+  });
+
+  it("counts a prefixed key after Bearer once", () => {
+    const result = scrubText("Bearer " + "sk-" + "k".repeat(30));
+    expect(result.text).toBe("Bearer [SECRET]");
+    expect(result.counts.secret).toBe(1);
+  });
+
+  it.each([
+    "the bearer responsibilities apply",
+    "Bearer abc123",
+    "risk-" + "a".repeat(30),
+    "task_" + "live_" + "4".repeat(24),
+    "xsk-" + "a".repeat(25),
+    "AKIA" + "ABCDEFGHIJ2345678",
+    "ghp_" + "a".repeat(35),
+    "foro_cl_" + "a".repeat(30),
+    "Tbearer abc123def456ghi789jkl012",
+    "Bearer \u212abc123def456ghi789jkl",
+  ])("leaves lookalike %#", (text) => {
+    const result = scrubText(text);
+    expect(result.text).toBe(text);
+    expect(result.counts.secret).toBe(0);
+  });
+
+  it("runs before phone and ID detectors", () => {
+    const key = "sk-" + "0612345678".repeat(3);
+    expect(scrubText(`${key} and +31 6 12345678`, { languages: ["en", "nl"] }).text).toBe(
+      "[SECRET] and [PHONE]",
+    );
+  });
+});
+
 describe("scrubPayload", () => {
   it("walks nested payloads", () => {
     const result = scrubPayload({

@@ -16,7 +16,7 @@ import { randomInt, randomBytes } from "node:crypto";
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const tsRoot = join(root, "typescript");
 
-const { scrubText, usingNative, resetNativeCache } = await import(
+const { PII_TYPES, scrubText, usingNative, resetNativeCache } = await import(
   join(tsRoot, "dist/index.js")
 );
 
@@ -72,28 +72,44 @@ function noise(max = 6) {
   return out;
 }
 
+/** Returns the mixed input and the fixtures spliced into it. */
 function sample() {
   const parts = [];
+  const pii = [];
   const count = 1 + randomInt(4);
   for (let i = 0; i < count; i++) {
     const roll = randomInt(100);
     if (roll < 55) {
-      parts.push(pick(FIXTURES));
+      const value = pick(FIXTURES);
+      parts.push(value);
+      pii.push(value);
     } else if (roll < 75) {
       parts.push(noise());
     } else {
       parts.push(randomBytes(2).toString("hex"));
     }
   }
-  return parts.join("");
+  return { text: parts.join(""), pii };
 }
 
-function withBackend(backend, text) {
+/** Random ``types`` / ``allow``, so the protect path is compared too. */
+function options(pii) {
+  const opts = {};
+  if (randomInt(10) < 3) {
+    opts.types = PII_TYPES.filter(() => randomInt(2) === 0);
+  }
+  if (pii.length > 0 && randomInt(10) < 3) {
+    opts.allow = pii.filter(() => randomInt(2) === 0).map((v) => (randomInt(2) ? v.toUpperCase() : v));
+  }
+  return opts;
+}
+
+function withBackend(backend, text, opts) {
   const previous = process.env.PII_MCP_BACKEND;
   process.env.PII_MCP_BACKEND = backend;
   resetNativeCache();
   try {
-    return scrubText(text, { languages: LANGS }).text;
+    return JSON.stringify(scrubText(text, { languages: LANGS, ...opts }));
   } finally {
     if (previous === undefined) delete process.env.PII_MCP_BACKEND;
     else process.env.PII_MCP_BACKEND = previous;
@@ -123,13 +139,14 @@ function main() {
 
   let mismatches = 0;
   for (let i = 0; i < n; i++) {
-    const text = sample();
-    const js = withBackend("js", text);
-    const native = withBackend("native", text);
+    const { text, pii } = sample();
+    const opts = options(pii);
+    const js = withBackend("js", text, opts);
+    const native = withBackend("native", text, opts);
     if (js !== native) {
       mismatches += 1;
       if (mismatches <= 10) {
-        console.log(`${JSON.stringify(text)}\n  js ${JSON.stringify(js)}\n  native ${JSON.stringify(native)}`);
+        console.log(`${JSON.stringify(text)} ${JSON.stringify(opts)}\n  js ${JSON.stringify(js)}\n  native ${JSON.stringify(native)}`);
       }
     }
   }
