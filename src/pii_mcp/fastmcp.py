@@ -26,6 +26,7 @@ from pii_mcp.scrub import (
     PiiCounts,
     PiiScrubError,
     ScrubReport,
+    _normalize_types,
     empty_pii_counts,
     merge_counts,
     scrub_payload,
@@ -46,15 +47,14 @@ def _report_from_counts(counts: PiiCounts) -> ScrubReport:
 
 def _scrub_text_blocks(
     blocks: list[Any],
-    *,
-    languages: Sequence[str] | None,
+    **options: Any,
 ) -> tuple[list[Any], PiiCounts]:
     counts = empty_pii_counts()
     out: list[Any] = []
     for block in blocks:
         text = getattr(block, "text", None)
         if isinstance(text, str):
-            result = scrub_text(text, languages=languages)
+            result = scrub_text(text, **options)
             for t, n in result["counts"].items():
                 counts[t] += n
             if hasattr(block, "model_copy"):
@@ -68,16 +68,15 @@ def _scrub_text_blocks(
 
 def _scrub_meta(
     meta: Any,
-    *,
-    languages: Sequence[str] | None,
+    **options: Any,
 ) -> tuple[Any, PiiCounts]:
     """Scrub JSON-like meta; leave None as-is. Fail closed via scrub_payload."""
     if meta is None:
         return None, empty_pii_counts()
     if isinstance(meta, str):
-        result = scrub_text(meta, languages=languages)
+        result = scrub_text(meta, **options)
         return result["text"], result["counts"]
-    result = scrub_payload(meta, languages=languages)
+    result = scrub_payload(meta, **options)
     return result["payload"], result["counts"]
 
 
@@ -88,12 +87,17 @@ class PiiScrubMiddleware(Middleware):
         self,
         *,
         languages: Sequence[str] | None = None,
+        types: Sequence[str] | None = None,
+        allow: Sequence[str] | None = None,
         on_scrub: OnScrub | None = None,
     ) -> None:
         super().__init__()
-        self._languages: Sequence[str] = (
-            tuple(languages) if languages is not None else DEFAULT_LANGUAGES
-        )
+        _normalize_types(types)
+        self._options: dict[str, Sequence[str] | None] = {
+            "languages": tuple(languages) if languages is not None else DEFAULT_LANGUAGES,
+            "types": tuple(types) if types is not None else None,
+            "allow": tuple(allow) if allow is not None else None,
+        }
         self._on_scrub = on_scrub
 
     def _emit(self, counts: PiiCounts) -> None:
@@ -116,19 +120,19 @@ class PiiScrubMiddleware(Middleware):
         parts: list[PiiCounts] = []
         content = list(result.content or [])
         new_content, c_counts = _scrub_text_blocks(
-            content, languages=self._languages
+            content, **self._options
         )
         parts.append(c_counts)
 
         structured = result.structured_content
         new_structured = structured
         if structured is not None:
-            scrubbed = scrub_payload(structured, languages=self._languages)
+            scrubbed = scrub_payload(structured, **self._options)
             new_structured = scrubbed["payload"]
             parts.append(scrubbed["counts"])
 
         new_meta, meta_counts = _scrub_meta(
-            result.meta, languages=self._languages
+            result.meta, **self._options
         )
         parts.append(meta_counts)
 
@@ -150,11 +154,11 @@ class PiiScrubMiddleware(Middleware):
             content = item.content
             item_meta = getattr(item, "meta", None)
             new_item_meta, item_meta_counts = _scrub_meta(
-                item_meta, languages=self._languages
+                item_meta, **self._options
             )
             parts.append(item_meta_counts)
             if isinstance(content, str):
-                scrubbed = scrub_text(content, languages=self._languages)
+                scrubbed = scrub_text(content, **self._options)
                 parts.append(scrubbed["counts"])
                 if hasattr(item, "model_copy"):
                     new_contents.append(
@@ -180,7 +184,7 @@ class PiiScrubMiddleware(Middleware):
             else:
                 new_contents.append(item)
         new_meta, meta_counts = _scrub_meta(
-            result.meta, languages=self._languages
+            result.meta, **self._options
         )
         parts.append(meta_counts)
         self._emit(merge_counts(parts) if parts else empty_pii_counts())
@@ -193,7 +197,7 @@ class PiiScrubMiddleware(Middleware):
             content = message.content
             text = getattr(content, "text", None)
             if isinstance(text, str):
-                scrubbed = scrub_text(text, languages=self._languages)
+                scrubbed = scrub_text(text, **self._options)
                 parts.append(scrubbed["counts"])
                 if hasattr(content, "model_copy"):
                     new_content = content.model_copy(
@@ -213,12 +217,12 @@ class PiiScrubMiddleware(Middleware):
                 new_messages.append(message)
         new_description = result.description
         if isinstance(result.description, str):
-            desc = scrub_text(result.description, languages=self._languages)
+            desc = scrub_text(result.description, **self._options)
             new_description = desc["text"]
             parts.append(desc["counts"])
 
         new_meta, meta_counts = _scrub_meta(
-            result.meta, languages=self._languages
+            result.meta, **self._options
         )
         parts.append(meta_counts)
 

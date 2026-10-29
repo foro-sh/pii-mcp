@@ -142,7 +142,8 @@ from __future__ import annotations
 import ipaddress
 import re
 from collections.abc import Callable
-from dataclasses import dataclass
+from contextvars import ContextVar
+from dataclasses import dataclass, field
 from typing import Literal
 
 PiiCategory = Literal[
@@ -170,6 +171,89 @@ PiiCategory = Literal[
 class Detector:
     type: PiiCategory
     scrub: Callable[[str], tuple[str, int]]
+
+
+_PUA_START = 0xE000
+_PUA_END = 0xF8FF
+_PUA_SIZE = _PUA_END - _PUA_START + 1
+
+
+@dataclass
+class ScrubOptions:
+    """Per-``scrub_text`` ``types`` / ``allow`` state behind ``emit``.
+
+    A protected match is swapped for a three-char token ``S c1 c2`` that no
+    later detector matches, so it stays shielded, and ``restore`` puts the
+    original back once every detector has run. ``S`` is the first private-use
+    code point absent from ``source``, picked at the first protected match;
+    ``c1 c2`` encode the stash index in base 6400 from U+E000.
+    """
+
+    source: str
+    types: frozenset[str] | None
+    allow: frozenset[str]
+    sentinel: str | None = None
+    stash: list[str] = field(default_factory=list)
+
+    def protects(self, kind: str, value: str) -> bool:
+        if self.types is not None and kind not in self.types:
+            return True
+        return kind != "secret" and value.lower() in self.allow
+
+    def protect(self, value: str) -> str:
+        from pii_mcp.scrub import PiiScrubError
+
+        if self.sentinel is None:
+            used = set(self.source)
+            self.sentinel = next(
+                (chr(c) for c in range(_PUA_START, _PUA_END + 1) if chr(c) not in used),
+                None,
+            )
+            if self.sentinel is None:
+                raise PiiScrubError("no unused private-use character to protect a value with")
+        index = len(self.stash)
+        if index >= _PUA_SIZE * _PUA_SIZE:
+            raise PiiScrubError("too many protected values in one string")
+        self.stash.append(value)
+        return (
+            self.sentinel
+            + chr(_PUA_START + index // _PUA_SIZE)
+            + chr(_PUA_START + index % _PUA_SIZE)
+        )
+
+    def restore(self, text: str) -> str:
+        if self.sentinel is None:
+            return text
+        parts: list[str] = []
+        last = 0
+        while (at := text.find(self.sentinel, last)) != -1:
+            parts.append(text[last:at])
+            pair = text[at + 1 : at + 3]
+            if len(pair) == 2 and all(_PUA_START <= ord(c) <= _PUA_END for c in pair):
+                index = (ord(pair[0]) - _PUA_START) * _PUA_SIZE + ord(pair[1]) - _PUA_START
+                if index < len(self.stash):
+                    parts.append(self.stash[index])
+                    last = at + 3
+                    continue
+            parts.append(self.sentinel)
+            last = at + 1
+        parts.append(text[last:])
+        return "".join(parts)
+
+
+SCRUB_OPTIONS: ContextVar[ScrubOptions | None] = ContextVar("pii_mcp_scrub_options", default=None)
+
+
+def emit(placeholder: str, value: str) -> tuple[str, bool]:
+    """Replacement for an accepted match of ``value`` and whether it counts as masked.
+
+    The type is the placeholder lower-cased without brackets (``[CREDIT_CARD]``
+    -> ``credit_card``). Every placeholder write goes through here.
+    """
+    options = SCRUB_OPTIONS.get()
+    if options is None or not options.protects(placeholder[1:-1].lower(), value):
+        return placeholder, True
+    return options.protect(value), False
 
 
 def _replace_matches(
@@ -204,11 +288,12 @@ def _replace_matches(
         ):
             pos = start + 1 if retry else max(match.end(), start + 1)
             continue
+        replacement, masked = emit(placeholder, text[start:end])
         parts.append(text[last:start])
-        parts.append(placeholder)
+        parts.append(replacement)
         last = pos = end
-        count += 1
-    if count == 0:
+        count += masked
+    if not parts:
         return text, 0
     parts.append(text[last:])
     return "".join(parts), count
@@ -343,12 +428,13 @@ def _scrub_email(text: str) -> tuple[str, int]:
             # match as found rather than leak the address.
             if shortened is not None:
                 end = shortened
+        replacement, masked = emit("[EMAIL]", text[start:end])
         parts.append(text[last:start])
-        parts.append("[EMAIL]")
+        parts.append(replacement)
         last = end
         pos = end
-        count += 1
-    if count == 0:
+        count += masked
+    if not parts:
         return text, 0
     parts.append(text[last:])
     return "".join(parts), count
@@ -1490,10 +1576,11 @@ def _scrub_secret(text: str) -> tuple[str, int]:
             continue
         if not _bearer_credential_valid(match.group(1)):
             continue
+        replacement, masked = emit("[SECRET]", match.group(1))
         parts.append(out[last : match.start(1)])
-        parts.append("[SECRET]")
+        parts.append(replacement)
         last = match.end(1)
-        count += 1
+        count += masked
     if not parts:
         return out, count
     parts.append(out[last:])
