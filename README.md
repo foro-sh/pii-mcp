@@ -60,7 +60,13 @@ from pii_mcp import scrub_text, scrub_payload
 
 scrub_text("mail ada@example.com")
 scrub_payload({"email": "ada@example.com"}, languages=["en"])
+scrub_text("ops@foro.sh ada@example.com 123456782", types=["email"], allow=["ops@foro.sh"])
+# ops@foro.sh [EMAIL] 123456782
 ```
+
+`types` masks only the listed `PiiType` names (default: all). `allow` lists
+exact values (case-insensitive) left unmasked; it never exempts a `secret`.
+`PiiScrubMiddleware` takes both too.
 
 ## Scope
 

@@ -26,6 +26,7 @@
 //! bounded by non-`[A-Za-z0-9_-]`, plus the credential after `Bearer` when it
 //! is 16+ chars with a digit or a non-initial uppercase letter.
 
+use crate::scrub::emit;
 use crate::checksum::{
     bsn_valid_grouped, de_passport_valid, iban_valid, imei_valid, is_group_sep,
     itin_valid_grouped, luhn_valid, nhs_valid_grouped, nl_passport_valid, nl_postcode_valid,
@@ -82,6 +83,8 @@ impl PiiCategory {
 }
 
 /// `(Some(rewritten), n)` on hits; `(None, 0)` when the text is unchanged.
+/// `n` counts masked hits only: a hit [`emit`] protects rewrites the text
+/// without counting.
 pub type ScrubFn = fn(&str) -> (Option<String>, u32);
 
 #[derive(Clone, Copy)]
@@ -149,10 +152,11 @@ where
         }
         let buf = out.get_or_insert_with(|| String::with_capacity(text.len()));
         buf.push_str(&text[last..m.start()]);
-        buf.push_str(placeholder);
+        let (rep, masked) = emit(placeholder, &text[m.start()..end]);
+        buf.push_str(&rep);
         last = end;
         pos = end;
-        count += 1;
+        count += u32::from(masked);
     }
     match out {
         None => (None, 0),
@@ -385,10 +389,11 @@ fn scrub_email(text: &str) -> (Option<String>, u32) {
         }
         let buf = out.get_or_insert_with(|| String::with_capacity(text.len()));
         buf.push_str(&text[last..start]);
-        buf.push_str("[EMAIL]");
+        let (rep, masked) = emit("[EMAIL]", &text[start..end]);
+        buf.push_str(&rep);
         last = end;
         pos = end;
-        count += 1;
+        count += u32::from(masked);
     }
     match out {
         None => (None, 0),
@@ -1130,10 +1135,11 @@ fn scrub_location_decimal(text: &str) -> (Option<String>, u32) {
         }
         let buf = out.get_or_insert_with(|| String::with_capacity(text.len()));
         buf.push_str(&text[last..start]);
-        buf.push_str("[LOCATION]");
+        let (rep, masked) = emit("[LOCATION]", &text[start..end]);
+        buf.push_str(&rep);
         last = end;
         pos = end;
-        count += 1;
+        count += u32::from(masked);
     }
     match out {
         None => (None, 0),
@@ -1305,10 +1311,11 @@ fn scrub_ipv6(text: &str) -> (Option<String>, u32) {
         }
         let buf = out.get_or_insert_with(|| String::with_capacity(text.len()));
         buf.push_str(&text[last..start]);
-        buf.push_str("[IP]");
+        let (rep, masked) = emit("[IP]", &text[start..end]);
+        buf.push_str(&rep);
         last = end;
         pos = end;
-        count += 1;
+        count += u32::from(masked);
     }
     match out {
         None => (None, 0),
@@ -1847,10 +1854,11 @@ fn replace_national_phone(
         };
         let buf = out.get_or_insert_with(|| String::with_capacity(text.len()));
         buf.push_str(&text[last..start]);
-        buf.push_str("[PHONE]");
+        let (rep, masked) = emit("[PHONE]", &text[start..end]);
+        buf.push_str(&rep);
         last = end;
         pos = end;
-        count += 1;
+        count += u32::from(masked);
     }
     match out {
         None => (None, 0),
@@ -2183,9 +2191,10 @@ fn scrub_secret(text: &str) -> (Option<String>, u32) {
         }
         let buf = out.get_or_insert_with(|| String::with_capacity(src.len()));
         buf.push_str(&src[last..cred.start()]);
-        buf.push_str("[SECRET]");
+        let (rep, masked) = emit("[SECRET]", cred.as_str());
+        buf.push_str(&rep);
         last = cred.end();
-        count += 1;
+        count += u32::from(masked);
     }
     match out {
         Some(mut buf) => {

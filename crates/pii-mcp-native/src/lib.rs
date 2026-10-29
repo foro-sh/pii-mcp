@@ -1,6 +1,6 @@
 //! Thin PyO3 binding over `pii-core` (`scrub_text` / `scrub_payload`).
 
-use pii_core::{scrub_payload as core_scrub_payload, scrub_text as core_scrub_text, PiiScrubError};
+use pii_core::{scrub_payload_with, scrub_text_with, PiiScrubError, ScrubOptions};
 use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyList};
@@ -9,7 +9,7 @@ use serde_json::Value;
 
 fn scrub_error(err: PiiScrubError) -> PyErr {
     let msg = err.to_string();
-    if msg.starts_with("unknown language") {
+    if msg.starts_with("unknown language") || msg.starts_with("unknown type") {
         PyValueError::new_err(msg)
     } else {
         // Prefixed so Python can remap to ``PiiScrubError``.
@@ -26,16 +26,31 @@ fn counts_to_py<'py>(py: Python<'py>, counts: &pii_core::PiiCounts) -> PyResult<
     Ok(dict)
 }
 
+fn options(
+    languages: Option<Vec<String>>,
+    types: Option<Vec<String>>,
+    allow: Option<Vec<String>>,
+) -> ScrubOptions {
+    ScrubOptions {
+        languages,
+        types,
+        allow: allow.unwrap_or_default(),
+    }
+}
+
 /// Mask pattern-detectable PII in a string. Returns ``{text, found, counts}``.
 #[pyfunction]
-#[pyo3(signature = (text, *, languages=None))]
+#[pyo3(signature = (text, *, languages=None, types=None, allow=None))]
 fn scrub_text<'py>(
     py: Python<'py>,
     text: &str,
     languages: Option<Vec<String>>,
+    types: Option<Vec<String>>,
+    allow: Option<Vec<String>>,
 ) -> PyResult<Bound<'py, PyDict>> {
+    let opts = options(languages, types, allow);
     let result = py
-        .detach(|| core_scrub_text(text, languages.as_deref(), true))
+        .detach(|| scrub_text_with(text, &opts, true))
         .map_err(scrub_error)?;
     let out = PyDict::new(py);
     out.set_item("text", result.text)?;
@@ -123,15 +138,18 @@ fn value_to_py(py: Python<'_>, value: Value) -> PyResult<Py<PyAny>> {
 
 /// Walk a JSON-like payload and mask string leaves.
 #[pyfunction]
-#[pyo3(signature = (payload, *, languages=None))]
+#[pyo3(signature = (payload, *, languages=None, types=None, allow=None))]
 fn scrub_payload<'py>(
     py: Python<'py>,
     payload: Bound<'_, PyAny>,
     languages: Option<Vec<String>>,
+    types: Option<Vec<String>>,
+    allow: Option<Vec<String>>,
 ) -> PyResult<Bound<'py, PyDict>> {
     let value = py_to_value(&payload, 0)?;
+    let opts = options(languages, types, allow);
     let result = py
-        .detach(|| core_scrub_payload(value, languages.as_deref()))
+        .detach(|| scrub_payload_with(value, &opts))
         .map_err(scrub_error)?;
     let out = PyDict::new(py);
     out.set_item("payload", value_to_py(py, result.payload)?)?;
