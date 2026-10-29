@@ -163,7 +163,7 @@ dependencies = [
 
 [[package]]
 name = "pii-mcp-native"
-version = "1.12.0"
+version = "1.13.0"
 dependencies = [
  "pii-core",
  "pyo3",
