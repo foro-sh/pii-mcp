@@ -41,6 +41,9 @@ dev = [
 native = [
   "maturin>=1.7",
 ]
+eval = [
+  "datasets>=2.18",
+]
 
 [project.urls]
 Homepage = "https://github.com/foro-sh/pii-mcp"
