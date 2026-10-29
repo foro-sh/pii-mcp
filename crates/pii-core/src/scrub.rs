@@ -921,6 +921,49 @@ mod tests {
     }
 
     #[test]
+    fn masks_grouped_be_nrn_as_bsn() {
+        let langs = vec!["nl".to_string()];
+        for value in ["85.07.30-033.28", "85 07 30-033 28", "05.07.15-123.95"] {
+            let r = scrub_text(&format!("rrn {value} on file"), Some(&langs), true).unwrap();
+            assert_eq!(r.text, "rrn [BSN] on file", "{value}");
+            assert_eq!(r.counts["bsn"], 1, "{value}");
+        }
+        for value in ["85.07.30-033.29", "85.13.30-033.28", "85073003328"] {
+            let text = format!("ref {value}");
+            let r = scrub_text(&text, Some(&langs), true).unwrap();
+            assert_eq!(r.text, text, "{value}");
+        }
+        let en = vec!["en".to_string()];
+        let r = scrub_text("rrn 85.07.30-033.28 on file", Some(&en), true).unwrap();
+        assert_eq!(r.text, "rrn 85.07.30-033.28 on file");
+        assert_eq!(r.counts["bsn"], 0);
+    }
+
+    #[test]
+    fn be_nrn_preferred_over_a_phone_before_a_digit() {
+        for packs in [
+            vec!["nl"],
+            vec!["en", "nl"],
+            vec!["de", "nl"],
+            vec!["en", "nl", "de"],
+        ] {
+            let langs: Vec<String> = packs.iter().map(|s| s.to_string()).collect();
+            let r = scrub_text("rrn 85.07.30-033.28 2 kinderen", Some(&langs), true).unwrap();
+            assert_eq!(r.text, "rrn [BSN] 2 kinderen", "{packs:?}");
+            assert_eq!(r.counts["phone"], 0, "{packs:?}");
+        }
+    }
+
+    #[test]
+    fn be_nrn_preferred_over_de_phone_when_both_packs() {
+        let langs = vec!["de".to_string(), "nl".to_string()];
+        let r = scrub_text("rrn 05.07.15-123.95 on file", Some(&langs), true).unwrap();
+        assert_eq!(r.text, "rrn [BSN] on file");
+        assert_eq!(r.counts["bsn"], 1);
+        assert_eq!(r.counts["phone"], 0);
+    }
+
+    #[test]
     fn masks_uk_postcode_in_every_outward_shape() {
         let langs = vec!["en".to_string()];
         for value in [

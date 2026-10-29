@@ -183,6 +183,44 @@ def ssn(r: R) -> str:
     return number
 
 
+def be_nrn(r: R) -> str:
+    """A grouped BE rijksregisternummer: ``YY.MM.DD-SSS.CC`` with a mod-97 check.
+
+    Half the values use a post-2000 birth year, which prefixes the 9-digit
+    body with ``2`` before the check (nl.wikipedia.org/wiki/Rijksregisternummer).
+    One in ten has a ``00`` month or day (incomplete birth date). Only grouped
+    forms are emitted, since the detector leaves the compact form alone: the
+    date groups share one separator, the other two gaps each pick their own.
+    Four dot-separated leading groups with a different last separator
+    (``85.07.30.033 28``) are skipped; the universal IP detector takes those
+    first.
+    """
+    year = r.randint(0, 99)
+    month = r.randint(1, 12)
+    day = r.randint(1, 28)
+    if r.random() < 0.1:
+        if r.random() < 0.5:
+            month = 0
+        else:
+            day = 0
+    seq = r.randint(1, 999)
+    body = f"{year:02d}{month:02d}{day:02d}{seq:03d}"
+    n = int(body)
+    post_2000 = r.random() < 0.5
+    checked = 2_000_000_000 + n if post_2000 else n
+    check = 97 - (checked % 97)
+    seps = [".", " ", "-", "\xa0"]
+    date_sep = r.choice(seps)
+    mid_sep = r.choice(["-", "-", *seps])
+    end_sep = r.choice([".", ".", *seps])
+    if date_sep == mid_sep == "." != end_sep:
+        end_sep = "."
+    return (
+        f"{body[0:2]}{date_sep}{body[2:4]}{date_sep}{body[4:6]}{mid_sep}"
+        f"{body[6:9]}{end_sep}{check:02d}"
+    )
+
+
 def itin(r: R) -> str:
     """A grouped US ITIN: ``9XX-XX-XXXX`` with a group the IRS issues.
 
@@ -499,6 +537,7 @@ PII: list[tuple[str, Callable[[R], str], tuple[str, ...]]] = [
     ("ip", ip, ()),
     ("location", location, ()),
     ("bsn", bsn, ("nl",)),
+    ("bsn", be_nrn, ("nl",)),
     ("ssn", ssn, ("en",)),
     ("tax_id", tax_id_de, ("de",)),
     ("tax_id", itin, ("en",)),
@@ -586,6 +625,11 @@ CLEAN: list[tuple[str, Callable[[R], str]]] = [
     ("uk_postcode_product", lambda r: r.choice(["A4 2PK", "PS5 1TB", "A1 2PK"])),
     # ITIN-shaped, but group 89 / 93 (other TINs) or outside the ITIN ranges.
     ("itin_shaped", lambda r: f"9{_digits(r, 2)}-{r.choice(['89', '93', '40', '69'])}-{_digits(r, 4)}"),
+    # BE rijksregisternummer-shaped, but a wrong mod-97 check digit (``00``
+    # never validates). A leading-zero birth year is avoided here: that shape
+    # also matches ``PHONE_DE_NATIONAL`` regardless of checksum, which would
+    # score a pre-existing, unrelated DE-phone false positive instead.
+    ("be_nrn_shaped", lambda r: f"{r.randint(10, 99):02d}.{r.randint(1, 12):02d}.{r.randint(1, 28):02d}-{r.randint(1, 999):03d}.00"),
 ]
 
 # Clean text that looks like PII to any pattern matcher (bare 9-digit ids vs

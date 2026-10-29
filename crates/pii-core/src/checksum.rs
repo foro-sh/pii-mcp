@@ -322,6 +322,38 @@ pub(crate) fn itin_valid_grouped(value: &str) -> bool {
     matches!(group, 50..=65 | 70..=88 | 90..=92 | 94..=99)
 }
 
+/// Belgian rijksregisternummer for scrub hits: 11 digits grouped
+/// ``YY.MM.DD-SSS.CC``, mod-97 check digit against either the pre- or
+/// post-2000 birth-year variant, with a plausible month (0-12) and day
+/// (0-31). Group separators (see ``is_id_sep``) are skipped.
+///
+/// <https://nl.wikipedia.org/wiki/Rijksregisternummer>
+pub(crate) fn be_nrn_valid_grouped(value: &str) -> bool {
+    let mut digits = [0u32; 11];
+    let mut len = 0usize;
+    for c in value.chars() {
+        if is_id_sep(c) {
+            continue;
+        }
+        if !c.is_ascii_digit() || len >= 11 {
+            return false;
+        }
+        digits[len] = c as u32 - '0' as u32;
+        len += 1;
+    }
+    if len != 11 {
+        return false;
+    }
+    let month = digits[2] * 10 + digits[3];
+    let day = digits[4] * 10 + digits[5];
+    if month > 12 || day > 31 {
+        return false;
+    }
+    let n: u64 = digits[..9].iter().fold(0u64, |acc, &d| acc * 10 + d as u64);
+    let check = (digits[9] * 10 + digits[10]) as u64;
+    check == 97 - (n % 97) || check == 97 - ((2_000_000_000 + n) % 97)
+}
+
 /// UK NHS number for scrub hits: 10 digits, mod-11 check digit over weights
 /// 10..2, where a remainder giving 10 is invalid. Repeated digits pass the
 /// checksum and are rejected. Group separators (see ``is_id_sep``) are skipped.
@@ -554,6 +586,19 @@ mod tests {
         assert!(bsn_valid_grouped("111\u{2013}222\u{2013}333"));
         assert!(!ssn_valid("219\u{2013}09\u{2013}9999"));
         assert!(ssn_valid_grouped("219\u{2013}09\u{2013}9999"));
+    }
+
+    #[test]
+    fn be_nrn_known() {
+        assert!(be_nrn_valid_grouped("85.07.30-033.28"));
+        assert!(be_nrn_valid_grouped("85 07 30-033 28"));
+        assert!(be_nrn_valid_grouped("05.07.15-123.95"));
+        assert!(!be_nrn_valid_grouped("85.07.30-033.29"));
+        assert!(!be_nrn_valid_grouped("85.13.30-033.28"));
+        assert!(!be_nrn_valid_grouped("85.07.32-033.28"));
+        assert!(!be_nrn_valid_grouped("8507300332"));
+        assert!(be_nrn_valid_grouped("85.00.30-033.76"));
+        assert!(be_nrn_valid_grouped("85.07.00-028.60"));
     }
 
     #[test]

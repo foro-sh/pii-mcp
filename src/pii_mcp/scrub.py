@@ -18,7 +18,9 @@ forms (before BSN takes the subscriber part of ``040 78703244``) →
 checksum/rule-backed national IDs (DE IdNr before BSN, BSN before SSN when
 both packs are on, US ITIN before SSN; DE USt-IdNr and NL BTW before BSN,
 DE/NL passport after) → street + house number per pack (en, de, nl) →
-postcode per pack → kenteken when ``nl``.
+postcode per pack → kenteken when ``nl``. The BE rijksregisternummer runs
+before the locale phone forms when ``nl``: its grouped tail is an NL or DE
+national phone shape.
 
 MCP binary content is left unscrubbed (foro-pii ``binaryKey`` parity): on an
 object with ``type`` of ``image`` or ``audio`` and a string ``data``, that
@@ -46,6 +48,7 @@ from pii_mcp.detectors import (
     UNIVERSAL_DETECTORS,
     Detector,
     ScrubOptions,
+    be_nrn_detector,
     bsn_detector,
     de_passport_detector,
     de_vat_detector,
@@ -242,6 +245,8 @@ def _detectors_for(languages: Sequence[str] | None) -> tuple[Detector, ...]:
         pack.append(phone_international_detector)
     if "en" in langs:
         pack.append(nhs_detector)
+    if "nl" in langs:
+        pack.append(be_nrn_detector)
     # National phone forms (trunk ``0`` + area code) before bare-digit IDs, so
     # BSN does not take the subscriber part of ``040 78703244``.
     if "nl" in langs:

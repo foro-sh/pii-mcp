@@ -118,6 +118,15 @@
  *   hex-glue guard). All phone forms also accept nbsp, thin / narrow nbsp, and
  *   unicode dashes between groups.
  * - BSN spaced/dotted/hyphenated ``111-222-333`` groups.
+ * - BE rijksregisternummer (``bsn``): grouped ``YY.MM.DD-SSS.CC`` only (dot,
+ *   space, nbsp, or hyphen between any of the five groups), mod-97 check
+ *   digit against either the pre- or post-2000 birth-year variant, with a
+ *   plausible month (0-12) and day (0-31). The compact 11-digit form is left
+ *   alone: it collides with German tax ids and 11-digit phone numbers too
+ *   often for the checksum alone to gate it. Four dot-separated groups
+ *   with another separator in the remaining gap (``85.07.30.033 28``,
+ *   ``85 07.30.033.28``) are an IPv4 shape, which the universal IP detector
+ *   masks first.
  * - Secrets (``secret``, runs first): vendor-prefixed keys and JWTs bounded by
  *   non-``[A-Za-z0-9_-]``, plus the credential after ``Bearer`` (any case)
  *   when it is 16+ chars with a digit or a non-initial uppercase letter.
@@ -966,6 +975,41 @@ function scrubBsn(text: string): { text: string; count: number } {
 }
 
 export const bsnDetector: Detector = { type: "bsn", scrub: scrubBsn };
+
+const BE_NRN_RE = new RegExp(
+  String.raw`\b\d{2}(?:${ID_SPACE}|${ID_DASH}|\.)\d{2}(?:${ID_SPACE}|${ID_DASH}|\.)\d{2}(?:${ID_SPACE}|${ID_DASH}|\.)\d{3}(?:${ID_SPACE}|${ID_DASH}|\.)\d{2}\b`,
+  "g",
+);
+
+/**
+ * Rijksregisternummer mod-97 check, either century variant.
+ *
+ * ``YY.MM.DD-SSS.CC``: ``CC`` must equal ``97 - (n % 97)`` where ``n`` is the
+ * first 9 digits; for people born 2000 or later, ``n`` is prefixed with a
+ * leading ``2`` (``2_000_000_000 + n``) before the check. ``MM`` and ``DD``
+ * only need to be plausible (0 is used for an incomplete birth date):
+ * https://nl.wikipedia.org/wiki/Rijksregisternummer
+ */
+function beNrnValid(value: string): boolean {
+  const digits = value.replace(ID_SEPS, "");
+  if (digits.length !== 11 || !/^\d{11}$/.test(digits)) {
+    return false;
+  }
+  const month = Number(digits.slice(2, 4));
+  const day = Number(digits.slice(4, 6));
+  if (month > 12 || day > 31) {
+    return false;
+  }
+  const n = Number(digits.slice(0, 9));
+  const check = Number(digits.slice(9));
+  return check === 97 - (n % 97) || check === 97 - ((2_000_000_000 + n) % 97);
+}
+
+function scrubBeNrn(text: string): { text: string; count: number } {
+  return replaceMatches(text, BE_NRN_RE, "[BSN]", beNrnValid);
+}
+
+export const beNrnDetector: Detector = { type: "bsn", scrub: scrubBeNrn };
 
 const SSN_RES = [
   new RegExp(String.raw`\b\d{3}${ID_DASH}\d{2}${ID_DASH}\d{4}\b`, "g"),

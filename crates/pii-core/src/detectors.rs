@@ -17,6 +17,15 @@
 //! uppercase prefix. A compact hit next to `-` or before `=`, or a suffixless
 //! hit followed by another digit group, is left alone; URL path segments are
 //! masked.
+//! BE rijksregisternummer (`bsn`, nl pack) matches only the grouped
+//! `YY.MM.DD-SSS.CC` form (dot, space, nbsp or hyphen between any of the
+//! five groups), with a mod-97 check digit against either the pre- or
+//! post-2000 birth-year variant and a plausible month (0-12) and day (0-31).
+//! The compact 11-digit form is left alone: it collides with German tax ids
+//! and 11-digit phone numbers too often for the checksum alone to gate it.
+//! Four dot-separated groups with another separator in the remaining gap
+//! (`85.07.30.033 28`, `85 07.30.033.28`) are an IPv4 shape, which the
+//! universal IP detector masks first.
 //! German ID card / passport document numbers (`passport`, de pack): 9 chars
 //! from the BSI TR-03110 / ICAO Doc 9303 alphabet, first letter gated per
 //! document type, optional MRZ check digit (weights 7-3-1, `A`=10 .. `Z`=35,
@@ -28,9 +37,10 @@
 
 use crate::scrub::emit;
 use crate::checksum::{
-    bsn_valid_grouped, de_passport_valid, iban_valid, imei_valid, is_group_sep,
-    itin_valid_grouped, luhn_valid, nhs_valid_grouped, nl_passport_valid, nl_postcode_valid,
-    ssn_valid_grouped, tax_id_valid_grouped, uk_postcode_valid, GROUP_DASHES, GROUP_SPACES,
+    be_nrn_valid_grouped, bsn_valid_grouped, de_passport_valid, iban_valid, imei_valid,
+    is_group_sep, itin_valid_grouped, luhn_valid, nhs_valid_grouped, nl_passport_valid,
+    nl_postcode_valid, ssn_valid_grouped, tax_id_valid_grouped, uk_postcode_valid, GROUP_DASHES,
+    GROUP_SPACES,
 };
 use regex::Regex;
 use std::sync::OnceLock;
@@ -1410,6 +1420,25 @@ fn scrub_bsn(text: &str) -> (Option<String>, u32) {
     (second.or(first), count)
 }
 
+/// Grouped ``YY.MM.DD-SSS.CC`` only (compact 11 digits collides with German
+/// tax ids and 11-digit phone numbers too often to gate on checksum alone).
+fn be_nrn_re() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| {
+        let id_space = id_space();
+        let id_dash = id_dash();
+        let sep = format!(r"(?:{id_space}|{id_dash}|\.)");
+        Regex::new(&format!(
+            r"\b\d{{2}}{sep}\d{{2}}{sep}\d{{2}}{sep}\d{{3}}{sep}\d{{2}}\b"
+        ))
+        .unwrap()
+    })
+}
+
+fn scrub_be_nrn(text: &str) -> (Option<String>, u32) {
+    replace_matches(text, be_nrn_re(), "[BSN]", |v, _, _| be_nrn_valid_grouped(v), false)
+}
+
 fn itin_res() -> &'static [Regex] {
     static RES: OnceLock<Vec<Regex>> = OnceLock::new();
     RES.get_or_init(|| {
@@ -2272,6 +2301,15 @@ fn build_detectors(mask: u8) -> Vec<Detector> {
         pack.push(Detector {
             category: PiiCategory::Ssn,
             scrub: scrub_nhs,
+        });
+    }
+    // Before the national phone forms: a grouped BE rijksregisternummer is an
+    // 11-digit run with single-char separators, and its `MM.DD-SSS.CC` tail
+    // is an NL trunk-`0` or DE national phone shape.
+    if has_nl {
+        pack.push(Detector {
+            category: PiiCategory::Bsn,
+            scrub: scrub_be_nrn,
         });
     }
     // National phone forms (trunk ``0`` + area code) before bare-digit IDs, so
