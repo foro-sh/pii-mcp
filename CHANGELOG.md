@@ -6,6 +6,16 @@
 * **rust:** mirror the US ITIN detector in pii-core ([f0323f8](https://github.com/foro-sh/pii-mcp/commit/f0323f8f2c8f03d70e98a923e36d6e71bede04b3)), closes [#62](https://github.com/foro-sh/pii-mcp/issues/62)
 * **typescript:** mirror the US ITIN detector in the js backend ([aad506e](https://github.com/foro-sh/pii-mcp/commit/aad506ed114c8cd3f00b04388e7ea786fa6f44f9)), closes [#62](https://github.com/foro-sh/pii-mcp/issues/62)
 
+## [1.12.0](https://github.com/foro-sh/pii-mcp/compare/v1.11.0...v1.12.0) (2026-10-29)
+
+
+### Features
+
+* add types and allow scrub options ([8f0fd77](https://github.com/foro-sh/pii-mcp/commit/8f0fd77884237f3462083be0a22f56458f4753cd))
+* **python:** add types and allow scrub options ([f7a560f](https://github.com/foro-sh/pii-mcp/commit/f7a560fa1854d895795cb3d56971238adea16aca))
+* **rust:** add types and allow scrub options ([20fb6de](https://github.com/foro-sh/pii-mcp/commit/20fb6deaa01c38d1df7f38e5a62787c61a67aaf0))
+* **typescript:** add types and allow scrub options ([2fd3d6a](https://github.com/foro-sh/pii-mcp/commit/2fd3d6ad829cd95e8925675cbd88badd18592922))
+
 ## [1.11.0](https://github.com/foro-sh/pii-mcp/compare/v1.10.0...v1.11.0) (2026-10-27)
 
 
