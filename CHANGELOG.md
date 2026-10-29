@@ -6,6 +6,13 @@
 * **rust:** mirror the US ITIN detector in pii-core ([f0323f8](https://github.com/foro-sh/pii-mcp/commit/f0323f8f2c8f03d70e98a923e36d6e71bede04b3)), closes [#62](https://github.com/foro-sh/pii-mcp/issues/62)
 * **typescript:** mirror the US ITIN detector in the js backend ([aad506e](https://github.com/foro-sh/pii-mcp/commit/aad506ed114c8cd3f00b04388e7ea786fa6f44f9)), closes [#62](https://github.com/foro-sh/pii-mcp/issues/62)
 
+## [1.13.0](https://github.com/foro-sh/pii-mcp/compare/v1.12.0...v1.13.0) (2026-10-29)
+
+
+### Features
+
+* detect Belgian national register numbers in the nl pack ([#111](https://github.com/foro-sh/pii-mcp/issues/111)) ([73aeee3](https://github.com/foro-sh/pii-mcp/commit/73aeee3745728cdad4ba9556991b8aa0fe36ab0c))
+
 ## [1.12.0](https://github.com/foro-sh/pii-mcp/compare/v1.11.0...v1.12.0) (2026-10-29)
 
 
