@@ -350,8 +350,7 @@ pub(crate) fn be_nrn_valid_grouped(value: &str) -> bool {
         return false;
     }
     let n: u64 = digits[..9].iter().fold(0u64, |acc, &d| acc * 10 + d as u64);
-    let check = digits[9] * 10 + digits[10];
-    let check = check as u64;
+    let check = (digits[9] * 10 + digits[10]) as u64;
     check == 97 - (n % 97) || check == 97 - ((2_000_000_000 + n) % 97)
 }
 
