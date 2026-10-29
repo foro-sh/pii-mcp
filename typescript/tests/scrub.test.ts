@@ -244,6 +244,70 @@ describe("scrubText", () => {
     }
   });
 
+  it("masks grouped BE rijksregisternummer as bsn with nl pack", () => {
+    for (const value of ["85.07.30-033.28", "85 07 30-033 28", "05.07.15-123.95"]) {
+      const result = scrubText(`rrn ${value} on file`, { languages: ["nl"] });
+      expect(result.text).toBe("rrn [BSN] on file");
+      expect(result.counts.bsn).toBe(1);
+    }
+    expect(
+      scrubText('{"rrn": "85.07.30-033.28"}', { languages: ["nl"] }).text,
+    ).toBe('{"rrn": "[BSN]"}');
+    expect(scrubText("a,85.07.30-033.28,b", { languages: ["nl"] }).text).toBe(
+      "a,[BSN],b",
+    );
+  });
+
+  it("rejects a bad BE rijksregisternummer checksum, month, day, or compact form", () => {
+    for (const value of [
+      "85.07.30-033.29",
+      "85.13.30-033.28",
+      "85.07.32-033.28",
+      "85073003328",
+    ]) {
+      const text = `ref ${value}`;
+      expect(scrubText(text, { languages: ["nl"] }).text).toBe(text);
+    }
+  });
+
+  it("masks BE rijksregisternummer with unicode separators", () => {
+    for (const value of ["85\u00a007\u00a030\u00a0033\u00a028", "85.07.30\u2013033.28"]) {
+      expect(scrubText(`rrn ${value} on file`, { languages: ["nl"] }).text).toBe(
+        "rrn [BSN] on file",
+      );
+    }
+  });
+
+  it("masks an incomplete BE rijksregisternummer birth date", () => {
+    for (const value of ["85.00.30-033.76", "85.07.00-028.60"]) {
+      const result = scrubText(`rrn ${value} on file`, { languages: ["nl"] });
+      expect(result.text).toBe("rrn [BSN] on file");
+      expect(result.counts.bsn).toBe(1);
+    }
+  });
+
+  it("skips BE rijksregisternummer without nl", () => {
+    const text = "rrn 85.07.30-033.28 on file";
+    const result = scrubText(text, { languages: ["en"] });
+    expect(result.text).toBe(text);
+    expect(result.counts.bsn).toBe(0);
+  });
+
+  it("prefers BE rijksregisternummer over a phone before a digit", () => {
+    for (const languages of [["nl"], ["en", "nl"], ["de", "nl"], ["en", "nl", "de"]]) {
+      const result = scrubText("rrn 85.07.30-033.28 2 kinderen", { languages });
+      expect(result.text).toBe("rrn [BSN] 2 kinderen");
+      expect(result.counts.phone).toBe(0);
+    }
+  });
+
+  it("prefers BE rijksregisternummer over DE phone with both packs", () => {
+    const result = scrubText("rrn 05.07.15-123.95 on file", { languages: ["de", "nl"] });
+    expect(result.text).toBe("rrn [BSN] on file");
+    expect(result.counts.bsn).toBe(1);
+    expect(result.counts.phone).toBe(0);
+  });
+
   it("masks grouped UK NHS numbers as ssn with en pack", () => {
     for (const value of [
       "943 476 5919",

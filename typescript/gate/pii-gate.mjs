@@ -666,6 +666,28 @@ function scrubBsn(text) {
   return { text: out, count };
 }
 var bsnDetector = { type: "bsn", scrub: scrubBsn };
+var BE_NRN_RE = new RegExp(
+  String.raw`\b\d{2}(?:${ID_SPACE}|${ID_DASH}|\.)\d{2}(?:${ID_SPACE}|${ID_DASH}|\.)\d{2}(?:${ID_SPACE}|${ID_DASH}|\.)\d{3}(?:${ID_SPACE}|${ID_DASH}|\.)\d{2}\b`,
+  "g"
+);
+function beNrnValid(value) {
+  const digits = value.replace(ID_SEPS, "");
+  if (digits.length !== 11 || !/^\d{11}$/.test(digits)) {
+    return false;
+  }
+  const month = Number(digits.slice(2, 4));
+  const day = Number(digits.slice(4, 6));
+  if (month > 12 || day > 31) {
+    return false;
+  }
+  const n = Number(digits.slice(0, 9));
+  const check = Number(digits.slice(9));
+  return check === 97 - n % 97 || check === 97 - (2e9 + n) % 97;
+}
+function scrubBeNrn(text) {
+  return replaceMatches(text, BE_NRN_RE, "[BSN]", beNrnValid);
+}
+var beNrnDetector = { type: "bsn", scrub: scrubBeNrn };
 var SSN_RES = [
   new RegExp(String.raw`\b\d{3}${ID_DASH}\d{2}${ID_DASH}\d{4}\b`, "g"),
   /\b\d{3}\/\d{2}\/\d{4}\b/g,
@@ -1258,6 +1280,9 @@ function detectorsFor(languages) {
   }
   if (langs.includes("en")) {
     pack.push(nhsDetector);
+  }
+  if (langs.includes("nl")) {
+    pack.push(beNrnDetector);
   }
   if (langs.includes("nl")) {
     pack.push(phoneNlDetector);

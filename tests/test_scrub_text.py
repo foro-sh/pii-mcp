@@ -189,6 +189,65 @@ class TestBsn:
         assert result["counts"]["ssn"] == 0
 
 
+class TestBeNrn:
+    def test_masks_grouped(self) -> None:
+        for value in ("85.07.30-033.28", "85 07 30-033 28", "05.07.15-123.95"):
+            result = scrub_text(f"rrn {value} on file", languages=["nl"])
+            assert result["text"] == "rrn [BSN] on file", value
+            assert result["counts"]["bsn"] == 1
+
+    def test_masks_inside_json_and_csv(self) -> None:
+        assert scrub_text('{"rrn": "85.07.30-033.28"}', languages=["nl"])["text"] == (
+            '{"rrn": "[BSN]"}'
+        )
+        assert scrub_text("a,85.07.30-033.28,b", languages=["nl"])["text"] == "a,[BSN],b"
+
+    def test_masks_unicode_separators(self) -> None:
+        for value in ("85\u00a007\u00a030\u00a0033\u00a028", "85.07.30\u2013033.28"):
+            result = scrub_text(f"rrn {value} on file", languages=["nl"])
+            assert result["text"] == "rrn [BSN] on file", value
+
+    def test_rejects_bad_checksum(self) -> None:
+        text = "rrn 85.07.30-033.29 on file"
+        assert scrub_text(text, languages=["nl"])["text"] == text
+
+    def test_rejects_implausible_month_or_day(self) -> None:
+        for bad in ("85.13.30-033.28", "85.07.32-033.28"):
+            text = f"ref {bad}"
+            assert scrub_text(text, languages=["nl"])["text"] == text, bad
+
+    def test_rejects_non_ascii_digits(self) -> None:
+        text = "rrn \u0668\u0665.\u0660\u0667.\u0663\u0660-\u0660\u0663\u0663.\u0662\u0668"
+        assert scrub_text(text, languages=["nl"])["text"] == text
+
+    def test_masks_incomplete_birth_date(self) -> None:
+        for value in ("85.00.30-033.76", "85.07.00-028.60"):
+            result = scrub_text(f"rrn {value} on file", languages=["nl"])
+            assert result["text"] == "rrn [BSN] on file", value
+            assert result["counts"]["bsn"] == 1
+
+    def test_ignores_compact(self) -> None:
+        result = scrub_text("ref 85073003328", languages=["nl"])
+        assert result["text"] == "ref 85073003328"
+
+    def test_disabled_without_nl(self) -> None:
+        result = scrub_text("rrn 85.07.30-033.28 on file", languages=["en"])
+        assert result["text"] == "rrn 85.07.30-033.28 on file"
+        assert result["counts"]["bsn"] == 0
+
+    @pytest.mark.parametrize("langs", [["nl"], ["en", "nl"], ["de", "nl"], ["en", "nl", "de"]])
+    def test_preferred_over_phone_before_a_digit(self, langs: list[str]) -> None:
+        result = scrub_text("rrn 85.07.30-033.28 2 kinderen", languages=langs)
+        assert result["text"] == "rrn [BSN] 2 kinderen"
+        assert result["counts"]["phone"] == 0
+
+    def test_preferred_over_de_phone_when_both_packs(self) -> None:
+        result = scrub_text("rrn 05.07.15-123.95 on file", languages=["de", "nl"])
+        assert result["text"] == "rrn [BSN] on file"
+        assert result["counts"]["bsn"] == 1
+        assert result["counts"]["phone"] == 0
+
+
 class TestDeVat:
     @pytest.mark.parametrize("value", ["DE136695976", "DE 136 695 976", "DE.136.695.976"])
     def test_masks_valid_id(self, value: str) -> None:

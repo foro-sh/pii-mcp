@@ -1,11 +1,12 @@
 # pii-mcp
 
 Pattern-based PII redaction for MCP servers (regex + checksums). Masks emails,
-IBANs, cards, BICs, MACs, IMEIs, IPs, coordinates, BSNs, US SSNs and ITINs, UK
-National Insurance and NHS numbers, German tax IDs, Dutch BTW-ids, Dutch and
-German passport/ID numbers, phones, street + house number addresses, Dutch
-and UK postcodes, and Dutch license plates in tool results. Also masks
-credentials (API keys, JWTs, `Bearer` tokens) as `[SECRET]`.
+IBANs, cards, BICs, MACs, IMEIs, IPs, coordinates, BSNs, Belgian national
+register numbers, US SSNs and ITINs, UK National Insurance and NHS numbers,
+German tax IDs, Dutch BTW-ids, Dutch and German passport/ID numbers, phones,
+street + house number addresses, Dutch and UK postcodes, and Dutch license
+plates in tool results. Also masks credentials (API keys, JWTs, `Bearer`
+tokens) as `[SECRET]`.
 Language packs: `en`, `nl`, and opt-in `de`.
 
 [![PyPI](https://img.shields.io/pypi/v/pii-mcp.svg)](https://pypi.org/project/pii-mcp/)
@@ -100,7 +101,7 @@ not stack a second in-process NER beside it.
 | IP-adres                                      | `ip`                                   | Indirect identifier             |
 | Locatiegegevens                               | `location`                             | Decimal and DMS lat/lon         |
 | Financiële gegevens                           | `iban`, `credit_card`, `bic`, `vat_id` | NL BTW / DE USt-IdNr            |
-| BSN / nationaal ID                            | `bsn`, `passport`                      | NL passport/NIK; DE ID card/passport (de pack) |
+| BSN / nationaal ID                            | `bsn`, `passport`                      | NL passport/NIK; BE rijksregisternummer (nl pack); DE ID card/passport (de pack) |
 | Nationaal ID (US / UK)                        | `ssn`, `tax_id`                        | US SSN/ITIN, UK NINO (en pack)  |
 | Gezondheidsgegevens (health ID)               | `ssn`                                  | UK NHS number, grouped (en)     |
 | Online / device IDs                           | `mac`, `imei`                          | IMEI: grouped forms + Luhn      |
