@@ -136,6 +136,18 @@ describe("replace option (reversible pseudonymisation)", () => {
     expect(result.text).toBe("[EMAIL_1], [EMAIL_2], [EMAIL_1]");
   });
 
+  it("shields a replace() result from a detector that runs later in the same pass", () => {
+    // email runs before iban/credit_card in UNIVERSAL_DETECTORS; a naive
+    // splice would let either re-match the substituted text.
+    const result = scrubText("contact ada@example.com", {
+      replace: () => "token NL91ABNA0417164300 card 4111 1111 1111 1111",
+    });
+    expect(result.text).toBe("contact token NL91ABNA0417164300 card 4111 1111 1111 1111");
+    expect(result.counts.email).toBe(1);
+    expect(result.counts.iban).toBe(0);
+    expect(result.counts.credit_card).toBe(0);
+  });
+
   it("leaves an allow-listed value unmasked and never calls replace for it", () => {
     const replace = vi.fn((_type: string, value: string) => `[TOKEN:${value}]`);
     const result = scrubText("ada@example.com", { allow: ["ada@example.com"], replace });

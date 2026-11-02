@@ -190,7 +190,12 @@ let maskContext: MaskContext | null = null;
  *
  * ``replace``, when given, swaps an unprotected match for
  * ``replace(type, value)`` instead of its fixed placeholder (reversible
- * pseudonymisation) and is never consulted for a protected match.
+ * pseudonymisation) and is never consulted for a protected match. Its return
+ * value goes through the same reservation as a protected span, so a later
+ * detector in this pass sees only the private-use placeholder, never the
+ * caller's substitution text — a token shaped like a phone number or IBAN
+ * (or one that embeds the raw value, for a caller's own round trip) cannot
+ * be re-matched and mangled by a detector that runs after this one.
  */
 export function withMaskPolicy(
   input: string,
@@ -237,6 +242,25 @@ function freeSentinel(input: string): string {
   throw new PiiScrubError("no unused private-use character to protect a value with");
 }
 
+/**
+ * Reserve ``finalText`` behind a three-code-point private-use token so no
+ * later detector in this pass can match into it, and queue it for
+ * ``restoreKept`` once every detector has run.
+ */
+function reserve(ctx: MaskContext, finalText: string): string {
+  if (ctx.kept.length >= SENTINEL_RANGE * SENTINEL_RANGE) {
+    throw new PiiScrubError("too many protected values in one string");
+  }
+  ctx.sentinel ??= freeSentinel(ctx.input);
+  const index = ctx.kept.length;
+  ctx.kept.push(finalText);
+  return (
+    ctx.sentinel +
+    String.fromCharCode(SENTINEL_FIRST + Math.floor(index / SENTINEL_RANGE)) +
+    String.fromCharCode(SENTINEL_FIRST + (index % SENTINEL_RANGE))
+  );
+}
+
 /** Return what replaces a detected ``value``: its ``placeholder``/``replace`` result (``masked``) or a protect token. */
 function mask(placeholder: string, value: string): { text: string; masked: boolean } {
   const ctx = maskContext;
@@ -247,22 +271,13 @@ function mask(placeholder: string, value: string): { text: string; masked: boole
   const protect =
     (ctx.types !== null && !ctx.types.has(type)) ||
     (type !== "secret" && ctx.allow.has(value.toLowerCase()));
-  if (!protect) {
-    return { text: ctx.replace ? ctx.replace(type, value) : placeholder, masked: true };
+  if (protect) {
+    return { text: reserve(ctx, value), masked: false };
   }
-  if (ctx.kept.length >= SENTINEL_RANGE * SENTINEL_RANGE) {
-    throw new PiiScrubError("too many protected values in one string");
+  if (ctx.replace === undefined) {
+    return { text: placeholder, masked: true };
   }
-  ctx.sentinel ??= freeSentinel(ctx.input);
-  const index = ctx.kept.length;
-  ctx.kept.push(value);
-  return {
-    text:
-      ctx.sentinel +
-      String.fromCharCode(SENTINEL_FIRST + Math.floor(index / SENTINEL_RANGE)) +
-      String.fromCharCode(SENTINEL_FIRST + (index % SENTINEL_RANGE)),
-    masked: false,
-  };
+  return { text: reserve(ctx, ctx.replace(type, value)), masked: true };
 }
 
 function cloneRegExp(pattern: RegExp): RegExp {

@@ -102,6 +102,15 @@ function freeSentinel(input) {
   }
   throw new PiiScrubError("no unused private-use character to protect a value with");
 }
+function reserve(ctx, finalText) {
+  if (ctx.kept.length >= SENTINEL_RANGE * SENTINEL_RANGE) {
+    throw new PiiScrubError("too many protected values in one string");
+  }
+  ctx.sentinel ??= freeSentinel(ctx.input);
+  const index = ctx.kept.length;
+  ctx.kept.push(finalText);
+  return ctx.sentinel + String.fromCharCode(SENTINEL_FIRST + Math.floor(index / SENTINEL_RANGE)) + String.fromCharCode(SENTINEL_FIRST + index % SENTINEL_RANGE);
+}
 function mask(placeholder, value) {
   const ctx = maskContext;
   if (ctx === null) {
@@ -109,19 +118,13 @@ function mask(placeholder, value) {
   }
   const type = placeholder.slice(1, -1).toLowerCase();
   const protect = ctx.types !== null && !ctx.types.has(type) || type !== "secret" && ctx.allow.has(value.toLowerCase());
-  if (!protect) {
-    return { text: ctx.replace ? ctx.replace(type, value) : placeholder, masked: true };
+  if (protect) {
+    return { text: reserve(ctx, value), masked: false };
   }
-  if (ctx.kept.length >= SENTINEL_RANGE * SENTINEL_RANGE) {
-    throw new PiiScrubError("too many protected values in one string");
+  if (ctx.replace === void 0) {
+    return { text: placeholder, masked: true };
   }
-  ctx.sentinel ??= freeSentinel(ctx.input);
-  const index = ctx.kept.length;
-  ctx.kept.push(value);
-  return {
-    text: ctx.sentinel + String.fromCharCode(SENTINEL_FIRST + Math.floor(index / SENTINEL_RANGE)) + String.fromCharCode(SENTINEL_FIRST + index % SENTINEL_RANGE),
-    masked: false
-  };
+  return { text: reserve(ctx, ctx.replace(type, value)), masked: true };
 }
 function cloneRegExp(pattern) {
   return new RegExp(pattern.source, pattern.flags);
