@@ -196,6 +196,12 @@ let maskContext: MaskContext | null = null;
  * caller's substitution text — a token shaped like a phone number or IBAN
  * (or one that embeds the raw value, for a caller's own round trip) cannot
  * be re-matched and mangled by a detector that runs after this one.
+ *
+ * ``replace`` is the first caller-supplied code ``mask()`` ever runs, so a
+ * ``replace`` that itself calls back into ``scrubText``/``scrubPayload``
+ * nests one policy inside another on the same (module-level) context slot;
+ * the outer call's own ``ctx`` is saved and restored around ``fn()`` so a
+ * nested call unwinding does not null it out from under the outer one.
  */
 export function withMaskPolicy(
   input: string,
@@ -204,13 +210,14 @@ export function withMaskPolicy(
   replace: ((type: PiiCategory, value: string) => string) | undefined,
   fn: () => string,
 ): string {
-  maskContext = { input, types, allow, replace, sentinel: null, kept: [] };
+  const outer = maskContext;
+  const ctx: MaskContext = { input, types, allow, replace, sentinel: null, kept: [] };
+  maskContext = ctx;
   try {
     const out = fn();
-    const { sentinel, kept } = maskContext;
-    return sentinel === null ? out : restoreKept(out, sentinel, kept);
+    return ctx.sentinel === null ? out : restoreKept(out, ctx.sentinel, ctx.kept);
   } finally {
-    maskContext = null;
+    maskContext = outer;
   }
 }
 

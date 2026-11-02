@@ -148,6 +148,17 @@ describe("replace option (reversible pseudonymisation)", () => {
     expect(result.counts.credit_card).toBe(0);
   });
 
+  it("tolerates a replace() that itself calls back into scrubText", () => {
+    const result = scrubText("outer bob@example.com", {
+      replace: (_type, _value) => {
+        const inner = scrubText("inner ada@example.com", { types: ["email"] });
+        return `[${inner.text}]`;
+      },
+    });
+    expect(result.text).toBe("outer [inner [EMAIL]]");
+    expect(result.counts.email).toBe(1);
+  });
+
   it("leaves an allow-listed value unmasked and never calls replace for it", () => {
     const replace = vi.fn((_type: string, value: string) => `[TOKEN:${value}]`);
     const result = scrubText("ada@example.com", { allow: ["ada@example.com"], replace });

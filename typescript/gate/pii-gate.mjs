@@ -67,13 +67,14 @@ var SENTINEL_FIRST = 57344;
 var SENTINEL_RANGE = 63743 - SENTINEL_FIRST + 1;
 var maskContext = null;
 function withMaskPolicy(input, types, allow, replace, fn) {
-  maskContext = { input, types, allow, replace, sentinel: null, kept: [] };
+  const outer = maskContext;
+  const ctx = { input, types, allow, replace, sentinel: null, kept: [] };
+  maskContext = ctx;
   try {
     const out = fn();
-    const { sentinel, kept } = maskContext;
-    return sentinel === null ? out : restoreKept(out, sentinel, kept);
+    return ctx.sentinel === null ? out : restoreKept(out, ctx.sentinel, ctx.kept);
   } finally {
-    maskContext = null;
+    maskContext = outer;
   }
 }
 function restoreKept(text, sentinel, kept) {
