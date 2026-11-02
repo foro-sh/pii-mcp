@@ -95,6 +95,22 @@ For Node apps that already depend on this package (API process, not the gate
 image), `import { … } from "pii-mcp/gate"` is the same JS-only surface without
 loading napi.
 
+Reversible pseudonymisation: `replace(type, value)` swaps a hit for a caller
+token instead of a fixed placeholder, so a write tool downstream can still get
+the real value back. Gate-only — see
+[`docs/tier1-gate.md`](../docs/tier1-gate.md#exports).
+
+```ts
+const seen = new Map<string, string>();
+scrubText("mail ada@example.com", {
+  replace: (type, value) => {
+    const key = `${type}:${value}`;
+    if (!seen.has(key)) seen.set(key, `[${type.toUpperCase()}_${seen.size + 1}]`);
+    return seen.get(key)!;
+  },
+}); // "mail [EMAIL_1]"
+```
+
 Contract (placeholders, caps, binary skip, fail-closed rules):
 [`docs/tier1-gate.md`](../docs/tier1-gate.md). Hybrid packaging: vendored JS for
 the gate; optional native for the API process.

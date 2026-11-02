@@ -251,7 +251,13 @@ function isJsonScalar(value: unknown): value is null | boolean | number {
  * matched value for every hit that would otherwise be masked, and its return
  * value is substituted in place of the fixed placeholder (e.g. a per-session
  * token a caller can map back to the real value). It is never consulted for
- * a hit ``types``/``allow`` already protects from masking.
+ * a hit ``types``/``allow`` already protects from masking, and its result is
+ * itself shielded from every detector that runs after it in the same call
+ * (``withMaskPolicy``'s reservation), the same as a protected hit.
+ *
+ * JS-only: this is ``scrub-js``, used by ``gate.ts`` (the gate / vendored
+ * artifact), not by ``scrub.ts``'s napi-backed package root, since a JS
+ * callback cannot cross the native addon boundary.
  */
 export interface MaskOptions {
   types?: readonly string[] | null | undefined;
