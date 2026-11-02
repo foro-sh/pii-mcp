@@ -170,6 +170,7 @@ interface MaskContext {
   input: string;
   types: ReadonlySet<string> | null;
   allow: ReadonlySet<string>;
+  replace: ((type: PiiCategory, value: string) => string) | undefined;
   sentinel: string | null;
   kept: string[];
 }
@@ -186,14 +187,19 @@ let maskContext: MaskContext | null = null;
  * The token's lead code point is the first one in U+E000..U+F8FF absent from
  * ``input``, chosen at the first protected match, so restoring never touches
  * private-use text the caller sent.
+ *
+ * ``replace``, when given, swaps an unprotected match for
+ * ``replace(type, value)`` instead of its fixed placeholder (reversible
+ * pseudonymisation) and is never consulted for a protected match.
  */
 export function withMaskPolicy(
   input: string,
   types: ReadonlySet<string> | null,
   allow: ReadonlySet<string>,
+  replace: ((type: PiiCategory, value: string) => string) | undefined,
   fn: () => string,
 ): string {
-  maskContext = { input, types, allow, sentinel: null, kept: [] };
+  maskContext = { input, types, allow, replace, sentinel: null, kept: [] };
   try {
     const out = fn();
     const { sentinel, kept } = maskContext;
@@ -231,18 +237,18 @@ function freeSentinel(input: string): string {
   throw new PiiScrubError("no unused private-use character to protect a value with");
 }
 
-/** Return what replaces a detected ``value``: its ``placeholder`` (``masked``) or a protect token. */
+/** Return what replaces a detected ``value``: its ``placeholder``/``replace`` result (``masked``) or a protect token. */
 function mask(placeholder: string, value: string): { text: string; masked: boolean } {
   const ctx = maskContext;
   if (ctx === null) {
     return { text: placeholder, masked: true };
   }
-  const type = placeholder.slice(1, -1).toLowerCase();
+  const type = placeholder.slice(1, -1).toLowerCase() as PiiCategory;
   const protect =
     (ctx.types !== null && !ctx.types.has(type)) ||
     (type !== "secret" && ctx.allow.has(value.toLowerCase()));
   if (!protect) {
-    return { text: placeholder, masked: true };
+    return { text: ctx.replace ? ctx.replace(type, value) : placeholder, masked: true };
   }
   if (ctx.kept.length >= SENTINEL_RANGE * SENTINEL_RANGE) {
     throw new PiiScrubError("too many protected values in one string");

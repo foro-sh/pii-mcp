@@ -246,10 +246,17 @@ function isJsonScalar(value: unknown): value is null | boolean | number {
  * values that are never masked, compared case-insensitively to the whole
  * detected value; it never exempts a ``secret``. Unmasked hits are not counted
  * but still shield their text from later detectors.
+ *
+ * ``replace``, when given, is called with the detected type and the raw
+ * matched value for every hit that would otherwise be masked, and its return
+ * value is substituted in place of the fixed placeholder (e.g. a per-session
+ * token a caller can map back to the real value). It is never consulted for
+ * a hit ``types``/``allow`` already protects from masking.
  */
 export interface MaskOptions {
   types?: readonly string[] | null | undefined;
   allow?: readonly string[] | null | undefined;
+  replace?: ((type: PiiType, value: string) => string) | undefined;
 }
 
 export interface ScrubTextJsOptions extends MaskOptions {
@@ -289,8 +296,11 @@ export function scrubTextJs(
   };
   const types = normalizeTypes(options.types);
   const allow = new Set((options.allow ?? []).map((value) => value.toLowerCase()));
+  const replace = options.replace;
   const out =
-    types === null && allow.size === 0 ? run() : withMaskPolicy(text, types, allow, run);
+    types === null && allow.size === 0 && replace === undefined
+      ? run()
+      : withMaskPolicy(text, types, allow, replace, run);
   return { text: out, found: totalPiiCount(counts) > 0, counts };
 }
 
