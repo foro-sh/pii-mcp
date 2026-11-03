@@ -52,10 +52,26 @@ const NER_REMOVED =
   "ner was removed from pii-mcp; use Presidio or another out-of-process NER " +
   "for person names in prose (see README Scope)";
 
+const REPLACE_UNSUPPORTED =
+  "replace is a gate-only option (pii-mcp/gate, or the vendored artifact); " +
+  "it cannot cross the native napi addon boundary, so the package-root " +
+  "scrubText/scrubPayload does not support it";
+
 function rejectRemovedNer(options?: ScrubOptions): void {
   const ner = (options as { ner?: boolean } | undefined)?.ner;
   if (ner) {
     throw new PiiScrubError(NER_REMOVED);
+  }
+}
+
+/**
+ * replace is in MaskOptions, so TypeScript lets a caller pass it here
+ * structurally - silently ignoring it would mask with the fixed placeholder
+ * instead of the caller's token, with no signal anything went wrong.
+ */
+function rejectUnsupportedReplace(options?: ScrubOptions): void {
+  if (options?.replace !== undefined) {
+    throw new PiiScrubError(REPLACE_UNSUPPORTED);
   }
 }
 
@@ -166,6 +182,7 @@ export function scrubText(
     throw new TypeError("scrubText expects a string");
   }
   rejectRemovedNer(options);
+  rejectUnsupportedReplace(options);
   if (resolveBackend() === "native") {
     const native = loadNative();
     if (native === null) {
@@ -207,6 +224,7 @@ export function scrubPayload(
   options?: ScrubOptions,
 ): ScrubPayloadResult {
   rejectRemovedNer(options);
+  rejectUnsupportedReplace(options);
   if (resolveBackend() === "native") {
     const native = loadNative();
     if (native === null) {

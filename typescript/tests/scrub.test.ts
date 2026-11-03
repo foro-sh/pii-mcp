@@ -1344,6 +1344,16 @@ describe("native backend", () => {
     );
   });
 
+  it("rejects replace rather than silently masking with the fixed placeholder", () => {
+    const reason = /gate-only option/;
+    expect(() =>
+      scrubText("ada@example.com", { replace: () => "[TOKEN]" }),
+    ).toThrow(reason);
+    expect(() =>
+      scrubPayload({ email: "ada@example.com" }, { replace: () => "[TOKEN]" }),
+    ).toThrow(reason);
+  });
+
   it("forces js backend even when native is present", () => {
     process.env.PII_MCP_BACKEND = "js";
     resetNativeCache();
