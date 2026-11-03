@@ -6,6 +6,22 @@
 * **rust:** mirror the US ITIN detector in pii-core ([f0323f8](https://github.com/foro-sh/pii-mcp/commit/f0323f8f2c8f03d70e98a923e36d6e71bede04b3)), closes [#62](https://github.com/foro-sh/pii-mcp/issues/62)
 * **typescript:** mirror the US ITIN detector in the js backend ([aad506e](https://github.com/foro-sh/pii-mcp/commit/aad506ed114c8cd3f00b04388e7ea786fa6f44f9)), closes [#62](https://github.com/foro-sh/pii-mcp/issues/62)
 
+## [1.13.0](https://github.com/foro-sh/pii-mcp/compare/v1.12.0...v1.13.0) (2026-11-03)
+
+
+### Features
+
+* detect Belgian national register numbers in the nl pack ([#111](https://github.com/foro-sh/pii-mcp/issues/111)) ([73aeee3](https://github.com/foro-sh/pii-mcp/commit/73aeee3745728cdad4ba9556991b8aa0fe36ab0c))
+* **typescript:** add reversible replace scrub option ([b605be5](https://github.com/foro-sh/pii-mcp/commit/b605be550711ce4a88cecddc3b0891ffc5135816))
+* **typescript:** add reversible replace scrub option ([cb42f2d](https://github.com/foro-sh/pii-mcp/commit/cb42f2db1693e69895ce8ce0e074fd79a115e0a7))
+
+
+### Bug Fixes
+
+* **typescript:** make withMaskPolicy reentrancy-safe ([a9ea61c](https://github.com/foro-sh/pii-mcp/commit/a9ea61c81377080aa55f59d3558870f628513dac))
+* **typescript:** reject replace on the package-root scrub functions ([83be6e9](https://github.com/foro-sh/pii-mcp/commit/83be6e932b2c831cebf00b918880dea7f94133c1))
+* **typescript:** shield a replace() result from later detectors ([7b0fd66](https://github.com/foro-sh/pii-mcp/commit/7b0fd665e2611e46f74dde249719cd3044c4d99d))
+
 ## [1.12.0](https://github.com/foro-sh/pii-mcp/compare/v1.11.0...v1.12.0) (2026-10-29)
 
 
