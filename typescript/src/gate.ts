@@ -61,6 +61,7 @@ export function scrubText(
     languages: options.languages,
     types: options.types,
     allow: options.allow,
+    replace: options.replace,
     checkSize: true,
   });
 }
@@ -81,6 +82,7 @@ export function scrubPayload(
     languages: options.languages,
     types: options.types,
     allow: options.allow,
+    replace: options.replace,
   });
 }
 

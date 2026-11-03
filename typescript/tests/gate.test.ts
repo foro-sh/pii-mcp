@@ -6,7 +6,7 @@ import { readFileSync, existsSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { execFileSync } from "node:child_process";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   MAX_DEPTH,
   MAX_SCRUB_BYTES,
@@ -96,6 +96,100 @@ describe("gate module (src)", () => {
 
   it("throws PiiScrubError on non-plain objects", () => {
     expect(() => scrubPayload({ when: new Date() })).toThrow(PiiScrubError);
+  });
+});
+
+describe("replace option (reversible pseudonymisation)", () => {
+  it("substitutes a caller token for a masked value in text", () => {
+    const result = scrubText("contact ada@example.com", {
+      replace: (type, value) => `[${type.toUpperCase()}_TOKEN:${value}]`,
+    });
+    expect(result.text).toBe("contact [EMAIL_TOKEN:ada@example.com]");
+    expect(result.counts.email).toBe(1);
+  });
+
+  it("substitutes across a nested payload, leaving structure intact", () => {
+    const result = scrubPayload(
+      { rows: [{ email: "ada@example.com" }, { email: "bob@example.com" }] },
+      { replace: (_type, value) => `[EMAIL_${value}]` },
+    );
+    expect(result.payload).toEqual({
+      rows: [{ email: "[EMAIL_ada@example.com]" }, { email: "[EMAIL_bob@example.com]" }],
+    });
+    expect(result.counts.email).toBe(2);
+  });
+
+  it("can assign stable per-caller tokens by tracking a map itself", () => {
+    const seen = new Map<string, string>();
+    let next = 0;
+    const replace = (type: string, value: string): string => {
+      const key = `${type}:${value}`;
+      let token = seen.get(key);
+      if (token === undefined) {
+        next += 1;
+        token = `[${type.toUpperCase()}_${next}]`;
+        seen.set(key, token);
+      }
+      return token;
+    };
+    const result = scrubText("ada@example.com, bob@example.com, ada@example.com", { replace });
+    expect(result.text).toBe("[EMAIL_1], [EMAIL_2], [EMAIL_1]");
+  });
+
+  it("shields a replace() result from a detector that runs later in the same pass", () => {
+    // email runs before iban/credit_card in UNIVERSAL_DETECTORS; a naive
+    // splice would let either re-match the substituted text.
+    const result = scrubText("contact ada@example.com", {
+      replace: () => "token NL91ABNA0417164300 card 4111 1111 1111 1111",
+    });
+    expect(result.text).toBe("contact token NL91ABNA0417164300 card 4111 1111 1111 1111");
+    expect(result.counts.email).toBe(1);
+    expect(result.counts.iban).toBe(0);
+    expect(result.counts.credit_card).toBe(0);
+  });
+
+  it("tolerates a replace() that itself calls back into scrubText", () => {
+    const result = scrubText("outer bob@example.com", {
+      replace: (_type, _value) => {
+        const inner = scrubText("inner ada@example.com", { types: ["email"] });
+        return `[${inner.text}]`;
+      },
+    });
+    expect(result.text).toBe("outer [inner [EMAIL]]");
+    expect(result.counts.email).toBe(1);
+  });
+
+  it("keeps calling replace for a later match after a nested scrub call returns", () => {
+    // a reentrant replace() (the previous test) must not leave the outer
+    // call's mask context clobbered for matches it finds afterwards.
+    const result = scrubText("outer bob@example.com and alice@example.com", {
+      replace: (_type, value) => {
+        if (value.includes("bob")) {
+          scrubText("inner ada@example.com", { types: ["email"] });
+        }
+        return `[TOKEN:${value}]`;
+      },
+    });
+    expect(result.text).toBe(
+      "outer [TOKEN:bob@example.com] and [TOKEN:alice@example.com]",
+    );
+    expect(result.counts.email).toBe(2);
+  });
+
+  it("leaves an allow-listed value unmasked and never calls replace for it", () => {
+    const replace = vi.fn((_type: string, value: string) => `[TOKEN:${value}]`);
+    const result = scrubText("ada@example.com", { allow: ["ada@example.com"], replace });
+    expect(result.text).toBe("ada@example.com");
+    expect(replace).not.toHaveBeenCalled();
+  });
+
+  it("the vendored artifact honours replace identically to the source module", async () => {
+    const gate = await import(artifactPath);
+    const result = gate.scrubText("contact ada@example.com", {
+      replace: (type: string, value: string) => `[${type.toUpperCase()}_TOKEN:${value}]`,
+    });
+    expect(result.text).toBe("contact [EMAIL_TOKEN:ada@example.com]");
+    expect(result.counts.email).toBe(1);
   });
 });
 

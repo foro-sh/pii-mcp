@@ -170,6 +170,7 @@ interface MaskContext {
   input: string;
   types: ReadonlySet<string> | null;
   allow: ReadonlySet<string>;
+  replace: ((type: PiiCategory, value: string) => string) | undefined;
   sentinel: string | null;
   kept: string[];
 }
@@ -186,20 +187,37 @@ let maskContext: MaskContext | null = null;
  * The token's lead code point is the first one in U+E000..U+F8FF absent from
  * ``input``, chosen at the first protected match, so restoring never touches
  * private-use text the caller sent.
+ *
+ * ``replace``, when given, swaps an unprotected match for
+ * ``replace(type, value)`` instead of its fixed placeholder (reversible
+ * pseudonymisation) and is never consulted for a protected match. Its return
+ * value goes through the same reservation as a protected span, so a later
+ * detector in this pass sees only the private-use placeholder, never the
+ * caller's substitution text — a token shaped like a phone number or IBAN
+ * (or one that embeds the raw value, for a caller's own round trip) cannot
+ * be re-matched and mangled by a detector that runs after this one.
+ *
+ * ``replace`` is the first caller-supplied code ``mask()`` ever runs, so a
+ * ``replace`` that itself calls back into ``scrubText``/``scrubPayload``
+ * nests one policy inside another on the same (module-level) context slot;
+ * the outer call's own ``ctx`` is saved and restored around ``fn()`` so a
+ * nested call unwinding does not null it out from under the outer one.
  */
 export function withMaskPolicy(
   input: string,
   types: ReadonlySet<string> | null,
   allow: ReadonlySet<string>,
+  replace: ((type: PiiCategory, value: string) => string) | undefined,
   fn: () => string,
 ): string {
-  maskContext = { input, types, allow, sentinel: null, kept: [] };
+  const outer = maskContext;
+  const ctx: MaskContext = { input, types, allow, replace, sentinel: null, kept: [] };
+  maskContext = ctx;
   try {
     const out = fn();
-    const { sentinel, kept } = maskContext;
-    return sentinel === null ? out : restoreKept(out, sentinel, kept);
+    return ctx.sentinel === null ? out : restoreKept(out, ctx.sentinel, ctx.kept);
   } finally {
-    maskContext = null;
+    maskContext = outer;
   }
 }
 
@@ -231,32 +249,42 @@ function freeSentinel(input: string): string {
   throw new PiiScrubError("no unused private-use character to protect a value with");
 }
 
-/** Return what replaces a detected ``value``: its ``placeholder`` (``masked``) or a protect token. */
-function mask(placeholder: string, value: string): { text: string; masked: boolean } {
-  const ctx = maskContext;
-  if (ctx === null) {
-    return { text: placeholder, masked: true };
-  }
-  const type = placeholder.slice(1, -1).toLowerCase();
-  const protect =
-    (ctx.types !== null && !ctx.types.has(type)) ||
-    (type !== "secret" && ctx.allow.has(value.toLowerCase()));
-  if (!protect) {
-    return { text: placeholder, masked: true };
-  }
+/**
+ * Reserve ``finalText`` behind a three-code-point private-use token so no
+ * later detector in this pass can match into it, and queue it for
+ * ``restoreKept`` once every detector has run.
+ */
+function reserve(ctx: MaskContext, finalText: string): string {
   if (ctx.kept.length >= SENTINEL_RANGE * SENTINEL_RANGE) {
     throw new PiiScrubError("too many protected values in one string");
   }
   ctx.sentinel ??= freeSentinel(ctx.input);
   const index = ctx.kept.length;
-  ctx.kept.push(value);
-  return {
-    text:
-      ctx.sentinel +
-      String.fromCharCode(SENTINEL_FIRST + Math.floor(index / SENTINEL_RANGE)) +
-      String.fromCharCode(SENTINEL_FIRST + (index % SENTINEL_RANGE)),
-    masked: false,
-  };
+  ctx.kept.push(finalText);
+  return (
+    ctx.sentinel +
+    String.fromCharCode(SENTINEL_FIRST + Math.floor(index / SENTINEL_RANGE)) +
+    String.fromCharCode(SENTINEL_FIRST + (index % SENTINEL_RANGE))
+  );
+}
+
+/** Return what replaces a detected ``value``: its ``placeholder``/``replace`` result (``masked``) or a protect token. */
+function mask(placeholder: string, value: string): { text: string; masked: boolean } {
+  const ctx = maskContext;
+  if (ctx === null) {
+    return { text: placeholder, masked: true };
+  }
+  const type = placeholder.slice(1, -1).toLowerCase() as PiiCategory;
+  const protect =
+    (ctx.types !== null && !ctx.types.has(type)) ||
+    (type !== "secret" && ctx.allow.has(value.toLowerCase()));
+  if (protect) {
+    return { text: reserve(ctx, value), masked: false };
+  }
+  if (ctx.replace === undefined) {
+    return { text: placeholder, masked: true };
+  }
+  return { text: reserve(ctx, ctx.replace(type, value)), masked: true };
 }
 
 function cloneRegExp(pattern: RegExp): RegExp {

@@ -66,14 +66,15 @@ function mergeCounts(parts) {
 var SENTINEL_FIRST = 57344;
 var SENTINEL_RANGE = 63743 - SENTINEL_FIRST + 1;
 var maskContext = null;
-function withMaskPolicy(input, types, allow, fn) {
-  maskContext = { input, types, allow, sentinel: null, kept: [] };
+function withMaskPolicy(input, types, allow, replace, fn) {
+  const outer = maskContext;
+  const ctx = { input, types, allow, replace, sentinel: null, kept: [] };
+  maskContext = ctx;
   try {
     const out = fn();
-    const { sentinel, kept } = maskContext;
-    return sentinel === null ? out : restoreKept(out, sentinel, kept);
+    return ctx.sentinel === null ? out : restoreKept(out, ctx.sentinel, ctx.kept);
   } finally {
-    maskContext = null;
+    maskContext = outer;
   }
 }
 function restoreKept(text, sentinel, kept) {
@@ -102,6 +103,15 @@ function freeSentinel(input) {
   }
   throw new PiiScrubError("no unused private-use character to protect a value with");
 }
+function reserve(ctx, finalText) {
+  if (ctx.kept.length >= SENTINEL_RANGE * SENTINEL_RANGE) {
+    throw new PiiScrubError("too many protected values in one string");
+  }
+  ctx.sentinel ??= freeSentinel(ctx.input);
+  const index = ctx.kept.length;
+  ctx.kept.push(finalText);
+  return ctx.sentinel + String.fromCharCode(SENTINEL_FIRST + Math.floor(index / SENTINEL_RANGE)) + String.fromCharCode(SENTINEL_FIRST + index % SENTINEL_RANGE);
+}
 function mask(placeholder, value) {
   const ctx = maskContext;
   if (ctx === null) {
@@ -109,19 +119,13 @@ function mask(placeholder, value) {
   }
   const type = placeholder.slice(1, -1).toLowerCase();
   const protect = ctx.types !== null && !ctx.types.has(type) || type !== "secret" && ctx.allow.has(value.toLowerCase());
-  if (!protect) {
+  if (protect) {
+    return { text: reserve(ctx, value), masked: false };
+  }
+  if (ctx.replace === void 0) {
     return { text: placeholder, masked: true };
   }
-  if (ctx.kept.length >= SENTINEL_RANGE * SENTINEL_RANGE) {
-    throw new PiiScrubError("too many protected values in one string");
-  }
-  ctx.sentinel ??= freeSentinel(ctx.input);
-  const index = ctx.kept.length;
-  ctx.kept.push(value);
-  return {
-    text: ctx.sentinel + String.fromCharCode(SENTINEL_FIRST + Math.floor(index / SENTINEL_RANGE)) + String.fromCharCode(SENTINEL_FIRST + index % SENTINEL_RANGE),
-    masked: false
-  };
+  return { text: reserve(ctx, ctx.replace(type, value)), masked: true };
 }
 function cloneRegExp(pattern) {
   return new RegExp(pattern.source, pattern.flags);
@@ -1379,7 +1383,8 @@ function scrubTextJs(text, options = {}) {
   };
   const types = normalizeTypes(options.types);
   const allow = new Set((options.allow ?? []).map((value) => value.toLowerCase()));
-  const out = types === null && allow.size === 0 ? run() : withMaskPolicy(text, types, allow, run);
+  const replace = options.replace;
+  const out = types === null && allow.size === 0 && replace === void 0 ? run() : withMaskPolicy(text, types, allow, replace, run);
   return { text: out, found: totalPiiCount(counts) > 0, counts };
 }
 function scrubWalk(value, counts, depth, options) {
@@ -1441,6 +1446,7 @@ function scrubText(text, options = {}) {
     languages: options.languages,
     types: options.types,
     allow: options.allow,
+    replace: options.replace,
     checkSize: true
   });
 }
@@ -1449,7 +1455,8 @@ function scrubPayload(payload, options = {}) {
   return scrubPayloadJs(payload, {
     languages: options.languages,
     types: options.types,
-    allow: options.allow
+    allow: options.allow,
+    replace: options.replace
   });
 }
 export {

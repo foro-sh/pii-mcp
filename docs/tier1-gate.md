@@ -52,6 +52,17 @@ still shielded from later detectors, so turning `phone` off does not let the
 BSN detector mask a phone number's digits. With neither option set, output is
 unchanged.
 
+`options.replace?: (type: PiiType, value: string) => string` swaps a hit that
+would otherwise get its fixed `[TYPE]` placeholder for `replace(type, value)`
+instead — a caller-chosen, reversible stand-in (e.g. a per-session token) for
+the detected value. It is never called for a hit `types`/`allow` already
+exempts from masking. Like a `types`/`allow`-exempted hit, a `replace` result
+is shielded from every detector that runs after it in the same call, so a
+token shaped like another PII pattern (or one that embeds the raw value, for
+a caller's own round trip) is never re-matched and corrupted. Counted the
+same as a plain placeholder hit. `pii-mcp/gate` (and the vendored artifact)
+only — not on the napi-backed package-root `scrubText`/`scrubPayload`.
+
 There is no `ner` option on the gate surface. Person-name NER stays Tier 2
 (Presidio on platform-internal paths).
 
