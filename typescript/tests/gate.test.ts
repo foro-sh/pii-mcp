@@ -159,6 +159,23 @@ describe("replace option (reversible pseudonymisation)", () => {
     expect(result.counts.email).toBe(1);
   });
 
+  it("keeps calling replace for a later match after a nested scrub call returns", () => {
+    // a reentrant replace() (the previous test) must not leave the outer
+    // call's mask context clobbered for matches it finds afterwards.
+    const result = scrubText("outer bob@example.com and alice@example.com", {
+      replace: (_type, value) => {
+        if (value.includes("bob")) {
+          scrubText("inner ada@example.com", { types: ["email"] });
+        }
+        return `[TOKEN:${value}]`;
+      },
+    });
+    expect(result.text).toBe(
+      "outer [TOKEN:bob@example.com] and [TOKEN:alice@example.com]",
+    );
+    expect(result.counts.email).toBe(2);
+  });
+
   it("leaves an allow-listed value unmasked and never calls replace for it", () => {
     const replace = vi.fn((_type: string, value: string) => `[TOKEN:${value}]`);
     const result = scrubText("ada@example.com", { allow: ["ada@example.com"], replace });
